@@ -5,22 +5,18 @@ if(NOT NAVHAL)
 endif()
 add_executable(main main.c ${STARTUP_FILE})
 
-# if(NAVHAL)
-# target_link_libraries(main PRIVATE
-#   -Wl,--start-group
-#     -Wl,--whole-archive hal -Wl,--no-whole-archive
-#     -lgcc
-#     vaios
-#   -Wl,--end-group
-# )
-# else()
+if(NAVHAL)
 target_link_libraries(main PRIVATE
-  -Wl,--start-group
+    hal
     -lgcc
     vaios
-  -Wl,--end-group
 )
-# endif()
+else()
+target_link_libraries(main PRIVATE
+    -lgcc
+    vaios
+)
+endif()
 add_custom_target(flash
   COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:main> ${CMAKE_CURRENT_BINARY_DIR}/main.bin
   COMMAND ${FLASHER} write ${CMAKE_CURRENT_BINARY_DIR}/main.bin ${FLASH_ADDRESS}
