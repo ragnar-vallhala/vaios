@@ -1,85 +1,91 @@
 [
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -I/home/ragnar/Documents/vaios/extern/NavHAL/src/../include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/common.dir/conversion.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/conversion.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -I/home/ragnar/Documents/vaios/extern/NavHAL/src/../include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/common.dir/conversion.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/conversion.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/conversion.c",
   "output": "extern/NavHAL/src/CMakeFiles/common.dir/conversion.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/gpio/gpio.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/gpio/gpio.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/gpio/gpio.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/gpio/gpio.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/gpio/gpio.c",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/gpio/gpio.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/clock/clock.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/clock/clock.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/clock/clock.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/clock/clock.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/clock/clock.c",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/clock/clock.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/uart/uart.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/uart/uart.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/uart/uart.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/uart/uart.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/uart/uart.c",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/uart/uart.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/timer/timer.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/timer/timer.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/timer/timer.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/timer/timer.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/timer/timer.c",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/timer/timer.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -o CMakeFiles/hal.dir/startup/startup.s.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/startup/startup.s",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -o CMakeFiles/hal.dir/startup/startup.s.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/startup/startup.s",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/startup/startup.s",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/startup/startup.s.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/interrupt/interrupt.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/interrupt/interrupt.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/interrupt/interrupt.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/interrupt/interrupt.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/interrupt/interrupt.c",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/interrupt/interrupt.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/pwm/pwm.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/pwm/pwm.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/pwm/pwm.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/pwm/pwm.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/pwm/pwm.c",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/pwm/pwm.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/extern/NavHAL/src/core/cortex-m4",
-  "command": "arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/i2c/i2c.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/i2c/i2c.c",
+  "command": "arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/hal.dir/i2c/i2c.c.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/i2c/i2c.c",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/i2c/i2c.c",
   "output": "extern/NavHAL/src/core/cortex-m4/CMakeFiles/hal.dir/i2c/i2c.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/kernel",
-  "command": "/usr/bin/arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/vaios.dir/semihosting.c.obj -c /home/ragnar/Documents/vaios/kernel/semihosting.c",
+  "command": "/usr/bin/arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/vaios.dir/semihosting.c.obj -c /home/ragnar/Documents/vaios/kernel/semihosting.c",
   "file": "/home/ragnar/Documents/vaios/kernel/semihosting.c",
   "output": "kernel/CMakeFiles/vaios.dir/semihosting.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/kernel",
-  "command": "/usr/bin/arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/vaios.dir/task.c.obj -c /home/ragnar/Documents/vaios/kernel/task.c",
+  "command": "/usr/bin/arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/vaios.dir/task.c.obj -c /home/ragnar/Documents/vaios/kernel/task.c",
   "file": "/home/ragnar/Documents/vaios/kernel/task.c",
   "output": "kernel/CMakeFiles/vaios.dir/task.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/kernel",
-  "command": "/usr/bin/arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/vaios.dir/utils.c.obj -c /home/ragnar/Documents/vaios/kernel/utils.c",
+  "command": "/usr/bin/arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/vaios.dir/utils.c.obj -c /home/ragnar/Documents/vaios/kernel/utils.c",
   "file": "/home/ragnar/Documents/vaios/kernel/utils.c",
   "output": "kernel/CMakeFiles/vaios.dir/utils.c.obj"
 },
 {
+  "directory": "/home/ragnar/Documents/vaios/build/kernel",
+  "command": "/usr/bin/arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/vaios.dir/vaios.c.obj -c /home/ragnar/Documents/vaios/kernel/vaios.c",
+  "file": "/home/ragnar/Documents/vaios/kernel/vaios.c",
+  "output": "kernel/CMakeFiles/vaios.dir/vaios.c.obj"
+},
+{
   "directory": "/home/ragnar/Documents/vaios/build/examples",
-  "command": "/usr/bin/arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/main.dir/main.c.obj -c /home/ragnar/Documents/vaios/examples/main.c",
+  "command": "/usr/bin/arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -Wall -O0 -g -std=c11 -std=gnu11 -o CMakeFiles/main.dir/main.c.obj -c /home/ragnar/Documents/vaios/examples/main.c",
   "file": "/home/ragnar/Documents/vaios/examples/main.c",
   "output": "examples/CMakeFiles/main.dir/main.c.obj"
 },
 {
   "directory": "/home/ragnar/Documents/vaios/build/examples",
-  "command": "/usr/bin/arm-none-eabi-gcc -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -o CMakeFiles/main.dir/__/extern/NavHAL/src/core/cortex-m4/startup/startup.s.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/startup/startup.s",
+  "command": "/usr/bin/arm-none-eabi-gcc -DCORTEX_M4 -DNAVHAL -I/home/ragnar/Documents/vaios/include -I/home/ragnar/Documents/vaios/extern/NavHAL/include -mcpu=cortex-m4 -mthumb -o CMakeFiles/main.dir/__/extern/NavHAL/src/core/cortex-m4/startup/startup.s.obj -c /home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/startup/startup.s",
   "file": "/home/ragnar/Documents/vaios/extern/NavHAL/src/core/cortex-m4/startup/startup.s",
   "output": "examples/CMakeFiles/main.dir/__/extern/NavHAL/src/core/cortex-m4/startup/startup.s.obj"
 }

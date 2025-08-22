@@ -1,10 +1,10 @@
 #include "utils.h"
+#include "config.h"
 #include "semihosting.h"
 #include <stdarg.h>
 #include <stdint.h>
 
 #ifdef NAVHAL
-#define CORTEX_M4
 #include "navhal.h"
 #endif
 
@@ -171,6 +171,7 @@ void print_fmt(const char *fmt, ...) {
   va_end(args);
 }
 void v_log(Log_Type type, const char *msg, ...) {
+#if LOGGING_ENABLED == 1
   const char *typeName;
   const char *typeColor;
   switch (type) {
@@ -208,4 +209,5 @@ void v_log(Log_Type type, const char *msg, ...) {
   print_fmt("%s[%s %u]%s ", typeColor, typeName, v_get_ticks(), COLOR_RESET);
   vaprint_fmt(msg, args);
   print_fmt("\r\n");
+#endif
 }

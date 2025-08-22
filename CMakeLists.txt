@@ -44,6 +44,9 @@ set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/boa
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "cortex-m4")
+  add_compile_definitions(CORTEX_M4)
+endif()
 
 if(NAVHAL)
   add_compile_definitions(NAVHAL)

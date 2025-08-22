@@ -1,17 +1,7 @@
-#include "utils.h"
-#include <stdint.h>
-#ifdef NAVHAL
-#define CORTEX_M4
-#include "navhal.h"
-#endif
+#include "vaios.h"
 
 int main() {
-#ifdef NAVHAL
-  systick_init(10000);
-  uart2_init(9600);
-#endif
-
+  v_init();
   while (1)
-    v_log((v_get_ticks() / 500) % 7, "Everything is good %lu", v_get_ticks());
-  // print_fmt("Hello World %u\n\r", (uint32_t)v_get_ticks());
+    ;
 }
