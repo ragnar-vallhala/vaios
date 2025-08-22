@@ -3,6 +3,7 @@
 #include <stdint.h>
 void print(const char *str);
 void print_fmt(const char *fmt, ...);
+
 uint32_t v_get_ticks(void);
 
 typedef enum {

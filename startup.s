@@ -31,6 +31,7 @@
 
 .global _estack
 .global Reset_Handler
+.global SysTick_Handler
 
 
 
@@ -55,7 +56,7 @@
     .word  Reset_Handler            /* 13. Debug Monitor Handler */
     .word  0                        /* 14. Reserved */
     .word  Reset_Handler            /* 15. PendSV Handler */
-    .word  Reset_Handler          /* 16. SysTick Handler */
+    .word  SysTick_Handler          /* 16. SysTick Handler */
 
     
 

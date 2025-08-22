@@ -156,20 +156,13 @@ void vaprint_fmt(const char *fmt, va_list args) {
   }
 }
 
-uint32_t v_get_ticks(void) {
-#ifdef NAVHAL
-  return (uint32_t)hal_get_tick();
-#else
-  return (uint32_t)sh_get_ticks();
-#endif
-}
-
 void print_fmt(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   vaprint_fmt(fmt, args);
   va_end(args);
 }
+
 void v_log(Log_Type type, const char *msg, ...) {
 #if LOGGING_ENABLED == 1
   const char *typeName;
@@ -209,5 +202,23 @@ void v_log(Log_Type type, const char *msg, ...) {
   print_fmt("%s[%s %u]%s ", typeColor, typeName, v_get_ticks(), COLOR_RESET);
   vaprint_fmt(msg, args);
   print_fmt("\r\n");
+#endif
+}
+
+volatile uint32_t systick_count = 0;
+
+#ifndef NAVHAL
+void SysTick_Handler(void) {
+  systick_count++;
+  // Toggle a variable, blink LED, or trigger PendSV here if you want
+}
+
+#endif
+
+uint32_t v_get_ticks(void) {
+#ifdef NAVHAL
+  return (uint32_t)hal_get_tick();
+#else
+  return systick_count;
 #endif
 }
