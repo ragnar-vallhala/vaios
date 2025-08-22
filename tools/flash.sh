@@ -4,4 +4,4 @@ cd build
 cmake .. -DNAVHAL=ON
 cmake --build .
 arm-none-eabi-objcopy -O binary examples/main main.bin
-st-flash write main.bin 0x8000000
+st-flash --reset write main.bin 0x8000000

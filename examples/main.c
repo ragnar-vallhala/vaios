@@ -3,5 +3,6 @@
 int main() {
   v_init();
   while (1)
-    v_log(LOG_INFO, "Running fine");
+    ;
+  // v_log(LOG_INFO, "Running fine");
 }

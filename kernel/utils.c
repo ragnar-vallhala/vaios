@@ -206,19 +206,14 @@ void v_log(Log_Type type, const char *msg, ...) {
 }
 
 volatile uint32_t systick_count = 0;
+#define ICSR (*(volatile uint32_t *)0xE000ED04)
+#define ICSR_PENDSVSET (1 << 28) // Set this to trigger PendSV
+#define ICSR_PENDSVCLR (1 << 27) // Clear PendSV
 
-#ifndef NAVHAL
 void SysTick_Handler(void) {
   systick_count++;
-  // Toggle a variable, blink LED, or trigger PendSV here if you want
+  if (systick_count % TIME_SLICE == 0)
+    ICSR |= ICSR_PENDSVSET; // Trigger PENDSV
 }
 
-#endif
-
-uint32_t v_get_ticks(void) {
-#ifdef NAVHAL
-  return (uint32_t)hal_get_tick();
-#else
-  return systick_count;
-#endif
-}
+uint32_t v_get_ticks(void) { return systick_count; }

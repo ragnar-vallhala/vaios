@@ -6,4 +6,7 @@
 #define UART_LOGGING_ENABLE 1
 #define UART_BAUDRATE 9600
 #define LOGGING_ENABLED 1
+
+// Scheduling
+#define TIME_SLICE 10
 #endif // !VAIOS_CONFIG_H
