@@ -1,6 +1,8 @@
 #include "vaios.h"
 #include "config.h"
+#include "structures.h"
 #include "utils.h"
+#include <stddef.h>
 #ifdef NAVHAL
 #include "navhal.h"
 #endif /* ifdef NAVHAL */
@@ -34,10 +36,18 @@ void _qemu_systick_init_ms(uint32_t period_ms) {
 #endif /* ifndef NAVHAL */
 
 extern uint32_t systick_count;
+extern TCB *ready_queue;
+extern TCB *blocked_queue;
+extern TCB *sleep_queue;
 void v_init(void) {
+  // resetting global variables
+  systick_count = 0;
+  ready_queue = NULL;
+  blocked_queue = NULL;
+  sleep_queue = NULL;
+
 #ifdef NAVHAL
 #ifdef CORTEX_M4
-  systick_count = 0;
   systick_init(SYSTICK_PERIOD);
 #if UART_LOGGING_ENABLE == 1
   uart2_init(UART_BAUDRATE);
