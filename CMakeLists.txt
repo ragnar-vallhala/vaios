@@ -54,8 +54,8 @@ if(NAVHAL)
   add_subdirectory(extern/NavHAL)
 endif()
 
+add_subdirectory(portable) # implementations for specific architectures (context switching, interrupt handling)
 add_subdirectory(kernel) # The heart of your RTOS (scheduling, tasks, synchronization, etc.) — totally architecture independent
-# add_subdirectory(portable) # implementations for specific architectures (context switching, interrupt handling)
 add_subdirectory(examples) # Small test apps showing how to use the RTOS
 
 if(TEST)
