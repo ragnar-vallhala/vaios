@@ -1,68 +1,57 @@
+#include "memory.h"
 #include "task.h"
 #include "utils.h"
 #include "vaios.h"
-#include <stddef.h>
+#include <stdint.h>
+
 // Dummy tasks
 void task1(void *arg) { v_log(LOG_INFO, "Task 1 running"); }
 void task2(void *arg) { v_log(LOG_INFO, "Task 2 running"); }
 void task3(void *arg) { v_log(LOG_INFO, "Task 3 running"); }
-// task.h
-extern TCB *ready_queue ;
-extern TCB *blocked_queue;
-extern TCB *sleep_queue;
 
-int main()
-{
+extern TCB *ready_queue;
 
-  v_init();
-  v_log(LOG_INFO, "Starting task queue test...");
+int main() {
+    v_init();
+    memory_init();
 
-  // Create dummy TCBs
-  TCB t1 = {.task_id = 1, .entry = task1, .priority = 5, .state = TASK_READY};
-  TCB t2 = {.task_id = 2, .entry = task2, .priority = 10, .state = TASK_READY};
-  TCB t3 = {.task_id = 3, .entry = task3, .priority = 7, .state = TASK_READY};
+    // Allocate TCBs on heap
+    TCB *t1 = (TCB *)v_malloc(sizeof(TCB));
+    TCB *t2 = (TCB *)v_malloc(sizeof(TCB));
+    TCB *t3 = (TCB *)v_malloc(sizeof(TCB));
 
-  // Enqueue tasks into ready_queue
-  task_enqueue(&ready_queue, &t1);
-  task_enqueue(&ready_queue, &t2);
-  task_enqueue(&ready_queue, &t3);
+    if (t1) {
+        t1->task_id = 1;
+        t1->entry = task1;
+        t1->priority = 5;
+        t1->state = TASK_READY;
+        task_enqueue(&ready_queue, t1);
+    }
 
-  v_log(LOG_INFO, "Enqueued 3 tasks into ready_queue");
+    if (t2) {
+        t2->task_id = 2;
+        t2->entry = task2;
+        t2->priority = 10;
+        t2->state = TASK_READY;
+        task_enqueue(&ready_queue, t2);
+    }
 
-  // Print ready_queue
-  TCB *curr = ready_queue;
-  if (curr)
-  {
-    do
-    {
-      v_log(LOG_INFO, "Task ID: %d, Priority: %d, State: %d", curr->task_id,
-            curr->priority, curr->state);
-      curr = curr->next;
-    } while (curr != ready_queue);
-  }
+    if (t3) {
+        t3->task_id = 3;
+        t3->entry = task3;
+        t3->priority = 7;
+        t3->state = TASK_READY;
+        task_enqueue(&ready_queue, t3);
+    }
 
-  // Dequeue a task and run it
-  TCB *next_task = task_dequeue(&ready_queue);
-  if (next_task)
-  {
-    v_log(LOG_INFO, "Dequeued task ID: %d", next_task->task_id);
-    next_task->entry(NULL); // call the task function
-  }
+    v_log(LOG_INFO, "Enqueued 3 tasks into ready_queue");
 
-  // Print ready_queue after dequeue
-  v_log(LOG_INFO, "Ready queue after dequeue:");
-  curr = ready_queue;
-  if (curr)
-  {
-    do
-    {
-      v_log(LOG_INFO, "Task ID: %d, Priority: %d, State: %d", curr->task_id,
-            curr->priority, curr->state);
-      curr = curr->next;
-    } while (curr != ready_queue);
-  }
+    // Dequeue and run one task
+    TCB *next_task = task_dequeue(&ready_queue);
+    if (next_task && next_task->entry)
+        next_task->entry(NULL);
 
-  // Loop forever
-  while (1)
-    ;
+    while (1)
+        ;
 }
+

@@ -23,7 +23,7 @@ void memory_init(void) {
   allocation_size = 0;
   allocation_count = 0;
 
-  v_log(LOG_INFO, "[MEMORY] Heap memory head initialized at 0x%x size 0x%08x",
+  v_log(LOG_INFO, "[MEMORY] Heap memory head initialized at 0x%x size 0x%x",
         (void *)heap_mem_head, (unsigned)HEAP_SIZE);
 }
 
