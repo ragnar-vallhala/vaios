@@ -1,0 +1,15 @@
+{
+    "cortex-debug.variableUseNaturalFormat": true,
+    "files.associations": {
+        "gpio.h": "c",
+        "types.h": "c",
+        "gpio_types.h": "c",
+        "hal_gpio.h": "c",
+        "cstdint": "c",
+        "uart.h": "c",
+        "navhal.h": "c",
+        "hal_uart.h": "c",
+        "clock.h": "c",
+        "task.h": "c"
+    }
+}
