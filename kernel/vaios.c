@@ -39,13 +39,14 @@ extern uint32_t systick_count;
 extern TCB *ready_queue;
 extern TCB *blocked_queue;
 extern TCB *sleep_queue;
+extern TCB *current_task;
 void v_init(void) {
   // resetting global variables
   systick_count = 0;
   ready_queue = NULL;
   blocked_queue = NULL;
   sleep_queue = NULL;
-
+  current_task = NULL;
 #ifdef NAVHAL
 #ifdef CORTEX_M4
   systick_init(SYSTICK_PERIOD);

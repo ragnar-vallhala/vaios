@@ -1,0 +1,208 @@
+#include "memory.h"
+#include "config.h"
+#include "structures.h"
+#include "utils.h"
+#include <stdint.h>
+
+extern TCB *current_task;
+extern uint32_t _heap_start;
+uint32_t allocation_size = 0;
+uint32_t allocation_count = 0;
+Heap_Mem_Block *heap_mem_head = NULL;
+
+#define SANITY_MAGIC_NUMBER 0x14U
+
+void memory_init(void) {
+  heap_mem_head = (Heap_Mem_Block *)&_heap_start;
+
+  // Clear heap region so uninitialized area has magic==0
+  for (uint8_t *ptr = (uint8_t *)heap_mem_head; ptr - (uint8_t *)heap_mem_head;
+       ptr++)
+    *ptr = 0;
+
+  allocation_size = 0;
+  allocation_count = 0;
+
+  v_log(LOG_INFO, "[MEMORY] Heap memory head initialized at 0x%x size 0x%08x",
+        (void *)heap_mem_head, (unsigned)HEAP_SIZE);
+}
+
+static inline int in_heap(void *p) {
+  return ((uint8_t *)p >= (uint8_t *)heap_mem_head) &&
+         ((uint8_t *)p < (uint8_t *)heap_mem_head + HEAP_SIZE);
+}
+
+void *v_malloc(size_t size) {
+  v_log(LOG_DEBUG, "[MEMORY] Allocation request on heap of size: %u",
+        (unsigned)size);
+  if (!heap_mem_head) {
+    v_log(LOG_ERROR,
+          "[MEMORY] Dynamic allocation not allowed, init memory first");
+    return NULL;
+  }
+
+  if (size == 0)
+    return NULL;
+
+  // align to 4 bytes (adjust if you want 8)
+  size = (size + 3) & ~((size_t)3);
+
+  // Protect heap (uncomment or replace with your RTOS protection)
+  // taskENTER_CRITICAL();
+
+  Heap_Mem_Block *head = heap_mem_head;
+  while (in_heap(head)) {
+    // If block has never been touched (magic == 0), treat remaining region as
+    // fresh
+    if (head->magic_number != SANITY_MAGIC_NUMBER) {
+      // Ensure there is enough space for header + payload within heap
+      uint8_t *payload = (uint8_t *)head + sizeof(Heap_Mem_Block);
+      uint8_t *after = payload + size;
+      if (!in_heap(after - 1))
+        break; // not enough room
+
+      head->magic_number = SANITY_MAGIC_NUMBER;
+      head->status = MEM_ALOC;
+      head->size = size;
+
+      allocation_count++;
+      allocation_size += size;
+
+      // taskEXIT_CRITICAL();
+      v_log(LOG_DEBUG, "[MEMORY] Allocated fresh block at 0x%x size %u",
+            (void *)payload, (unsigned)size);
+      return (void *)payload;
+    }
+
+    // If block is free and fits, use it (maybe split)
+    if (head->status == MEM_FREE && head->size >= size) {
+      // If remaining space after allocation is too small to hold header+1 byte,
+      // consume whole block
+      if (head->size <= size + sizeof(Heap_Mem_Block)) {
+        head->status = MEM_ALOC;
+        allocation_count++;
+        allocation_size += head->size;
+        // taskEXIT_CRITICAL();
+        v_log(LOG_DEBUG, "[MEMORY] Reused block at 0x%x size %u",
+              (void *)((uint8_t *)head + sizeof(Heap_Mem_Block)),
+              (unsigned)head->size);
+        return (void *)((uint8_t *)head + sizeof(Heap_Mem_Block));
+      } else {
+        // Split block: create newBlock after requested payload
+        Heap_Mem_Block *newBlock =
+            (Heap_Mem_Block *)((uint8_t *)head + sizeof(Heap_Mem_Block) + size);
+
+        // ensure newBlock is in heap
+        if (!in_heap((uint8_t *)newBlock))
+          break;
+
+        newBlock->magic_number = SANITY_MAGIC_NUMBER;
+        newBlock->status = MEM_FREE;
+        newBlock->size = head->size - size - sizeof(Heap_Mem_Block);
+
+        head->status = MEM_ALOC;
+        head->size = size;
+
+        allocation_count++;
+        allocation_size += size;
+
+        // taskEXIT_CRITICAL();
+        v_log(LOG_DEBUG,
+              "[MEMORY] Split block at 0x%x size %u (remaining %u at 0x%x)",
+              (void *)((uint8_t *)head + sizeof(Heap_Mem_Block)),
+              (unsigned)size, (unsigned)newBlock->size, (void *)newBlock);
+        return (void *)((uint8_t *)head + sizeof(Heap_Mem_Block));
+      }
+    }
+
+    // advance to next block
+    uint8_t *next_addr = (uint8_t *)head + sizeof(Heap_Mem_Block) + head->size;
+    if (!in_heap(next_addr))
+      break;
+    head = (Heap_Mem_Block *)next_addr;
+  }
+
+  // taskEXIT_CRITICAL();
+  v_log(LOG_ERROR, "[MEMORY] Dynamic allocation failed, memory exhausted.");
+  return NULL;
+}
+
+void v_free(void *ptr) {
+  v_log(LOG_DEBUG, "[MEMORY] Deallocation request on heap at: 0x%x", ptr);
+  if (ptr == NULL) {
+    v_log(LOG_ERROR, "[MEMORY] Deallocation not allowed of NULL pointers");
+    return;
+  }
+  if (!heap_mem_head) {
+    v_log(LOG_ERROR, "[MEMORY] Heap not initialized");
+    return;
+  }
+
+  // taskENTER_CRITICAL();
+
+  // Get header
+  Heap_Mem_Block *block =
+      (Heap_Mem_Block *)((uint8_t *)ptr - sizeof(Heap_Mem_Block));
+
+  // Validate pointer lies in heap and magic is valid
+  if (!in_heap(block) || block->magic_number != SANITY_MAGIC_NUMBER) {
+    v_log(LOG_ERROR, "[MEMORY] Invalid free or corrupted block at 0x%x", ptr);
+    // taskEXIT_CRITICAL();
+    return;
+  }
+
+  if (block->status != MEM_ALOC) {
+    v_log(LOG_ERROR,
+          "[MEMORY] Double free or freeing non-allocated block at 0x%x", ptr);
+    // taskEXIT_CRITICAL();
+    return;
+  }
+
+  // mark free and update counters
+  block->status = MEM_FREE;
+  allocation_count--;
+  allocation_size -= block->size;
+
+  // Walk heap to find previous block (if any)
+  Heap_Mem_Block *prev = NULL;
+  Heap_Mem_Block *cur = heap_mem_head;
+  while (cur != block) {
+    if (cur->magic_number != SANITY_MAGIC_NUMBER) {
+      v_log(LOG_ERROR,
+            "[MEMORY] Heap corruption detected while walking during free");
+      // taskEXIT_CRITICAL();
+      return;
+    }
+    uint8_t *next_addr = (uint8_t *)cur + sizeof(Heap_Mem_Block) + cur->size;
+    if (!in_heap(next_addr)) {
+      v_log(LOG_ERROR, "[MEMORY] Reached end of heap unexpectedly while "
+                       "walking during free");
+      // taskEXIT_CRITICAL();
+      return;
+    }
+    prev = cur;
+    cur = (Heap_Mem_Block *)next_addr;
+  }
+
+  // Try merge with next
+  uint8_t *maybe_next_addr =
+      (uint8_t *)block + sizeof(Heap_Mem_Block) + block->size;
+  if (in_heap(maybe_next_addr)) {
+    Heap_Mem_Block *next = (Heap_Mem_Block *)maybe_next_addr;
+    if (next->magic_number == SANITY_MAGIC_NUMBER && next->status == MEM_FREE) {
+      // merge block <- next
+      block->size += sizeof(Heap_Mem_Block) + next->size;
+      v_log(LOG_DEBUG, "[MEMORY] Merged with NEXT block at 0x%x", (void *)next);
+    }
+  }
+
+  // Try merge with prev
+  if (prev && prev->status == MEM_FREE) {
+    // merge prev <- block
+    prev->size += sizeof(Heap_Mem_Block) + block->size;
+    v_log(LOG_DEBUG, "[MEMORY] Merged with PREVIOUS block at 0x%x",
+          (void *)prev);
+  }
+
+  // taskEXIT_CRITICAL();
+}

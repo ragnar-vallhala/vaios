@@ -6,7 +6,7 @@ TCB *ready_queue = NULL;
 TCB *blocked_queue = NULL;
 TCB *sleep_queue = NULL;
 uint32_t task_count = 0;
-
+TCB *current_task = NULL;
 // ---------------------- Queue Operations ----------------------
 
 // Add task at the end of a circular doubly-linked queue
