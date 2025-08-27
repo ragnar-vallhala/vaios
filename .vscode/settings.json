@@ -10,6 +10,10 @@
         "navhal.h": "c",
         "hal_uart.h": "c",
         "clock.h": "c",
-        "task.h": "c"
+        "task.h": "c",
+        "memory.h": "c",
+        "utils.h": "c",
+        "stddef.h": "c",
+        "structures.h": "c"
     }
 }

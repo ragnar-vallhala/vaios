@@ -1,5 +1,18 @@
 #include "semihosting.h"
 #include <stddef.h>
+#include <stdint.h>
+
+// Interrupt handling
+#define SCB_SHPR1 (*(volatile uint32_t *)0xE000ED18)
+#define SCB_SHPR2 (*(volatile uint32_t *)0xE000ED1C)
+#define SCB_SHPR3 (*(volatile uint32_t *)0xE000ED20)
+
+void set_systick_interrupt_priority(uint32_t prio) {
+  SCB_SHPR3 = (SCB_SHPR3 & ~(0xFF << 24)) | (prio << 24);
+}
+void set_pendsv_interrupt_priority(uint32_t prio) {
+  SCB_SHPR3 = (SCB_SHPR3 & ~(0xFF << 16)) | (prio << 16);
+}
 
 static inline int semihosting_call(int reason, void *arg) {
   int value;

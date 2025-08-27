@@ -1,0 +1,162 @@
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 242][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 315][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 394][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 467][0m [MEMORY] Allocated fresh block at 0x20000284 size 128
+[32m[INFO  547][0m [TASK] Added task with id: 1618541514, priority: 1, stack_size: 128, stack_base: 0x20000284
+[36m[DEBUG 665][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 738][0m [MEMORY] Allocated fresh block at 0x20000310 size 44
+[36m[DEBUG 817][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 891][0m [MEMORY] Allocated fresh block at 0x20000348 size 128
+[32m[INFO  970][0m [TASK] Added task with id: 1618541515, priority: 1, stack_size: 128, stack_base: 0x20000348
+[36m[DEBUG 1090][0m PENDSV Triggered
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  0][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  0][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x200003d4 size 44
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x2000040c size 128
+[32m[INFO  0][0m [TASK] Added task with id: 1618541516, priority: 1, stack_size: 128, stack_base: 0x2000040c
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x20000498 size 44
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x200004d0 size 128
+[32m[INFO  0][0m [TASK] Added task with id: 1618541517, priority: 1, stack_size: 128, stack_base: 0x200004d0
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 390][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 461][0m [MEMORY] Allocated fresh block at 0x20000284 size 128
+[32m[INFO  541][0m [TASK] Added task with id: -123932669, priority: 1, stack_size: 128, stack_base: 0x20000284
+[36m[DEBUG 657][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 728][0m [MEMORY] Allocated fresh block at 0x20000310 size 44
+[36m[DEBUG 806][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 880][0m [MEMORY] Allocated fresh block at 0x20000348 size 128
+[32m[INFO  960][0m [TASK] Added task with id: -123932668, priority: 1, stack_size: 128, stack_base: 0x20000348
+[36m[DEBUG 1080][0m PENDSV Triggered
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 389][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 463][0m [MEMORY] Allocated fresh block at 0x20000284 size 128
+[32m[INFO  543][0m [TASK] Added task with id: -123277309, priority: 1, stack_size: 128, stack_base: 0x20000284
+[36m[DEBUG 661][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 732][0m [MEMORY] Allocated fresh block at 0x20000310 size 44
+[36m[DEBUG 811][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 885][0m [MEMORY] Allocated fresh block at 0x20000348 size 128
+[32m[INFO  964][0m [TASK] Added task with id: -123277308, priority: 1, stack_size: 128, stack_base: 0x20000348
+[36m[DEBUG 1090][0m PENDSV Triggered
+[36m[DEBUG 1100][0m PENDSV Triggered
+[36m[DEBUG 1110][0m PENDSV Triggered
+[36m[DEBUG 1120][0m PENDSV Triggered
+[36m[DEBUG 1130][0m PENDSV Triggered
+[36m[DEBUG 1140][0m PENDSV Triggered
+[36m[DEBUG 1150][0m PENDSV Triggered
+[36m[DEBUG 1160][0m PENDSV Triggered
+[36m[DEBUG 1170][0m PENDSV Triggered
+[36m[DEBUG 1180][0m PENDSV Triggered
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x200003d4 size 44
+[36m[DEBUG 390][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 464][0m [MEMORY] Allocated fresh block at 0x2000040c size 128
+[32m[INFO  543][0m [TASK] Added task with id: -123277307, priority: 1, stack_size: 128, stack_base: 0x2000040c
+[36m[DEBUG 661][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 732][0m [MEMORY] Allocated fresh block at 0x20000498 size 44
+[36m[DEBUG 811][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 885][0m [MEMORY] Allocated fresh block at 0x200004d0 size 128
+[32m[INFO  964][0m [TASK] Added task with id: -123277306, priority: 1, stack_size: 128, stack_base: 0x200004d0
+[36m[DEBUG 1090][0m PENDSV Triggered
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 �s�
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x2000055c size 44
+[36m[DEBUG 390][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 464][0m [MEMORY] Allocated fresh block at 0x20000594 size 128
+[32m[INFO  543][0m [TASK] Added task with id: -123277305, priority: 1, stack_size: 128, stack_base: 0x20000594
+[36m[DEBUG 661][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 732][0m [MEMORY] Allocated fresh block at 0x20000620 size 44
+[36m[DEBUG 811][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 885][0m [MEMORY] Allocated fresh block at 0x20000658 size 128
+[32m[INFO  964][0m [TASK] Added task with id: -123277304, priority: 1, stack_size: 128, stack_base: 0x20000658
+[36m[DEBUG 1090][0m PENDSV Triggered
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x200006e4 size 44
+[36m[DEBUG 389][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 462][0m [MEMORY] Allocated fresh block at 0x2000071c size 128
+[32m[INFO  541][0m [TASK] Added task with id: -123277303, priority: 1, stack_size: 128, stack_base: 0x2000071c
+�[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x200007a8 size 44
+[36m[DEBUG 390][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 464][0m [MEMORY] Allocated fresh block at 0x200007e0 size 128
+[32m[INFO  543][0m [TASK] Added task with id: -123277302, priority: 1, stack_size: 128, stack_base: 0x200007e0
+�[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 390][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 463][0m [MEMORY] Allocated fresh block at 0x20000284 size 128
+[32m[INFO  543][0m [TASK] Added task with id: -123932669, priority: 1, stack_size: 128, stack_base: 0x20000284
+[36m[DEBUG 661][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 732][0m [MEMORY] Allocated fresh block at 0x20000310 size 44
+[36m[DEBUG 811][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 885][0m [MEMORY] Allocated fresh block at 0x20000348 size 128
+[32m[INFO  964][0m [TASK] Added task with id: -123932668, priority: 1, stack_size: 128, stack_base: 0x20000348
+[36m[DEBUG 1090][0m PENDSV Triggered
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  0][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  0][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x200003d4 size 44
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x2000040c size 128
+[32m[INFO  0][0m [TASK] Added task with id: -123932667, priority: 1, stack_size: 128, stack_base: 0x2000040c
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x20000498 size 44
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 0][0m [MEMORY] Allocated fresh block at 0x200004d0 size 128
+[32m[INFO  0][0m [TASK] Added task with id: -123932666, priority: 1, stack_size: 128, stack_base: 0x200004d0
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 389][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 463][0m [MEMORY] Allocated fresh block at 0x20000284 size 128
+[32m[INFO  543][0m [TASK] Added task with id: -124194813, priority: 1, stack_size: 128, stack_base: 0x20000284
+[36m[DEBUG 661][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 732][0m [MEMORY] Allocated fresh block at 0x20000310 size 44
+[36m[DEBUG 810][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 884][0m [MEMORY] Allocated fresh block at 0x20000348 size 128
+[32m[INFO  964][0m [TASK] Added task with id: -124194812, priority: 1, stack_size: 128, stack_base: 0x20000348
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 μs
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  153][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 240][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 311][0m [MEMORY] Allocated fresh block at 0x200003d4 size 44
+[36m[DEBUG 390][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 464][0m [MEMORY] Allocated fresh block at 0x2000040c size 128
+[32m[INFO  543][0m [TASK] Added task with id: -124194811, priority: 1, stack_size: 128, stack_base: 0x2000040c
+[36m[DEBUG 661][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 732][0m [MEMORY] Allocated fresh block at 0x20000498 size 44
+[36m[DEBUG 811][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 885][0m [MEMORY] Allocated fresh block at 0x200004d0 size 128
+[32m[INFO  964][0m [TASK] Added task with id: -124194810, priority: 1, stack_size: 128, stack_base: 0x200004d0
+[36m[DEBUG 1090][0m PENDSV Triggered

@@ -1,0 +1,227 @@
+32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[IN[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 μs
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x20000284 size 128
+[32m[INFO  54][0m [TASK] Added task with id: 134222639, priority: 1, stack_size: 128, stack_base: 0x20000284
+[36m[DEBUG 65][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 73][0m [MEMORY] Allocated fresh block at 0x20000348 size 44
+[36m[DEBUG 80][0m [MEMORY] Allocation request on heap of size: 128
+[31m[ERROR 88][0m [MEMORY] Dynamic allocation failed, memory exhausted.
+[32m[INFO  95][0m [TASK] Added task with id: 134222640, priority: 1, stack_size: 128, stack_base: 0x0
+[36m[DEBUG 110][0m PENDSV Triggered
+[32m[INFO  111][0m Hello from task 1
+[32m[INFO  116][0m Hello from task 1[36m[DEBUG 120][0m PENDSV Triggered
+[35m[FATAL 121][0m [HardFault] PC=0x8000225 LR=0x8000225 xPSR=0x8000225
+[35m[FATAL 121][0m [HardFault] R0=0x8000225 R1=0x8000225 R2=0x8000225 R3=0x8000225 R12=0x8000225
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 ��s
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x20000284 size 44
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x200002bc size 128
+[32m[INFO  54][0m [TASK] Added task with id: 134222641, priority: 1, stack_size: 128, stack_base: 0x200002bc
+[36m[DEBUG 65][0m [MEMORY] Allocation request on heap of size: 44
+[31m[ERROR 73][0m [MEMORY] Dynamic allocation failed, memory exhausted.
+[36m[DEBUG 90][0m PENDSV Triggered
+[32m[INFO  91][0m Hello from task 1
+[32m[INFO  53687171[36m[DEBUG 943076150][0m PENDSV Triggered
+[35m[FATAL 943076150][0m [HardFault] PC=0x8001dda LR=0x8003a99 xPSR=0x2100000e
+[35m[FATAL 943076150][0m [HardFault] R0=0x20000020 R1=0x20017f6c R2=0x661a8480 R3=0x661a8480 R12=0xa0000000
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 μs
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x20000284 size 128
+[32m[INFO  54][0m [TASK] Added task with id: 1618541620, priority: 1, stack_size: 128, stack_base: 0x20000284
+[36m[DEBUG 65][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 73][0m [MEMORY] Allocated fresh block at 0x20000310 size 44
+[36m[DEBUG 80][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 88][0m [MEMORY] Allocated fresh block at 0x20000348 size 128
+[32m[INFO  95][0m [TASK] Added task with id: 1618541621, priority: 1, stack_size: 128, stack_base: 0x20000348
+[36m[DEBUG 110][0m PENDSV Triggered
+[32m[INFO  111][0m Hello from task 1
+[32m[INFO  116][0m Hello from task 1[36m[DEBUG 120][0m PENDSV Triggered
+[32m[INFO  121][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0

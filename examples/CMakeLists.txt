@@ -1,5 +1,6 @@
 include_directories(${CMAKE_SOURCE_DIR}/include)
 message(STATUS "Startup File: ${STARTUP_FILE}")
+
 if(NOT NAVHAL)
   set(STARTUP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../startup.s)
 endif()
@@ -17,12 +18,14 @@ target_link_libraries(main PRIVATE
     vaios
 )
 endif()
+
 add_custom_target(flash
   COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:main> ${CMAKE_CURRENT_BINARY_DIR}/main.bin
   COMMAND ${FLASHER} write ${CMAKE_CURRENT_BINARY_DIR}/main.bin ${FLASH_ADDRESS}
   DEPENDS main
   COMMENT "Converting ELF to BIN and flashing to board"
 )
+
 message(STATUS "TARGET File ${CMAKE_CURRENT_BINARY_DIR}/main.bin")
 # elf file size calculation
 add_custom_command(

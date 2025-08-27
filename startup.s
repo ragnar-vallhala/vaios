@@ -33,7 +33,7 @@
 .global Reset_Handler
 .global SysTick_Handler
 .global PendSV_Handler
-
+.global HardFault_Handler
 
 /**
  * @brief Vector Table
@@ -44,7 +44,7 @@
     .word  _estack                  /* 1. Top of Stack */
     .word  Reset_Handler            /* 2. Reset Handler */
     .word  Reset_Handler            /* 3. NMI Handler */
-    .word  Reset_Handler            /* 4. Hard Fault Handler */
+    .word  HardFault_Handler            /* 4. Hard Fault Handler */
     .word  Reset_Handler            /* 5. MPU Fault Handler */
     .word  Reset_Handler            /* 6. Bus Fault Handler */
     .word  Reset_Handler            /* 7. Usage Fault Handler */

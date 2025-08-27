@@ -32,6 +32,10 @@
 extern "C" {
 #endif
 
+// Priority helpers
+void set_systick_interrupt_priority(uint32_t prio);
+void set_pendsv_interrupt_priority(uint32_t prio);
+
 // Common helpers
 void sh_write0(const char *s);
 void sh_putchar(char c);

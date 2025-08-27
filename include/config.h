@@ -1,16 +1,19 @@
-#ifndef VAIOS_CONFIG_H
-#define VAIOS_CONFIG_H
+#ifndef VAIOS_CORTEX_M4_CONFIG_H
+#define VAIOS_CORTEX_M4_CONFIG_H
 
 // Init settings
-#define SYSTICK_PERIOD 1000
+#define SYSTICK_PERIOD 10000
 #define UART_LOGGING_ENABLE 1
 #define UART_BAUDRATE 9600
 #define LOGGING_ENABLED 1
 
+// Interrupts
+#define __NVIC_PRIO_BITS 4
+#define MAX_SYSCALL_INTERRUPT_PRIORITY (7 << (8 - __NVIC_PRIO_BITS))
 // Scheduling
 #define TIME_SLICE 10
 
 // Memory
 #define MAIN_STACK_SIZE 128
 #define HEAP_SIZE 4096
-#endif // !VAIOS_CONFIG_H
+#endif // !VAIOS_CORTEX_M4_CONFIG_H

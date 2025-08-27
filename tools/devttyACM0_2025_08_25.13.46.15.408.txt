@@ -1,0 +1,266 @@
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 μs
+[32m[INFO  80][0m [VAIOS INIT] UART started with baudrat600ebps
+ [32m[9IN FO  153][0m [MEMORY] Heap memory head initialized at 0x20000248 size 0x1000
+[32m[INFO  242][0m [TASK] Stack memory head initialized at 0x20017f80 size 0x16db8
+[36m[DEBUG 332][0m [MEMORY] Allocation request on heap of size: 400
+[36m[DEBUG 406][0m [MEMORY] Allocated fresh block at 0x200005e0 size 400
+[36m[DEBUG 485][0m No stack alloc to free.
+[36m[DEBUG 533][0m 0/93624 bytes used from stack.
+[36m[DEBUG 588][0m [MEMORY] Allocation request on heap of size: 12
+[36m[DEBUG 661][0m [MEMORY] Split block at 0x200003f0 size 12 (remaining 48 at 0x200003fc)
+[32m[INFO  759][0m Heap allocation success | 12 bytes allocated at 0x200003f0 | 1/100 allocations live
+[36m[DEBUG 870][0m 412/4096 bytes used from heap.
+[36m[DEBUG 925][0m No stack alloc to free.
+[36m[DEBUG 973][0m 0/93624 bytes used from stack.
+[36m[DEBUG 1028][0m [MEMORY] Allocation request on heap of size: 4
+[36m[DEBUG 1101][0m [MEMORY] Split block at 0x20000408 size 4 (remaining 32 at 0x2000040c)
+[32m[INFO  1199][0m Heap allocation success | 4 bytes allocated at 0x20000408 | 2/100 allocations live
+[36m[DEBUG 1309][0m 416/4096 bytes used from heap.
+[36m[DEBUG 1366][0m [MEMORY] Allocation request on heap of size: 22
+[36m[DEBUG 1440][0m [MEMORY] Reused block at 0x20000418 size 32
+[32m[INFO  1509][0m Heap allocation success | 22 bytes allocated at 0x20000418 | 3/100 allocations live
+[36m[DEBUG 1621][0m 448/4096 bytes used from heap.
+[36m[DEBUG 1677][0m [TASK] Stack allocation request of size: 13
+[36m[DEBUG 1747][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 1805][0m [TASK] Stack allocated fresh block at 0x20017f70 size 16
+[32m[INFO  1889][0m Stack allocation success | 13 bytes allocated at 0x20017f70 | 4/100 allocations live
+[36m[DEBUG 2001][0m 16/93624 bytes used from stack.
+[36m[DEBUG 2058][0m [MEMORY] Allocation request on heap of size: 10
+[36m[DEBUG 2132][0m [MEMORY] Allocated fresh block at 0x2000077c size 12
+[32m[INFO  2212][0m Heap allocation success | 10 bytes allocated at 0x2000077c | 5/100 allocations live
+[36m[DEBUG 2323][0m 460/4096 bytes used from heap.
+[36m[DEBUG 2379][0m [TASK] Stack allocation request of size: 11
+[36m[DEBUG 2449][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 2507][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 2566][0m [TASK] Stack allocated fresh block at 0x20017f58 size 12
+[32m[INFO  2649][0m Stack allocation success | 11 bytes allocated at 0x20017f58 | 6/100 allocations live
+[36m[DEBUG 2762][0m 28/93624 bytes used from stack.
+[36m[DEBUG 2819][0m [TASK] Stack allocation request of size: 3
+[36m[DEBUG 2888][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 2946][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 3004][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 3063][0m [TASK] Stack allocated fresh block at 0x20017f48 size 4
+[32m[INFO  3145][0m Stack allocation success | 3 bytes allocated at 0x20017f48 | 7/100 allocations live
+[36m[DEBUG 3257][0m 32/93624 bytes used from stack.
+[36m[DEBUG 3314][0m [MEMORY] Allocation request on heap of size: 50
+[36m[DEBUG 3388][0m [MEMORY] Allocated fresh block at 0x20000794 size 52
+[32m[INFO  3467][0m Heap allocation success | 50 bytes allocated at 0x20000794 | 8/100 allocations live
+[36m[DEBUG 3579][0m 512/4096 bytes used from heap.
+[36m[DEBUG 3635][0m [TASK] Deallocation request on stack at: 0x200003f0
+[31m[ERROR 3713][0m [TASK] Invalid free or corrupted block at 0x200003f0
+[32m[INFO  3792][0m Freed stack block (slot 0), live=7
+[36m[DEBUG 3853][0m 32/93624 bytes used from stack.
+[36m[DEBUG 3910][0m [MEMORY] Deallocation request on heap at: 0x20000794
+[32m[INFO  3989][0m Freed heap block (slot 0), live=6
+[36m[DEBUG 4048][0m 460/4096 bytes used from heap.
+[36m[DEBUG 4105][0m [TASK] Deallocation request on stack at: 0x20017f48
+[31m[ERROR 4183][0m [TASK] Invalid free or corrupted block at 0x20017f48
+[32m[INFO  4262][0m Freed stack block (slot 0), live=5
+[36m[DEBUG 4322][0m 32/93624 bytes used from stack.
+[36m[DEBUG 4380][0m [MEMORY] Deallocation request on heap at: 0x20000408
+[32m[INFO  4459][0m Freed heap block (slot 1), live=4
+[36m[DEBUG 4518][0m 456/4096 bytes used from heap.
+[36m[DEBUG 4575][0m [TASK] Deallocation request on stack at: 0x20017f58
+[32m[INFO  4653][0m Freed stack block (slot 0), live=3
+[36m[DEBUG 4713][0m 20/93624 bytes used from stack.
+[36m[DEBUG 4770][0m [MEMORY] Deallocation request on heap at: 0x2000077c
+[36m[DEBUG 4850][0m [MEMORY] Merged with NEXT block at 0x20000788
+[32m[INFO  4921][0m Freed heap block (slot 1), live=2
+[36m[DEBUG 4981][0m 444/4096 bytes used from heap.
+[36m[DEBUG 5037][0m [TASK]a ckS atllocation request of size: 45
+[36m[DEBUG 5107][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 5165][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 5224][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 5282][0m [TASK] Stack allocated fresh block at 0x20017f1c size 48
+[32m[INFO  5365][0m Stack allocation success | 45 bytes allocated at 0x20017f1c | 3/100 allocations live
+[36m[DEBUG 5478][0m 68/93624 bytes used from stack.
+[36m[DEBUG 5535][0m [TASK] Deallocation request on stack at: 0x20017f70
+[31m[ERROR 5613][0m [TASK] Invalid free or corrupted block at 0x20017f70
+[32m[INFO  5692][0m Freed stack block (slot 0), live=2
+[36m[DEBUG 5753][0m 68/93624 bytes used from stack.
+[36m[DEBUG 5810][0m [MEMORY] Deallocation request on heap at: 0x20000418
+[36m[DEBUG 5889][0m [MEMORY] Merged with PREVIOUS block at 0x200003fc
+[32m[INFO  5965][0m Freed heap block (slot 1), live=1
+[36m[DEBUG 6025][0m 412/4096 bytes used from heap.
+[36m[DEBUG 6081][0m [TASK] Stack allocation request of size: 1
+[36m[DEBUG 6150][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 6208][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 6267][0m [TASK] Reused free block at 0x20017f58 size 12
+[32m[INFO  6339][0m Stack allocation success | 1 bytes allocated at 0x20017f58 | 2/100 allocations live
+[36m[DEBUG 6451][0m 80/93624 bytes used from stack.
+[36m[DEBUG 6508][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 6582][0m [MEMORY] Reused block at 0x20000408 size 48
+[32m[INFO  6652][0m Heap allocation success | 44 bytes allocated at 0x20000408 | 3/100 allocations live
+[36m[DEBUG 6764][0m 460/4096 bytes used from eahp.
+[36m[DEBUG 6820][0m [MEMORY] Deallocation request on heap at: 0x20000408
+[32m[INFO  6899][0m Freed heap block (slot 2), live=2
+[36m[DEBUG 6958][0m 412/4096 bytes used from heap.
+[36m[DEBUG 7015][0m [TASK] Deallocation request on stack at: 0x20017f1c
+[31m[ERROR 7093][0m [TASK] Invalid free or corrupted block at 0x20017f1c
+[32m[INFO  7172][0m Freed stack block (slot 0), live=1
+[36m[DEBUG 7232][0m 80/93624 bytes used from stack.
+[36m[DEBUG 7290][0m No heap alloc to free.
+[36m[DEBUG 7338][0m 412/4096 bytes used from heap.
+[36m[DEBUG 7394][0m [MEMORY] Allocation request on heap of size: 34
+[36m[DEBUG 7468][0m [MEMORY] Reused block at 0x20000408 size 48
+[32m[INFO  7538][0m Heap allocation success | 34 bytes allocated at 0x20000408 | 2/100 allocations live
+[36m[DEBUG 7649][0m 46/04096 bytes used from heap.
+[36m[DEBUG 7705][0m [TASK] Deallocation request on stack at: 0x20017f58
+[32m[INFO  7784][0m Freed stack block (slot 0), live=1
+[36m[DEBUG 7844][0m 68/93624 bytes used from stack.
+[36m[DEBUG 7901][0m [TASK] Stack allocation request of size: 29
+[36m[DEBUG 7971][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 8029][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 8088][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 8146][0m [TASK] Stack allocated fresh block at 0x20017f2c size 32
+[32m[INFO  8229][0m Stack allocation success | 29 bytes allocated at 0x20017f2c | 2/100 allocations live
+[36m[DEBUG 8342][0m 100/93624 bytes used from stack.
+[36m[DEBUG 8400][0m No heap alloc to free.
+[36m[DEBUG 8448][0m 460/4096 bytes used from heap.
+[36m[DEBUG 8505][0m [MEMORY] Allocation request on heap of size: 56
+[36m[DEBUG 8579][0m [MEMORY] Split block at 0x2000077c size 56 (remaining 8 at 0x200007b4)
+[32m[INFO  8676][0m Heap allocation success | 56 bytes allocated at 0x2000077c | 3/100 allocations live
+[36m[DEBUG 8788][0m 516/4096 bytes used from heap.
+[36m[DEBUG 8844][0m [MEMORY] Allocation request on heap of size: 12
+[36m[DEBUG 8918][0m [MEMORY] Allocated fresh block at 0x200007d4 size 12
+[32m[INFO  8997][0m Heap allocation success | 12 bytes allocated at 0x200007d4 | 4/100 allocations live
+[36m[DEBUG 9109][0m 528/4096 bytes used from heap.
+[36m[DEBUG 9165][0m [TASK] Deallocation request on stack at: 0x20000408
+[31m[ERROR 9243][0m [TASK] Invalid free or corrupted block at 0x20000408
+[32m[INFO  9322][0m Freed stack block (slot 0), live=3
+[36m[DEBUG 9383][0m 100/93624 bytes used from stack.
+[36m[DEBUG 9441][0m [TASK] Stack allocation request of size: 33
+[36m[DEBUG 9511][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 9569][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 9628][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 9686][0m [TASK] Stack allocated fresh block at 0x20017f28 size 36
+[32m[INFO  9769][0m Stack allocation success | 33 bytes allocated at 0x20017f28 | 4/100 allocations live
+[36m[DEBUG 9882][0m 136/93624 bytes used from stack.
+[36m[DEBUG 9940][0m [MEMORY] Deallocation request on heap at: 0x2000077c
+[36m[DEBUG 10019][0m [MEMORY] Merged with NEXT block at 0x200007b4
+[32m[INFO  10092][0m Freed heap block (slot 2), live=3
+[36m[DEBUG 10153][0m 472/4096 bytes used from heap.
+[36m[DEBUG 10210][0m No heap alloc to free.
+[36m[DEBUG 10259][0m 472/4096 bytes used from heap.
+[36m[DEBUG 10316][0m [MEMORY] Allocation request on heap of size: 12
+[36m[DEBUG 10391][0m [MEMORY] Split block at 0x2000077c size 12 (remaining 52 at 0x20000788)
+[32m[INFO  10491][0m Heap allocation success | 12 bytes allocated at 0x2000077c | 4/100 allocations live
+[36m[DEBUG 10604][0m 484/4096 bytes used from heap.
+[36m[DEBUG 10661][0m [TASK] Stack allocation request of size: 37
+[36m[DEBUG 10732][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 10791][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 10851][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 10910][0m [TASK] Stack allocated fresh block at 0x20017f24 size 40
+[32m[INFO  10995][0 Smtack allocation success | 37 bytes allocated at 0x20017f24 | 5/100 allocations live
+[36m[DEBUG 11108][0m 176/93624 bytes used from stack.
+[36m[DEBUG 11168][0m [MEMORY] Allocation request on heap of size: 32
+[36m[DEBUG 11243][0m [MEMORY] Split block at 0x20000794 size 32 (remaining 8 at 0x200007b4)
+[32m[INFO  11342][0m Heap allocation success | 32 bytes allocated at 0x20000794 | 6/100 allocations live
+[36m[DEBUG 11454][0m 516/4096 bytes used from heap.
+[36m[DEBUG 11511][0m [TASK] Stack allocation request of size: 55
+[36m[DEBUG 11582][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 11642][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 11701][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 11760][0m [TASK] Stack allocated fresh block at 0x20017f14 size 56
+[32m[INFO  11845]0m [Stack allocation success | 55 bytes allocated at 0x20017f14 | 7/100 allocations live
+[36m[DEBUG 11958][0m 232/93624 bytes used from stack.
+[36m[DEBUG 12018][0m [MEMORY] Alloaction request on heap of size: 50
+[36m[DEBUG 12093][0m [MEMORY] Allocated fresh block at 0x200007ec size 52
+[32m[INFO  12173][0m Heap allocation success | 50 bytes allocated at 0x200007ec | 8/100 allocations live
+[36m[DEBUG 12285][0m 568/4096 bytes used from heap.
+[36m[DEBUG 12343][0m [TASK] Stakc allocation request of size: 55
+[36m[DEBUG 12414][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 12473][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 12532][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 12592][0m [TASK] Stack allocated fresh block at 0x20017f14 size 56
+[32m[INFO  12676][0m Stack allocation success | 55 bytes allocated at 0x20017f14 | 9/100 allocations live
+[36m[DEBUG 12790][0m 288/93624 bytes used from stack.
+[36m[DEBUG 12849][0m [TASK] Stack allocation request of size: 49
+[36m[DEBUG 12920][0m  [TASK] Insecpting block at 0x20
+[36m[DEBUG 12979][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 13039][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 13098][0m [TASK] Stack allocated fresh block at 0x20017f18 size 52
+[32m[INFO  13183][0m Stack allocation success | 49 bytes allocated at 0x20017f18 | 10/100 allocations live
+[36m[DEBUG 13297][0m 340/93624 bytes used from stack.
+[36m[DEBUG 13357][0m [TASK] Stack allocation request of size: 45
+[36m[DEBUG 13427][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 13487][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 13546][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 13606][0m [TASK] Stack allocated fresh block at 0x20017f1c size 48
+[32m[INFO  13690][0m Stack allocation success | 45 bytes allocated at 0x20017f1c | 11/100 allocations live
+[36m[DEBUG 13805][0m 388/93624 bytes used from stack.
+[36m[DEBUG 13864][0m [MEMORY] Allocation request on heap osfiz e: 40
+[36m[DEBUG 13939][0m [MEMORY] Allocated fresh block at 0x2000082c size 40
+[32m[INFO  14019][0m Heap allocation success | 40 bytes allocated at 0x2000082c | 12/100 allocations live
+[36m[DEBUG 14133][0m 608/4096 bytes used from heap.
+[36m[DEBUG 14190][0m [MEMORY] Deallocation request on heap at: 0x2000077c
+[32m[INFO  14270][0m Freed heap block (slot 3), live=11
+[36m[DEBUG 14332][0m 596/4096 bytes used from heap.
+[36m[DEBUG 14389][0m [TASK] Stack allocation request of size: 53
+[36m[DEBUG 14460][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 14519][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 14579][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 14638][0m [TASK] Stack allocated fresh block at 0x20017f14 size 56
+[32m[INFO  14722][0m Stack allocation success | 53 bytes allocated at 0x20017f14 | 12/100 allocations live
+[36m[DEBUG 14837][0m 444/93624 bytes used from stack.
+[36m[DEBUG 14896][0m [MEMORY] Allocation request on heap of size: 48
+[36m[DEBUG 14972][0m [MEMORY] Allocated fresh block at 0x20000860 size 48
+[32m[INFO  15052][0m Heap allocation success | 48 bytes allocated at 0x20000860 | 13/100 allocations live
+[36m[DEBUG 15165][0m 644/4096 bytes used from heap.
+[36m[DEBUG 15223][0 m[TASK] Stack allocation request of size: 55
+[36m[DEBUG 15293][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 15353][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 15412][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 15472][0m [TASK] Stack allocated fresh block at 0x20017f14 size 56
+[32m[INFO  15556][0m Stack allocation success | 55 bytes allocated at 0x20017f14 | 14/100 allocations live
+[36m[DEBUG 15671][0m 500/93624 bytes used from stack.
+[36m[DEBUG 15730][0m [MEMORY] Deallocation request on heap at: 0x2000082c
+[32m[INFO  15810][0m Freed heap block (slot 3), live=13
+[36m[DEBUG 15872][0m 604/4096 bytes used from heap.
+[36m[DEBUG 15929][0m [TASK] Stack allocation request of size: 57
+[36m[DEBUG 16000][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 16059][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 16119][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 16178][0m [TASK] Stack allocated fresh block at 0x20017f10 size 60
+[32m[INFO  16262][0m Stack allocation success | 57 bytes allocated at 0x20017f10 | 14/100 allocations live
+[36m[DEBUG 16377][0m 560/93624 bytes used from stack.
+[36m[DEBUG 16436][0m [MEMORY] Allocation request on heap of size: 52
+[36m[DEBUG 16511][0m [MEMORY] Allocated fresh block at 0x2000089c size 52
+[32m[INFO  16592][0m Heap allocation success | 52 bytes allocated at 0x2000089c | 15/100 allocations live
+[36m[DEBUG 16705][0m 656/4096 bytes used from heap.
+[36m[DEBUG 16762][0m [MEMORY] Allocation request on heap of size: 58
+[36m[DEBUG 16838][0m [MEMORY] Allocated fresh block at 0x200008dc size 60
+[32m[INFO  16918][0m Heap allocation success | 58 bytes allocated at 0x200008dc | 16/100 allocations live
+[36m[DEBUG 17031][0m 716/4096 bytes used from heap.
+[36m[DEBUG 17089][0m [TASK] Stack allocation request of size: 1
+[36m[DEBUG 17158][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 17218][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 17277][0m [TASK] Reused free block at 0x20017f58 size 12
+[32m[INFO  17351][0m Stak callocation success | 1 bytes allocated at 0x20017f58 | 17/100 allocations live
+[36m[DEBUG 17465][0m 572/93624 bytes used from stack.
+[36m[DEBUG 17524][0m [MEMORY] Allocation request on heap of size: 52
+[36m[DEBUG 17599][0m [MEMORY] Allocated fresh block at 0x20000924 size 52
+[32m[INFO  17679][0m Heap allocation success | 52 bytes allocated at 0x20000924 | 18/100 allocations live
+[36m[DEBUG 17793][0m 768/4096 bytes used from heap.
+[36m[DEBUG 17850][0m [MEMORY] Deallocation request on heap at: 0x20000794
+[36m[DEBUG 17930][0m [MEMORY] Merged with NEXT block at 0x200007b4
+[36m[DEBUG 18003][0m [MEMORY] Merged with PREVIOUS block at 0x20000770
+[32m[INFO  18080][0m Freed heap block (slot 5), live=17
+[36m[DEBUG 18142][0m 736/4096 bytes used from heap.
+[36m[DEBUG 18199][0m [TASK] Stack allocation request of size: 23
+[36m[DEBUG 18270][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 18329][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 18389][0m [TASK] Stack allocated fresh block at 0x20017f4c size 24
+[32m[INFO  18473][0m Stack allocation success | 23 bytes allocated at 0x20017f4c | 18/100 allocations live
+[36m[DEBUG 18588][0m 596/93624 bytes used from stack.
+[36m[DEBUG 18647][0m [TASK] Stack allocation request of size: 23
+[36m[DEBUG 18718][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 18777][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 18837][0m  [TASK] Inspecting block at 0x20
+[36m[DEBUG 18896][0m [TASK] Stack allocated fresh block at 0x20017f28 size 24
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 1000 ��s
+[32m[INFO  0][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  0][0m [MEMORY] Heap memory head initialized at 0x20000248 size 0x1000
+[32m[INFO  0][0m [TASK] Stack memory head initialized at 0x20017f80 size 0x16db8
+[36m[DEBUG 0][0m [MEMORY] Allocation request on heap of size: 400
+[36m[DEBUG 0][m0 [MEMORY] Allocated fresh block at 0x20000964 size 400

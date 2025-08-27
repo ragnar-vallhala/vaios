@@ -1,0 +1,30 @@
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 μs
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x200002bc size 128
+[32m[INFO  54][0m [TASK] Added task with id: 4, priority: 1, stack_size: 128, stack_base: 0x200002bc
+[36m[DEBUG 65][0m [MEMORY] Allocation request on heap of size: 44
+[31m[ERROR 72][0m [MEMORY] Dynamic allocation failed, memory exhausted.
+[36m[DEBUG 90][0m PENDSV Triggered
+[32m[INFO  91][0m Hello from task 1
+[32m[INFO  53687171[36m[DEBUG 943076150][0m PENDSV Triggered
+[35m[FATAL 943076150][0m [HardFault] PC=0x8003a78 LR=0x8003b0f xPSR=0x100000e
+[35m[FATAL 943076150][0m [HardFault] R0=0x8000225 R1=0x4 R2=0x20000234 R3=0x4 R12=0xa0000000
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 ��s
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x200002bc size 128
+[32m[INFO  54][0m [TASK] Added task with id: 5, priority: 1, stack_size: 128, stack_base: 0x200002bc
+[36m[DEBUG 65][0m [MEMORY] Allocation request on heap of size: 44
+[31m[ERROR 72][0m [MEMORY] Dynamic allocation failed, memory exhausted.
+[36m[DEBUG 90][0m PENDSV Triggered
+[32m[INFO  91][0m Hello from task 1
+[32m[INFO  53687171[36m[DEBUG 943076150][0m PENDSV Triggered
+[35m[FATAL 943076150][0m [HardFault] PC=0x8001c72 LR=0x8003aff xPSR=0x8100000e
+[35m[FATAL 943076150][0m [HardFault] R0=0x20000220 R1=0x5 R2=0x25000000 R3=0x25000000 R12=0xa0000000

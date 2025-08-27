@@ -5,6 +5,8 @@
 
 typedef enum { MEM_FREE, MEM_ALOC } Heap_Mem_Type;
 
+#define SANITY_MAGIC_NUMBER 0x14U
+
 typedef struct {
   uint8_t magic_number;
   uint32_t size; // in bytes
@@ -12,7 +14,7 @@ typedef struct {
 } Heap_Mem_Block;
 
 // Initialize heap memory
-void memory_init(void);
+void heap_memory_init(void);
 
 // Allocate memory
 void *v_malloc(size_t size);

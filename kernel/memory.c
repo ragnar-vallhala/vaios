@@ -10,9 +10,7 @@ uint32_t allocation_size = 0;
 uint32_t allocation_count = 0;
 Heap_Mem_Block *heap_mem_head = NULL;
 
-#define SANITY_MAGIC_NUMBER 0x14U
-
-void memory_init(void) {
+void heap_memory_init(void) {
   heap_mem_head = (Heap_Mem_Block *)&_heap_start;
 
   // Clear heap region so uninitialized area has magic==0
@@ -44,8 +42,8 @@ void *v_malloc(size_t size) {
   if (size == 0)
     return NULL;
 
-  // align to 4 bytes (adjust if you want 8)
-  size = (size + 3) & ~((size_t)3);
+  // align to 8 bytes
+  size = (size + 7) & ~((size_t)7);
 
   // Protect heap (uncomment or replace with your RTOS protection)
   // taskENTER_CRITICAL();
@@ -205,4 +203,10 @@ void v_free(void *ptr) {
   }
 
   // taskEXIT_CRITICAL();
+}
+
+uint32_t v_get_heap_size(void) { return HEAP_SIZE; }
+uint32_t v_get_heap_allocation_count(void) { return allocation_count; }
+uint32_t v_get_heap_allocation_size(void) {
+  return allocation_size + sizeof(Heap_Mem_Block) * allocation_count;
 }

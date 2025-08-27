@@ -1,0 +1,119 @@
+ 13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  13][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from task 2
+[32m[INFO  12][0m Hello from tas[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 ��s
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x200002bc size 128
+[32m[INFO  54][0m [TASK] Added task with id: -117116921, priority: 1, stack_size: 128, stack_base: 0x200002bc
+[36m[DEBUG 65][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 73][0m [MEMORY] Allocated fresh block at 0x20000498 size 44
+[36m[DEBUG 80][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 88][0m [MEMORY] Allocated fresh block at 0x200004d0 size 128
+[32m[INFO  95][0m [TASK] Added task with id: -117116920, priority: 1, stack_size: 128, stack_base: 0x200004d0
+[36m[DEBUG 110][0m PENDSV Triggered
+[32m[INFO  111][0m Hello from task 1
+[32m[INFO  536871[36m[DEBUG 943076150][0m PENDSV Triggered
+[35m[FATAL 943076150][0m [HardFault] PC=0x8001dda LR=0x8003a99 xPSR=0xa100000e
+[35m[FATAL 943076150][0m [HardFault] R0=0x20000020 R1=0x20017f6c R2=0xf904f007 R3=0xf904f007 R12=0xa0000000
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 μs
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x2000024c size 44
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x200002bc size 128
+[32m[INFO  54][0m [TASK] Added task with id: -117116919, priority: 1, stack_size: 128, stack_base: 0x200002bc
+[36m[DEBUG 65][0m [MEMORY] Allocation request on heap of size: 44
+[36m[DEBUG 73][0m [MEMORY] Allocated fresh block at 0x2000055c size 44
+[36m[DEBUG 80][0m [MEMORY] Allocation request on heap of size: 128
+[36m[DEBUG 88][0m [MEMORY] Allocated fresh block at 0x20000594 size 128
+[32m[INFO  95][0m [TASK] Added task with id: -117116918, priority: 1, stack_size: 128, stack_base: 0x20000594
+[36m[DEBUG 110][0m PENDSV Triggered
+[32m[INFO  111][0m Hello from task 1
+[32m[INFO  536871[36m[DEBUG 943076150][0m PENDSV Triggered
+[35m[FATAL 943076150][0m [HardFault] PC=0x8001dda LR=0x8003a99 xPSR=0xa100000e
+[35m[FATAL 943076150][0m [HardFault] R0=0x20000020 R1=0x20017f6c R2=0xf904f009 R3=0xf904f009 R12=0xa0000000
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 μs
+[32m[INFO  8][0m [VAIOS INIT] UART started with baudrate 9600 bps
+[32m[INFO  15][0m [MEMORY] Heap memory head initialized at 0x20000240 size 0x1000
+[36m[DEBUG 24][0m [MEMORY] Allocation request on heap of size: 400
+[36m[DEBUG 31][0m [MEMORY] Allocated fresh block at 0x2000024c size 400
+[36m[DEBUG 39][0m [MEMORY] Allocation request on heap of size: 39
+[36m[DEBUG 46][0m [MEMORY] Allocated fresh block at 0x200003e8 size 40
+[32m[INFO  54][0m Heap allocation success | 39 bytes allocated at 0x200003e8 | 1/100 allocations live
+[36m[DEBUG 65][0m 464/4096 bytes used from heap.
+[36m[DEBUG 70][0m [MEMORY] Deallocation request on heap at: 0x200003e8
+[32m[INFO  78][0m Freed heap block (slot 0), live=0
+[36m[DEBUG 83][0m 412/4096 bytes used from heap.
+[36m[DEBUG 89][0m [MEMORY] Allocation request on heap of size: 25
+[36m[DEBUG 96][0m [MEMORY] Reused block at 0x200003e8 size 40
+[32m[INFO  103][0m Heap allocation success | 25 bytes allocated at 0x200003e8 | 1/100 allocations live
+[36m[DEBUG 114][0m 464/4096 bytes used from heap.
+[36m[DEBUG 119][0m [MEMORY] Allocation request on heap of size: 55
+[36m[DEBUG 127][0m [MEMORY] Allocated fresh block at 0x2000041c size 56
+[32m[INFO  135][0m Heap allocation success | 55 bytes allocated at 0x2000041c | 2/100 allocations live
+[36m[DEBUG 146][0m 532/4096 bytes used from heap.
+[36m[DEBUG 151][0m [MEMORY] Allocation request on heap of size: 23
+[36m[DEBUG 158][0m [MEMORY] Allocated fresh block at 0x20000460 size 24
+[32m[INFO  166][0m Heap allocation success | 23 bytes allocated at 0x20000460 | 3/100 allocations live
+[36m[DEBUG 177][0m 568/4096 bytes used from heap.
+[36m[DEBUG 183][0m [MEMORY] Allocation request on heap of size: 55
+[36m[DEBUG 190][0m [MEMORY] Allocated fresh block at 0x20000484 size 56
+[32m[INFO  198][0m Heap allocation success | 55 bytes allocated at 0x20000484 | 4/100 allocations live
+[36m[DEBUG 209][0m 636/4096 bytes used from heap.
+[36m[DEBUG 214][0m [MEMORY] Deallocation request on heap at: 0x200003e8
+[32m[INFO  222][0m Freed heap block (slot 0), live=3
+[36m[DEBUG 228][0m 584/4096 bytes used from heap.
+[36m[DEBUG 234][0m [MEMORY] Deallocation request on heap at: 0x20000484
+[32m[INFO  241][0m Freed heap block (slot 0), live=2
+[36m[DEBUG 247][0m 516/4096 bytes used from heap.
+[36m[DEBUG 253][0m [MEMORY] Allocation request on heap of size: 61
+[36m[DEBUG 260][0m [MEMORY] Allocated fresh block at 0x200004c8 size 64
+[32m[INFO  268][0m Heap allocation success | 61 bytes allocated at 0x200004c8 | 3/100 allocations live
+[36m[DEBUG 279][0m 592/4096 bytes used from heap.
+[36m[DEBUG 284][0m [MEMORY] Deallocation request on heap at: 0x20000460
+[36m[DEBUG 292][0m [MEMORY] Merged with NEXT block at 0x20000478
+[32m[INFO  299][0m Freed heap block (slot 0), live=2
+[36m[DEBUG 305][0m 556/4096 bytes used from heap.
+[36m[DEBUG 311][0m [MEMORY] Allocation request on heap of size: 55
+[36m[DEBUG 318][0m [MEMORY] Split block at 0x20000460 size 56 (remaining 24 at 0x20000498)
+[32m[INFO  328][0m Heap allocation success | 55 bytes allocated at 0x20000460 | 3/100 allocations live
+[36m[DEBUG 339][0m 624/4096 bytes used from heap.
+[36m[DEBUG 344][0m [MEMORY] Deallocation request on heap at: 0x200004c8
+[36m[DEBUG 352][0m [MEMORY] Merged with PREVIOUS block at 0x20000498
+[32m[INFO  360][0m Freed heap block (slot 0), live=2
+[36m[DEBUG 366][0m 548/4096 bytes used from heap.
+[36m[DEBUG 371][0m [MEMORY] Allocation request on heap of size: 51
+[36m[DEBUG 378][0m [MEMORY] Split block at 0x200004a4 size 52 (remaining 36 at 0x200004d8)
+[32m[INFO  388][0m Heap allocation success | 51 bytes allocated at 0x200004a4 | 3/100 allocations live
+[36m[DEBUG 399][0m 612/4096 bytes used from heap.
+[36m[DEBUG 405][0m [MEMORY] Allocation request on heap of size: 21
+[36m[DEBUG 412][0m [MEMORY] Split block at 0x200003e8 size 24 (remaining 4 at 0x20000400)
+[32m[INFO  422][0m Heap allocation success | 21 bytes allocated at 0x200003e8 | 4/100 allocations live
+[36m[DEBUG 433][0m 648/4096 bytes used from heap.
+[36m[DEBUG 438][0m [MEMORY] Deallocation request on heap at: 0x20000460
+[32m[INFO  446][0m Freed heap block (slot 0), live=3
+[36m[DEBUG 452][0m 580/4096 bytes used from heap.
+[36m[DEBUG 457][0m [MEMORY] Allocation request on heap of size: 9
+[36m[DEBUG 465][0m [MEMORY] Split block at 0x20000460 size 12 (remaining 32 at 0x2000046c)
+[32m[INFO  474][0m Heap allocation success | 9 bytes allocated at 0x20000460 | 4/100 allocations live
+[36m[DEBUG 485][0m 604/4096 bytes used from heap.
+[36m[DEBUG 491][0m [MEMORY] Allocation request on heap of size: 43
+[36m[DEBUG 498][0m [MEMORY] Allocated fresh block at 0x20000514 size 44
+[32m[INFO  506][0m Heap allocation success | 43 bytes allocated at 0x20000514 | 5/100 allocations live
+[36m[DEBUG 517][0m 660/4096 bytes used from heap.
+[36m[DEBUG 523][0m [MEMORY] Allocation request on heap of size: 11
+[36m[DEBUG 530][0m [MEMORY] Split block at 0x20000478 size 12 (reminiang 8 at 0x20000484)
+[32m[INFO  540][0m Heap allocation success | 11 bytes allocated at 0x20000478 | 6/100 allocations live
+[36m[DEBUG 551][0m 684/4096 bytes used from heap.
+[36m[DEBUG 556][0m [MEMORY] Deallocation request on heap at: 0x200003e8
+[36m[DEBUG 564][0m [MEMORY] Merged with NEXT block at 0x20000400
+[32m[INFO  571][0m Freed heap block (slot 0), live=5
+[

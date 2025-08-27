@@ -1,6 +1,15 @@
 #ifndef VAIOS_TASK_H
 #define VAIOS_TASK_H
 #include "structures.h"
+#include <stddef.h>
+#include <stdint.h>
+
+typedef enum { SCHEDULER_RUNNING, SCHEDULER_STOPPED } Scheduler_Status_Type;
+
+uint32_t v_task_create(void (*entry)(void *), void *args, uint8_t priority,
+                       uint32_t stack_size);
+TCB *task_get_current(void);
+void task_set_current(TCB *task);
 void task_enqueue(TCB **head, TCB *task);
 void task_get_count(void);
 TCB *task_dequeue(TCB **head);

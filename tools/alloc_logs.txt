@@ -1,0 +1,29 @@
+Invalid write at addr 0x1C48, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C4C, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C50, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C54, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C58, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C5C, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C60, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C64, size 4, region 'STM32F405.flash', reason: rejected
+Invalid write at addr 0x1C68, size 4, region 'STM32F405.flash', reason: rejected
+[32m[INFO  0][0m [VAIOS INIT] SYSTICK started with time period of 10000 μs
+[32m[INFO  1][0m [MEMORY] Heap memory head initialized at 0x20000028 size 0x1000
+[36m[DEBUG 1][0m [MEMORY] Allocation request on heap of size: 48
+[36m[DEBUG 2][0m [MEMORY] Allocated fresh block at 0x20000034 size 48
+[36m[DEBUG 2][0m [MEMORY] Allocation request on heap of size: 136
+[36m[DEBUG 2][0m [MEMORY] Allocated fresh block at 0x20000070 size 136
+[32m[INFO  3][0m [TASK] Added task id=1, priority=1, stack_size=128, stack_base=0x20000070
+[36m[DEBUG 3][0m [MEMORY] Allocation request on heap of size: 48
+[36m[DEBUG 3][0m [MEMORY] Allocated fresh block at 0x20000104 size 48
+[36m[DEBUG 3][0m [MEMORY] Allocation request on heap of size: 136
+[36m[DEBUG 3][0m [MEMORY] Allocated fresh block at 0x20000140 size 136
+[32m[INFO  4][0m [TASK] Added task id=2, priority=1, stack_size=128, stack_base=0x20000140
+[36m[DEBUG 4][0m [MEMORY] Allocation request on heap of size: 48
+[36m[DEBUG 4][0m [MEMORY] Allocated fresh block at 0x200001d4 size 48
+[36m[DEBUG 4][0m [MEMORY] Allocation request on heap of size: 136
+[36m[DEBUG 4][0m [MEMORY] Allocated fresh block at 0x20000210 size 136
+[32m[INFO  5][0m [TASK] Added task id=3, priority=1, stack_size=128, stack_base=0x20000210
+[36m[DEBUG 10][0m Context switch: curr=0x20000104 next=0x20000034
+QEMU: Terminated
+

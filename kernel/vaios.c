@@ -1,10 +1,13 @@
 #include "vaios.h"
 #include "config.h"
 #include "structures.h"
+#include "task.h"
 #include "utils.h"
 #include <stddef.h>
 #ifdef NAVHAL
 #include "navhal.h"
+#else
+#include "semihosting.h"
 #endif /* ifdef NAVHAL */
 
 #ifndef NAVHAL
@@ -37,19 +40,26 @@ void _qemu_systick_init_ms(uint32_t period_ms) {
 
 extern uint32_t systick_count;
 extern TCB *ready_queue;
-extern TCB *blocked_queue;
-extern TCB *sleep_queue;
+// extern TCB *blocked_queue;
+// extern TCB *sleep_queue;
 extern TCB *current_task;
+extern Scheduler_Status_Type scheduler_state;
+
 void v_init(void) {
   // resetting global variables
   systick_count = 0;
   ready_queue = NULL;
-  blocked_queue = NULL;
-  sleep_queue = NULL;
+  // blocked_queue = NULL;
+  // sleep_queue = NULL;
   current_task = NULL;
+  scheduler_state = SCHEDULER_STOPPED;
 #ifdef NAVHAL
 #ifdef CORTEX_M4
   systick_init(SYSTICK_PERIOD);
+  // Interrupt priority setup
+  hal_set_interrupt_priority(SysTick_IRQn, 15);
+  hal_set_interrupt_priority(PendSV_IRQn, 14);
+  hal_set_interrupt_priority(SVCall_IRQn, 0); // system service
 #if UART_LOGGING_ENABLE == 1
   uart2_init(UART_BAUDRATE);
   v_log(LOG_INFO, "[VAIOS INIT] SYSTICK started with time period of %d μs",
@@ -62,7 +72,12 @@ void v_init(void) {
 #endif
 #else
   _qemu_systick_init_ms(SYSTICK_PERIOD / 1000);
+  // set_systick_interrupt_priority(0x20);
+  // set_pendsv_interrupt_priority(0xFF);
   v_log(LOG_INFO, "[VAIOS INIT] SYSTICK started with time period of %d μs",
         SYSTICK_PERIOD);
 #endif
 }
+
+void v_start(void) { scheduler_state = SCHEDULER_RUNNING; }
+void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }

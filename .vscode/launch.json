@@ -11,10 +11,18 @@
       "device": "STM32F401RE",
 
       "configFiles": ["interface/stlink.cfg", "target/stm32f4x.cfg"],
-      "runToEntryPoint": "main",
       "svdFile": "${workspaceRoot}/STM32F401.svd", // optional, for peripheral view
       "preLaunchTask": "Build",
-      "linux": {"gdbPath": "/usr/bin/gdb-multiarch"}
+      "linux": { "gdbPath": "/usr/bin/gdb-multiarch" },
+      "preLaunchCommands": [
+        // "monitor reset halt", // halt MCU before loading new code
+        // "monitor reset init", // ensure proper init
+        // "monitor reset halt"
+      ],
+      "postLaunchCommands": [
+        "monitor reset halt", // stop at main after flashing
+        "monitor reset init"
+      ]
     }
   ]
 }
