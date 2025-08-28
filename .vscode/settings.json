@@ -1,5 +1,5 @@
 {
-    "cortex-debug.variableUseNaturalFormat": true,
+    "cortex-debug.variableUseNaturalFormat": false,
     "files.associations": {
         "gpio.h": "c",
         "types.h": "c",
@@ -14,6 +14,8 @@
         "memory.h": "c",
         "utils.h": "c",
         "stddef.h": "c",
-        "structures.h": "c"
+        "structures.h": "c",
+        "stdint.h": "c",
+        "config.h": "c"
     }
 }

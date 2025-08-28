@@ -23,10 +23,12 @@
 /* Define CPU clock for QEMU (adjust if needed) */
 #define CPU_CLOCK_HZ 16000000UL
 
-void _qemu_systick_init_ms(uint32_t period_ms) {
+void _qemu_systick_init_ms(uint32_t period_ms)
+{
   uint32_t reload = (CPU_CLOCK_HZ / 1000) * period_ms - 1;
 
-  if (reload > 0xFFFFFF) {
+  if (reload > 0xFFFFFF)
+  {
     // SysTick is only 24-bit, so max reload is 0xFFFFFF
     reload = 0xFFFFFF;
   }
@@ -45,7 +47,8 @@ extern TCB *ready_queue;
 extern TCB *current_task;
 extern Scheduler_Status_Type scheduler_state;
 
-void v_init(void) {
+void v_init(void)
+{
   // resetting global variables
   systick_count = 0;
   ready_queue = NULL;
@@ -78,6 +81,10 @@ void v_init(void) {
         SYSTICK_PERIOD);
 #endif
 }
-
-void v_start(void) { scheduler_state = SCHEDULER_RUNNING; }
+extern void start_scheduler(void);
+void v_start(void)
+{
+  start_scheduler();
+  scheduler_state = SCHEDULER_RUNNING;
+}
 void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }

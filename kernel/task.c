@@ -21,6 +21,20 @@ void task_exit(void); // forward declaration
 // --------------------------------------------------
 // Stack Initialization
 // --------------------------------------------------
+extern void vPortStartFirstTask(void);
+
+void port_save_task_stack_ptr(TCB *tcb, uint32_t *new_sp);
+uint32_t *port_load_task_stack_ptr(TCB *tcb);
+void port_save_task_stack_ptr(TCB *tcb, uint32_t *new_sp)
+{
+  tcb->stack_ptr = new_sp;
+}
+
+/* Called from PendSV assembly to obtain PSP for a task */
+uint32_t *port_load_task_stack_ptr(TCB *tcb)
+{
+  return tcb->stack_ptr;
+}
 void prepare_task_stack(TCB *task)
 {
   if (!task || !task->stack_base)
@@ -30,22 +44,22 @@ void prepare_task_stack(TCB *task)
   uint32_t *stack_top = task->stack_base + (task->stack_size / sizeof(uint32_t));
 
   // Align stack top to 8-byte boundary (required for Cortex-M)
-  stack_top = (uint32_t *)((uintptr_t)stack_top & ~0x7UL);
-
+  stack_top = (uint32_t *)((uintptr_t)stack_top + 7 & ~0x7UL);
   // --- Hardware-saved context for exception return ---
-  *(--stack_top) = 0x01000000;                  // xPSR (Thumb bit)
-  *(--stack_top) = (uint32_t)(task->entry) | 1; // PC = task entry | Thumb bit
-  *(--stack_top) = (uint32_t)task_exit;         // LR = task_exit
-  *(--stack_top) = 0x00000000;                  // R12
-  *(--stack_top) = 0x00000000;                  // R3
-  *(--stack_top) = 0x00000000;                  // R2
-  *(--stack_top) = 0x00000000;                  // R1
-  *(--stack_top) = (uint32_t)task->arg;         // R0 = argument
+  *(--stack_top) = 0x01000000;              // xPSR (Thumb bit)
+  *(--stack_top) = (uint32_t)(task->entry); // PC = task entry | Thumb bit
+  *(--stack_top) = 0xFFFFFFFD;              // LR = task_exit
+  *(--stack_top) = 0x00000012;              // R12
+  *(--stack_top) = 0x00000003;              // R3
+  *(--stack_top) = 0x00000002;              // R2
+  *(--stack_top) = 0x00000001;              // R1
+  *(--stack_top) = (uint32_t)task->arg;     // R0 = argument
 
   // --- Space for callee-saved registers R4-R11 ---
   for (int i = 0; i < 8; i++)
     *(--stack_top) = 0;
 
+  // *(--stack_top) = 0xFFFFFFFD; // INITIAL_EXEC_RETURN
   // Save PSP (stack pointer) to TCB
   task->stack_ptr = stack_top;
 }
@@ -54,8 +68,12 @@ void prepare_task_stack(TCB *task)
 void task_exit(void)
 {
   TCB *curr = task_get_current();
-  v_free(curr->stack_base);
-  v_free(curr);
+  if (curr)
+  {
+    if (curr->stack_allocation)
+      v_free(curr->stack_allocation);
+    v_free(curr);
+  }
   // PendSV_Handler();
   while (1)
     __asm volatile("wfi");
@@ -96,7 +114,6 @@ uint32_t v_task_create(void (*entry)(void *), void *arg, uint8_t priority, uint3
   // Initialize stack context
   prepare_task_stack(task);
 
-  // Insert into ready queue
   task_insert_sorted(&ready_queue, task);
 
   // Log task creation

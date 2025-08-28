@@ -26,9 +26,9 @@ int main(void)
 {
   v_init();
   heap_memory_init();
-  v_task_create(task_fn1, NULL, 1, 128);
-  v_task_create(task_fn2, NULL, 1, 128);
-  v_task_create(task_fn3, NULL, 1, 128);
+  v_task_create(task_fn1, NULL, 1, 256);
+  v_task_create(task_fn2, NULL, 1, 256);
+  v_task_create(task_fn3, NULL, 1, 256);
   v_start();
   while (1)
     ;

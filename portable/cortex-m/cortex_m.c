@@ -23,16 +23,137 @@ void _context_switch(void);
 
 extern Scheduler_Status_Type scheduler_state;
 
-void _context_switch(void);
+/* ---------------- Basepri helpers ---------------- */
+static inline void set_basepri(uint32_t v)
+{
+  __asm volatile("msr basepri, %0\n dsb\n isb\n" : : "r"(v) : "memory");
+}
 
+static inline uint32_t get_basepri(void)
+{
+  uint32_t v;
+  __asm volatile("mrs %0, basepri" : "=r"(v));
+  return v;
+}
+
+/* ---------------- Naked assembly helpers ---------------- */
+
+/* Save r4-r11 on PSP, update current_task->stack_ptr */
+__attribute__((naked)) void save_context(void)
+{
+  __asm volatile(
+      "mrs r0, psp            \n" // Get process stack pointer
+      "stmdb r0!, {r4-r11}    \n" // Save callee-saved registers
+
+      "ldr r1, =current_task   \n"
+      "ldr r2, [r1]            \n"
+      "str r0, [r2]            \n" // Save updated PSP to TCB
+
+      "bx lr                   \n");
+}
+
+/* Restore r4-r11 from current_task->stack_ptr, set PSP, return to thread mode */
+__attribute__((naked)) void restore_context_and_return(void)
+{
+  __asm volatile(
+      "ldr r1, =current_task   \n"
+      "ldr r1, [r1]            \n"
+      "ldr r0, [r1]            \n"
+
+      "ldmia r0!, {r4-r11}     \n" // Restore callee-saved registers
+      "msr psp, r0             \n"
+      "mov lr, #0xFFFFFFFD     \n" // Return to Thread mode using PSP
+      "bx lr                   \n");
+}
+
+/* ---------------- Context switch logic (C) ---------------- */
+/* ---------------- Context switch logic (C) ---------------- */
+
+void _context_switch(void)
+{
+  TCB *curr = task_get_current();
+  TCB *next = task_get_next_ready();
+
+  if (curr)
+  {
+    if (curr->state == TASK_RUNNING)
+      curr->state = TASK_READY;
+    if (curr->state == TASK_READY)
+      task_insert_sorted(&ready_queue, curr);
+  }
+
+  if (next)
+  {
+    task_remove(&ready_queue, next);
+    next->state = TASK_RUNNING;
+    task_set_current(next);
+  }
+
+  v_log(LOG_DEBUG, "Context switch: curr=0x%x next=0x%x", curr, next);
+}
+
+void start_scheduler(void)
+{
+  current_task = task_get_next_ready();
+  if (!current_task)
+    return;
+  task_remove(&ready_queue, current_task);
+  current_task->state = TASK_RUNNING;
+  task_set_current(current_task);
+  uint32_t *stack_top = current_task->stack_ptr;
+  // for (int i = 0; i < 16; i++)
+  // {
+  //   v_log(LOG_DEBUG, "Stack[%d] = 0x%x", i, *stack_top++);
+  // }
+
+  __asm volatile(
+      "ldr r0, =current_task\n"
+      "ldr r1, [r0]\n"             // current_task pointer
+      "ldr r0, [r1]\n"             // SP of first task
+      "ldmia r0!, {r4-r11}     \n" // Restore callee-saved registers
+      "msr psp, r0             \n"
+      "isb\n"
+      "mrs r0, control   \n"
+      "orr r0, r0, #2    \n" // set bit 1 = use PSP
+      "msr control, r0   \n"
+      "isb               \n" // flush pipeline
+                             // "movs r0, #2\n"
+                             // "msr control, r0\n" // Switch to PSP, unprivileged
+
+      // Return using exception return, triggers hardware to pop xPSR, PC, LR, R0-R3, r12
+      // "mov lr, #0xFFFFFFFD\n" // EXC_RETURN value: return to Thread mode, PSP
+      // "bx lr\n"
+  );
+}
+
+/* This handler is NOT naked, but only calls save/restore naked functions */
 void PendSV_Handler(void)
 {
-  if (scheduler_state == SCHEDULER_RUNNING)
+  if (scheduler_state != SCHEDULER_RUNNING)
+    return;
+
+  v_log(LOG_DEBUG, "PendSV triggered");
+
+  TCB *curr = task_get_current();
+  if (curr)
   {
-    // v_log(LOG_DEBUG, "PENDSV Triggered");
-    _context_switch();
+    save_context(); // Assembly: push r4-r11 to PSP, save PSP in TCB
   }
+  else
+  {
+
+    return;
+  }
+
+  set_basepri(MAX_SYSCALL_INTERRUPT_PRIORITY);
+  _context_switch(); // Pure C logic: choose next task
+  set_basepri(0);
+
+  restore_context_and_return(); // Assembly: restore r4-r11, set PSP, return
 }
+
+//// ===================== HardFault Handler =====================
+// Define a structure to represent the stack frame
 // Cortex-M registers stacked automatically on exception
 typedef struct
 {
@@ -69,151 +190,4 @@ void HardFault_HandlerC(HardFault_StackFrame *frame)
   while (1)
   {
   }
-}
-static inline void set_basepri(uint32_t v)
-{
-  __asm volatile("msr basepri, %0\ndsb\nisb\n" : : "r"(v) : "memory");
-}
-static inline uint32_t get_basepri(void)
-{
-  uint32_t v;
-  __asm volatile("mrs %0, basepri" : "=r"(v));
-  return v;
-}
-/* ------------------------------------------------------------------
-   Naked assembly helpers (PSP-based). These functions are "naked"
-   so the compiler does not emit prologue/epilogue which would
-   corrupt the special stack operations we perform.
-   ------------------------------------------------------------------ */
-
-/* Save r4-r11 onto PSP and store updated PSP in current_task->stack_ptr.
-   NOTE: This implementation assumes `current_task` symbol is available
-   and that stack_ptr is at offset 12 in TCB (as in your struct). */
-
-__attribute__((naked)) void save_context(void)
-{
-  __asm volatile(
-      /* r0 := PSP */
-      "mrs   r0, psp             \n"
-
-      /* "tst r14, #0x10            \n" /1* Is the task using the FPU */
-      /*                                          context?  If so, push high */
-      /*                                          vfp registers. *1/ */
-      /* "it eq                     \n" */
-      /* "vstmdbeq r0!, {s16-s31}   \n" */
-
-      /* push r4-r11 onto process stack, update r0 */
-      "stmdb r0!, {r4-r11}   \n"
-      /* r1 := &current_task ; r1 := current_task */
-      "ldr   r1, =current_task   \n"
-      "ldr   r1, [r1]            \n"
-      /* store updated PSP into current_task->stack_ptr (offset 0) */
-      "str   r0, [r1]       \n"
-      /* return */
-      "bx    lr                  \n");
-}
-
-/* Restore r4-r11 from current_task->stack_ptr, set PSP and perform EXC_RETURN.
-   Uses EXC_RETURN = 0xFFFFFFFD (return to Thread mode, use PSP). */
-__attribute__((naked)) void restore_context_and_return(void)
-{
-  __asm volatile(
-      /* r1 := &current_task ; r1 := current_task */
-      "ldr r1, =current_task \n"
-      "ldr r2, [r1] \n"
-      "ldr r0, [r2] \n"
-
-      "ldmia r0!, {r4-r11} \n"
-
-      /* "tst r14, #0x10         \n" /1* Is the task using the FPU */
-      /*                                context?  If so, pop the */
-      /*                                high vfp registers too. *1/ */
-      /* "it eq                  \n" */
-      /* "vldmiaeq r0!, {s16-s31}\n" */
-
-      "msr psp, r0 \n"
-      "mov lr, #0xFFFFFFFD \n" // EXC_RETURN value
-      "bx lr \n");
-}
-
-/* ------------------------------------------------------------------
-   _context_switch
-   High-level switch logic called from PendSV (C code). This:
-   - obtains curr and next
-   - if curr exists, saves its context and re-enqueues based on its state
-   - removes next from ready queue and sets it running/current
-   - calls restore_context_and_return() to resume next
-   ------------------------------------------------------------------ */
-void _context_switch(void)
-{
-  /* NOTE: This should be called with interrupts configured so that
-     PendSV runs safely as the scheduler context switch (PendSV lowest
-     priority). */
-
-  TCB *curr = task_get_current();
-  TCB *next = task_dequeue(&ready_queue);
-  /* If nothing to run -> return */
-  if (next == NULL)
-  {
-    return;
-  }
-
-  /* If the same task was chosen -> nothing to do */
-  if (curr == next)
-  {
-    return;
-  }
-
-  /* If there is a current task, save its context and re-enqueue it
-  appropriately. save_context() will store the updated PSP into
-  curr->stack_ptr. */
-  set_basepri(MAX_SYSCALL_INTERRUPT_PRIORITY);
-  if (curr)
-  {
-    save_context();
-
-    /* If task was running, mark it READY for re-insertion */
-    if (curr->state == TASK_RUNNING)
-    {
-      curr->state = TASK_READY;
-    }
-
-    /* Re-insert depending on its state (if it wasn't removed/changed elsewhere)
-     */
-    switch (curr->state)
-    {
-    case TASK_READY:
-      /* Insert by priority so scheduler policy remains intact */
-      task_insert_sorted(&ready_queue, curr);
-      break;
-    // case TASK_BLOCKED:
-    //   task_insert_sorted(&blocked_queue, curr);
-    //   break;
-    // case TASK_SLEEPING:
-    //   task_insert_sorted(&sleep_queue, curr);
-    //   break;
-    default:
-      /* TASK_RUNNING should not remain here; other states ignored */
-      break;
-    }
-  }
-
-  // /* Remove next from ready queue so it does not remain listed while running */
-  task_remove(&ready_queue, next);
-  v_log(LOG_DEBUG, "Context switch: curr=0x%x next=0x%x", ready_queue, next);
-  // /* Set next as running and current */
-  next->state = TASK_RUNNING;
-  task_set_current(next);
-  set_basepri(0);
-  // /* Restore next task's context and return into it (never returns here) */
-  // restore_context_and_return();
-
-  __asm__ volatile( // EXC_RETURN value
-      "bx lr \n");
-
-  // /* Should never reach here */
-  // for (;;)
-  // {
-  //   __asm volatile("wfi");
-  // }
 }
