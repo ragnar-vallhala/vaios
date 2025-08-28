@@ -1,7 +1,5 @@
 #include "vaios.h"
 #include "config.h"
-#include "structures.h"
-#include "task.h"
 #include "utils.h"
 #include <stddef.h>
 #ifdef NAVHAL
@@ -41,21 +39,11 @@ void _qemu_systick_init_ms(uint32_t period_ms)
 #endif /* ifndef NAVHAL */
 
 extern uint32_t systick_count;
-extern TCB *ready_queue;
-// extern TCB *blocked_queue;
-// extern TCB *sleep_queue;
-extern TCB *current_task;
-extern Scheduler_Status_Type scheduler_state;
 
 void v_init(void)
 {
   // resetting global variables
   systick_count = 0;
-  ready_queue = NULL;
-  // blocked_queue = NULL;
-  // sleep_queue = NULL;
-  current_task = NULL;
-  scheduler_state = SCHEDULER_STOPPED;
 #ifdef NAVHAL
 #ifdef CORTEX_M4
   systick_init(SYSTICK_PERIOD);
@@ -81,10 +69,10 @@ void v_init(void)
         SYSTICK_PERIOD);
 #endif
 }
-extern void start_scheduler(void);
+// extern void start_scheduler(void);
 void v_start(void)
 {
-  start_scheduler();
-  scheduler_state = SCHEDULER_RUNNING;
+  // start_scheduler();
+  // scheduler_state = SCHEDULER_RUNNING;
 }
-void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }
+// void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }

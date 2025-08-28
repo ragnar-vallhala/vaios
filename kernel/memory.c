@@ -1,10 +1,8 @@
 #include "memory.h"
 #include "config.h"
-#include "structures.h"
 #include "utils.h"
 #include <stdint.h>
 
-extern TCB *current_task;
 extern uint32_t _heap_start;
 uint32_t allocation_size = 0;
 uint32_t allocation_count = 0;

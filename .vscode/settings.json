@@ -16,6 +16,8 @@
         "stddef.h": "c",
         "structures.h": "c",
         "stdint.h": "c",
-        "config.h": "c"
+        "config.h": "c",
+        "string.h": "c",
+        "vaios.h": "c"
     }
 }
