@@ -21,12 +21,10 @@
 /* Define CPU clock for QEMU (adjust if needed) */
 #define CPU_CLOCK_HZ 16000000UL
 
-void _qemu_systick_init_ms(uint32_t period_ms)
-{
+void _qemu_systick_init_ms(uint32_t period_ms) {
   uint32_t reload = (CPU_CLOCK_HZ / 1000) * period_ms - 1;
 
-  if (reload > 0xFFFFFF)
-  {
+  if (reload > 0xFFFFFF) {
     // SysTick is only 24-bit, so max reload is 0xFFFFFF
     reload = 0xFFFFFF;
   }
@@ -40,17 +38,15 @@ void _qemu_systick_init_ms(uint32_t period_ms)
 
 extern uint32_t systick_count;
 
-void v_init(void)
-{
+void v_init(void) {
   // resetting global variables
   systick_count = 0;
 #ifdef NAVHAL
 #ifdef CORTEX_M4
   systick_init(SYSTICK_PERIOD);
-  // Interrupt priority setup
-  hal_set_interrupt_priority(SysTick_IRQn, 15);
-  hal_set_interrupt_priority(PendSV_IRQn, 14);
-  hal_set_interrupt_priority(SVCall_IRQn, 0); // system service
+  hal_set_interrupt_priority(SysTick_IRQn, 14);
+  hal_set_interrupt_priority(PendSV_IRQn, 15);
+  
 #if UART_LOGGING_ENABLE == 1
   uart2_init(UART_BAUDRATE);
   v_log(LOG_INFO, "[VAIOS INIT] SYSTICK started with time period of %d μs",
@@ -63,15 +59,14 @@ void v_init(void)
 #endif
 #else
   _qemu_systick_init_ms(SYSTICK_PERIOD / 1000);
-  // set_systick_interrupt_priority(0x20);
-  // set_pendsv_interrupt_priority(0xFF);
+  set_systick_interrupt_priority(14);
+  set_pendsv_interrupt_priority(15);
   v_log(LOG_INFO, "[VAIOS INIT] SYSTICK started with time period of %d μs",
         SYSTICK_PERIOD);
 #endif
 }
 // extern void start_scheduler(void);
-void v_start(void)
-{
+void v_start(void) {
   // start_scheduler();
   // scheduler_state = SCHEDULER_RUNNING;
 }

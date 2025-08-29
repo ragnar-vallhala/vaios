@@ -7,10 +7,21 @@
 #define SCB_SHPR2 (*(volatile uint32_t *)0xE000ED1C)
 #define SCB_SHPR3 (*(volatile uint32_t *)0xE000ED20)
 
-void set_systick_interrupt_priority(uint32_t prio) {
+#define __NVIC_PRIO_BITS 4
+#define PRIORITY_MASK ((1UL << __NVIC_PRIO_BITS) - 1)
+
+void set_systick_interrupt_priority(
+    uint32_t
+        priority) { // Normalize to top 4 bits (0-15 effective priority levels)
+  uint32_t prio = (priority & PRIORITY_MASK) << (8 - __NVIC_PRIO_BITS);
+
   SCB_SHPR3 = (SCB_SHPR3 & ~(0xFF << 24)) | (prio << 24);
 }
-void set_pendsv_interrupt_priority(uint32_t prio) {
+void set_pendsv_interrupt_priority(
+    uint32_t
+        priority) { // Normalize to top 4 bits (0-15 effective priority levels)
+  uint32_t prio = (priority & PRIORITY_MASK) << (8 - __NVIC_PRIO_BITS);
+
   SCB_SHPR3 = (SCB_SHPR3 & ~(0xFF << 16)) | (prio << 16);
 }
 

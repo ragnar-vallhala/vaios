@@ -9,7 +9,8 @@
 #endif
 
 // base print
-void print(const char *str) {
+void print(const char *str)
+{
 #ifdef NAVHAL
   uart2_write(str);
 #else
@@ -18,9 +19,11 @@ void print(const char *str) {
 }
 
 // helper: reverse string (unchanged)
-static void reverse(char *str, int len) {
+static void reverse(char *str, int len)
+{
   int i = 0, j = len - 1;
-  while (i < j) {
+  while (i < j)
+  {
     char tmp = str[i];
     str[i] = str[j];
     str[j] = tmp;
@@ -30,16 +33,19 @@ static void reverse(char *str, int len) {
 }
 
 // helper: unsigned integer to string
-static int utoa_simple(uint64_t value, char *buf, int base) {
+static int utoa_simple(uint64_t value, char *buf, int base)
+{
   int i = 0;
 
-  if (value == 0) {
+  if (value == 0)
+  {
     buf[i++] = '0';
     buf[i] = '\0';
     return i;
   }
 
-  while (value > 0) {
+  while (value > 0)
+  {
     int rem = value % base;
     buf[i++] = (rem > 9) ? (rem - 10) + 'a' : rem + '0';
     value /= base;
@@ -51,102 +57,166 @@ static int utoa_simple(uint64_t value, char *buf, int base) {
 }
 
 // helper: signed int wrapper (uses utoa_simple)
-static int itoa_simple(int64_t value, char *buf, int base) {
-  if (value < 0 && base == 10) {
+static int itoa_simple(int64_t value, char *buf, int base)
+{
+  if (value < 0 && base == 10)
+  {
     int len = utoa_simple((uint64_t)(-value), buf + 1, base);
     buf[0] = '-';
     return len + 1;
-  } else {
+  }
+  else
+  {
     return utoa_simple((uint64_t)value, buf, base);
   }
 }
-void vaprint_fmt(const char *fmt, va_list args) {
 
+void vaprint_fmt(const char *fmt, va_list args)
+{
   char buffer[64];
+  memset(buffer, 0, sizeof(buffer));
 
-  for (const char *p = fmt; *p; p++) {
-    if (*p != '%') {
+  for (const char *p = fmt; *p; p++)
+  {
+    if (*p != '%')
+    {
       char tmp[2] = {*p, '\0'};
       print(tmp);
       continue;
     }
 
     p++; // skip '%'
-    switch (*p) {
-    case 'd': { // signed int
-      int v = va_arg(args, int);
-      itoa_simple(v, buffer, 10);
-      print(buffer);
-      break;
-    }
-    case 'u': { // unsigned int
-      uint32_t v = va_arg(args, uint32_t);
-      utoa_simple(v, buffer, 10);
-      print(buffer);
-      break;
-    }
-    case 'l': {
+    int width = 0;
+    int zero_pad = 0;
+
+    // Parse flags
+    if (*p == '0')
+    {
+      zero_pad = 1;
       p++;
-      if (*p == 'u') { // %lu → 32-bit unsigned long
-        unsigned long v = va_arg(args, unsigned long);
-        utoa_simple((uint64_t)v, buffer, 10);
-        print(buffer);
-      } else if (*p == 'd') { // %ld → 32-bit signed long
-        long v = va_arg(args, long);
-        itoa_simple((int64_t)v, buffer, 10);
-        print(buffer);
-      } else if (*p == 'l') { // handle "ll"
-        p++;
-        if (*p == 'u') { // %llu → 64-bit unsigned
-          unsigned long long v = va_arg(args, unsigned long long);
-          utoa_simple((uint64_t)v, buffer, 10);
-          print(buffer);
-        } else if (*p == 'd') { // %lld → 64-bit signed
-          long long v = va_arg(args, long long);
-          itoa_simple((int64_t)v, buffer, 10);
-          print(buffer);
-        } else {
-          print("%ll");
-          char tmp[2] = {*p, '\0'};
-          print(tmp);
-        }
-      } else {
-        print("%l");
-        char tmp[2] = {*p, '\0'};
-        print(tmp);
-      }
-      break;
     }
 
-    case 'x': { // hex (32-bit)
+    // Parse width
+    while (*p >= '0' && *p <= '9')
+    {
+      width = width * 10 + (*p - '0');
+      p++;
+    }
+
+    // Handle specifiers
+    switch (*p)
+    {
+    case 'd': // signed int
+    {
+      int v = va_arg(args, int);
+      itoa_simple(v, buffer, 10);
+      int len = strlen(buffer);
+      for (int i = len; i < width; i++)
+      {
+        print(zero_pad ? '0' : ' ');
+      }
+      print(buffer);
+      memset(buffer, 0, sizeof(buffer));
+      break;
+    }
+    case 'u': // unsigned int
+    {
       uint32_t v = va_arg(args, uint32_t);
+      utoa_simple(v, buffer, 10);
+      int len = strlen(buffer);
+      for (int i = len; i < width; i++)
+      {
+        print(zero_pad ? '0' : ' ');
+      }
+      print(buffer);
+      memset(buffer, 0, sizeof(buffer));
+      break;
+    }
+    case 'l':
+    {
+      p++;
+      if (*p == 'u') // %lu
+      {
+        unsigned long v = va_arg(args, unsigned long);
+        utoa_simple(v, buffer, 10);
+      }
+      else if (*p == 'd') // %ld
+      {
+        long v = va_arg(args, long);
+        itoa_simple(v, buffer, 10);
+      }
+      else if (*p == 'l') // %llu / %lld
+      {
+        p++;
+        if (*p == 'u') // %llu
+        {
+          unsigned long long v = va_arg(args, unsigned long long);
+          utoa_simple(v, buffer, 10);
+        }
+        else if (*p == 'd') // %lld
+        {
+          long long v = va_arg(args, long long);
+          itoa_simple(v, buffer, 10);
+        }
+      }
+      int len = strlen(buffer);
+      for (int i = len; i < width; i++)
+      {
+        print(zero_pad ? '0' : ' ');
+      }
+      print(buffer);
+      memset(buffer, 0, sizeof(buffer));
+      break;
+    }
+    case 'x': // 32-bit hex lowercase
+    {
+      uint32_t v = va_arg(args, uint32_t);
+      memset(buffer, 0, sizeof(buffer));
       utoa_simple(v, buffer, 16);
+      int len = strlen(buffer);
+      for (int i = len; i < width; i++)
+        print(zero_pad ? '0' : ' ');
       print(buffer);
       break;
     }
-    case 'X': { // hex (64-bit)
+    case 'X': // 32/64-bit hex uppercase
+    {
       uint64_t v = va_arg(args, uint64_t);
+      memset(buffer, 0, sizeof(buffer));
       utoa_simple(v, buffer, 16);
+      // convert to uppercase
+      for (int i = 0; buffer[i]; i++)
+      {
+        if (buffer[i] >= 'a' && buffer[i] <= 'f')
+          buffer[i] -= 32;
+      }
+      int len = strlen(buffer);
+      for (int i = len; i < width; i++)
+        print(zero_pad ? '0' : ' ');
       print(buffer);
+      memset(buffer, 0, sizeof(buffer));
       break;
     }
-    case 'c': {
+    case 'c':
+    {
       char c = (char)va_arg(args, int);
       char tmp[2] = {c, '\0'};
       print(tmp);
       break;
     }
-    case 's': {
+    case 's':
+    {
       char *s = va_arg(args, char *);
       print(s);
       break;
     }
-    case '%': {
+    case '%':
+    {
       print("%");
       break;
     }
-    default: {
-      // unknown specifier → print literally
+    default:
+    {
       print("%");
       char tmp[2] = {*p, '\0'};
       print(tmp);
@@ -156,18 +226,21 @@ void vaprint_fmt(const char *fmt, va_list args) {
   }
 }
 
-void print_fmt(const char *fmt, ...) {
+void print_fmt(const char *fmt, ...)
+{
   va_list args;
   va_start(args, fmt);
   vaprint_fmt(fmt, args);
   va_end(args);
 }
 
-void v_log(Log_Type type, const char *msg, ...) {
+void v_log(Log_Type type, const char *msg, ...)
+{
 #if LOGGING_ENABLED == 1
   const char *typeName;
   const char *typeColor;
-  switch (type) {
+  switch (type)
+  {
   case LOG_TRACE:
     typeName = "TRACE";
     typeColor = COLOR_TRACE;
@@ -209,10 +282,11 @@ volatile uint32_t systick_count = 0;
 #define ICSR (*(volatile uint32_t *)0xE000ED04)
 #define ICSR_PENDSVSET (1 << 28) // Set this to trigger PendSV
 #define ICSR_PENDSVCLR (1 << 27) // Clear PendSV
-
-void SysTick_Handler(void) {
+extern uint8_t scheduler_running;
+void SysTick_Handler(void)
+{
   systick_count++;
-  if (systick_count % TIME_SLICE == 0)
+  if ((scheduler_running == 123) && (systick_count % TIME_SLICE == 0))
     ICSR |= ICSR_PENDSVSET; // Trigger PENDSV
 }
 
