@@ -18,14 +18,14 @@ typedef struct {
 
 void print_registers(ExceptionStackFrame *frame) {
   v_log(LOG_FATAL, "HardFault Register Dump:");
-  v_log(LOG_FATAL, " R0  = 0x%x", frame->r0);
-  v_log(LOG_FATAL, " R1  = 0x%x", frame->r1);
-  v_log(LOG_FATAL, " R2  = 0x%x", frame->r2);
-  v_log(LOG_FATAL, " R3  = 0x%x", frame->r3);
-  v_log(LOG_FATAL, " R12 = 0x%x", frame->r12);
-  v_log(LOG_FATAL, " LR  = 0x%x", frame->lr);
-  v_log(LOG_FATAL, " PC  = 0x%x", frame->pc);
-  v_log(LOG_FATAL, " xPSR= 0x%x", frame->xpsr);
+  v_log(LOG_TRACE, " R0  = 0x%08X", frame->r0);
+  v_log(LOG_TRACE, " R1  = 0x%08X", frame->r1);
+  v_log(LOG_TRACE, " R2  = 0x%08X", frame->r2);
+  v_log(LOG_TRACE, " R3  = 0x%08X", frame->r3);
+  v_log(LOG_TRACE, " R12 = 0x%08X", frame->r12);
+  v_log(LOG_TRACE, " LR  = 0x%08X", frame->lr);
+  v_log(LOG_TRACE, " PC  = 0x%08X", frame->pc);
+  v_log(LOG_TRACE, " xPSR= 0x%08X", frame->xpsr);
 }
 
 // Optional: simple backtrace by scanning stack for plausible return addresses
@@ -35,14 +35,14 @@ void print_backtrace(uint32_t *stack, uint32_t stack_size) {
     uint32_t addr = stack[i];
     // crude check: skip null and small addresses
     if (addr > 0x1000) {
-      v_log(LOG_TRACE, " 0x%x", addr);
+      v_log(LOG_TRACE, " 0x%08X", addr);
     }
   }
 }
 
 // This function is called by the naked HardFault_Handler
 void hardfault_handler_c(ExceptionStackFrame *frame, uint32_t *stack_pointer) {
-  v_log(LOG_ERROR, "HARDFAULT occurred!");
+  v_log(LOG_FATAL, "HARDFAULT occurred!");
   print_registers(frame);
 
   // Optional backtrace: scan 128 words from stack
@@ -77,6 +77,38 @@ void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t lr_unused,
   frame.xpsr = stack_pointer[7];
 
   hardfault_handler_c(&frame, stack_pointer);
+}
+
+#define SCB_ICSR (*(volatile uint32_t *)0xE000ED04)
+#define PENDSVSET (1U << 28)
+void task_yield(void) {
+  SCB_ICSR |= PENDSVSET;
+
+  /* Data/Instruction barriers manually */
+  asm volatile("dsb");
+  asm volatile("isb");
+}
+
+__attribute__((naked)) void scheduler_start(void) {
+  __asm volatile(
+      "ldr r0, =scheduler_running\n"
+      "mov r1, #123             \n"
+      "strb r1, [r0]          \n"
+      " ldr r0, =0xE000ED08   \n" /* Use the NVIC offset register to locate the
+                                     stack. */
+      " ldr r0, [r0]          \n"
+      " ldr r0, [r0]          \n"
+      " msr msp, r0           \n" /* Set the msp back to the start of the stack.
+                                   */
+      " mov r0, #0            \n" /* Clear the bit that indicates the FPU is in
+                                     use, see comment above. */
+      " msr control, r0       \n"
+      " cpsie i               \n" /* Globally enable interrupts. */
+      " cpsie f               \n"
+      " dsb                   \n"
+      "svc 0                  \n"
+      " nop                   \n"
+      " .ltorg                \n");
 }
 
 extern TCB *current_task;

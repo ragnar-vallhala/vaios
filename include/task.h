@@ -1,6 +1,7 @@
 #ifndef TASK_H
 #define TASK_H
 
+#include "config.h"
 #include <stdint.h>
 
 // Task status enumeration
@@ -74,39 +75,6 @@ TCB *get_current_task(void);             // Get current running task
 uint32_t get_tick_count(void);           // Get system tick count
 uint32_t get_context_switch_count(void); // Get context switch statistics
 
-// Assembly functions (implemented in context_switch.s)
-extern void start_first_task(void) __attribute__((noreturn));
-extern void PendSV_Handler(void);
-
-// Critical section macros
-#define ENTER_CRITICAL() __asm volatile("cpsid i" ::: "memory")
-#define EXIT_CRITICAL() __asm volatile("cpsie i" ::: "memory")
-
-// SysTick register definitions
-#define SYSTICK_BASE 0xE000E010UL
-#define SYSTICK_CSR (*(volatile uint32_t *)(SYSTICK_BASE + 0x00))
-#define SYSTICK_RVR (*(volatile uint32_t *)(SYSTICK_BASE + 0x04))
-#define SYSTICK_CVR (*(volatile uint32_t *)(SYSTICK_BASE + 0x08))
-
-// SysTick Control and Status Register bits
-#define SYSTICK_CSR_ENABLE (1UL << 0)
-#define SYSTICK_CSR_TICKINT (1UL << 1)
-#define SYSTICK_CSR_CLKSOURCE (1UL << 2)
-#define SYSTICK_CSR_COUNTFLAG (1UL << 16)
-
-// NVIC System Priority Registers
-#define NVIC_SYSPRI2 (*(volatile uint32_t *)0xE000ED1C)
-#define NVIC_SYSPRI3 (*(volatile uint32_t *)0xE000ED20)
-
-// System interrupt priority levels
-#define PENDSV_PRIORITY 0xFF  // Lowest priority for PendSV
-#define SYSTICK_PRIORITY 0x80 // Medium priority for SysTick
-
-// Task creation helper macro
-#define CREATE_TASK(name, entry_func, arg_ptr, stack_array, prio, id)          \
-  task_create((entry_func), (arg_ptr), (stack_array), sizeof(stack_array),     \
-              (prio), (id))
-
 // Priority validation macro
 #define IS_VALID_PRIORITY(p) ((p) <= MAX_PRIORITY)
 
@@ -119,23 +87,15 @@ extern void PendSV_Handler(void);
 
 // Utility macros for common operations
 #define TASK_DELAY_MS(ms) task_delay((ms))
-#define TASK_DELAY_TICKS(ticks) task_delay((ticks))
+#define TASK_DELAY_TICKS(ticks) task_delay((ticks) * SYSTICK_PERIOD)
+extern TCB *current_task;
 #define GET_CURRENT_TASK_ID() (current_task ? current_task->task_id : 0)
 #define GET_CURRENT_PRIORITY()                                                 \
   (current_task ? current_task->priority : IDLE_PRIORITY)
 
 // Memory alignment for Cortex-M4 (8-byte aligned stacks)
-#define STACK_ALIGN_SIZE 8
 #define ALIGN_STACK_SIZE(size)                                                 \
   (((size) + STACK_ALIGN_SIZE - 1) & ~(STACK_ALIGN_SIZE - 1))
-
-// Minimum stack size recommendation (in words, not bytes)
-#define MIN_STACK_SIZE_WORDS 64   // 256 bytes minimum
-#define IDLE_STACK_SIZE_WORDS 256 // 1KB for idle task
-
-// Function attributes for optimization
-#define SCHEDULER_INLINE inline __attribute__((always_inline))
-#define SCHEDULER_NOINLINE __attribute__((noinline))
 
 // Error codes for task operations
 typedef enum {

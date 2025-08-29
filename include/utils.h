@@ -26,4 +26,9 @@ typedef enum {
 #define COLOR_FATAL "\x1B[35m"   // Magenta
 #define COLOR_UNKNOWN "\x1B[34m" // Blue
 void v_log(Log_Type type, const char *msg, ...);
+
+// Useful Functions
+
+void *memset(void *s, int c, unsigned int n);
+uint32_t strlen(const char *s);
 #endif //! VAIOS_UTILS_H

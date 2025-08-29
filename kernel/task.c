@@ -18,8 +18,7 @@ static inline void rb_clear(uint32_t prio) { ready_bitmap &= ~(1u << prio); }
 static inline int rb_any(void) { return ready_bitmap != 0; }
 
 // Return highest set bit index (portable fallback)
-static inline int highest_ready_prio(void)
-{
+static inline int highest_ready_prio(void) {
   if (!ready_bitmap)
     return -1;
   // If you have __builtin_clz, use it; below is a simple scan
@@ -29,8 +28,7 @@ static inline int highest_ready_prio(void)
   return -1;
 }
 
-void add_to_ready_list(TCB *task)
-{
+void add_to_ready_list(TCB *task) {
   if (!task)
     return;
 
@@ -39,18 +37,14 @@ void add_to_ready_list(TCB *task)
 
   TCB **head = &ready_lists[task->priority];
 
-  if (*head == NULL)
-  {
+  if (*head == NULL) {
     // First task at this priority
     *head = task;
     rb_set(task->priority);
-  }
-  else
-  {
+  } else {
     // Append at the tail
     TCB *curr = *head;
-    while (curr->next)
-    {
+    while (curr->next) {
       curr = curr->next;
     }
     curr->next = task;
@@ -59,8 +53,7 @@ void add_to_ready_list(TCB *task)
   task->status = TASK_READY;
 }
 
-void remove_from_ready_list(TCB *task)
-{
+void remove_from_ready_list(TCB *task) {
   if (!task)
     return;
 
@@ -70,27 +63,21 @@ void remove_from_ready_list(TCB *task)
     return;
 
   // If removing head of the list
-  if (*head == task)
-  {
+  if (*head == task) {
     *head = task->next;
     if (*head)
       (*head)->prev = NULL;
     else
       rb_clear(task->priority); // list became empty
-    if (task->next)
-    {
+    if (task->next) {
       task->next->prev = NULL;
     }
-  }
-  else
-  {
+  } else {
     // Middle or tail
-    if (task->prev)
-    {
+    if (task->prev) {
       task->prev->next = task->next;
     }
-    if (task->next)
-    {
+    if (task->next) {
       task->next->prev = task->prev;
     }
   }
@@ -99,20 +86,16 @@ void remove_from_ready_list(TCB *task)
   task->prev = NULL;
 }
 
-TCB *get_highest_priority_task(void)
-{
+TCB *get_highest_priority_task(void) {
   int p = highest_ready_prio();
   return (p < 0) ? NULL : ready_lists[p];
 }
 
-void idle_task_function(void *arg)
-{
+void idle_task_function(void *arg) {
   uint32_t last_tick = v_get_ticks();
-  while (1)
-  {
+  while (1) {
     uint32_t ticks = v_get_ticks();
-    if (ticks != last_tick)
-    {
+    if (ticks != last_tick) {
       idle_tick_count++;
       last_tick = ticks;
     }
@@ -120,8 +103,7 @@ void idle_task_function(void *arg)
 }
 
 // Task stack initialization
-void init_task_stack(TCB *task)
-{
+void init_task_stack(TCB *task) {
   // Align sp to 8 bytes
   uint32_t *sp = (uint32_t *)((uint32_t)(task->sp) & (~7UL));
   sp--;
@@ -140,10 +122,8 @@ void init_task_stack(TCB *task)
 
 // Task creation and management
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
-                     uint32_t priority)
-{
-  if (stack_size < 128)
-  {
+                     uint32_t priority) {
+  if (stack_size < 128) {
     // tiny guard: require a sane minimum stack (caller can override)
     stack_size = 128;
   }
@@ -153,8 +133,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
     return 0;
   task->stack_size = stack_size;
   task->mem_block = (uint32_t *)v_malloc(stack_size);
-  if (!task->mem_block)
-  {
+  if (!task->mem_block) {
     v_free(task);
     return 0;
   }
@@ -173,26 +152,21 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   return task->task_id;
 }
 
-TCB *get_next_task(void)
-{
+TCB *get_next_task(void) {
   TCB *t = get_highest_priority_task();
-  if (t)
-  {
+  if (t) {
     remove_from_ready_list(t);
-    if (current_task)
-    {
+    if (current_task) {
       add_to_ready_list(current_task);
     }
     current_task = t;
-  }
-  else
+  } else
     current_task = idle_task; // no ready tasks
   return current_task;
 }
 
 void set_next_task(void) { get_next_task(); }
-__attribute__((noreturn)) void task_exit(void)
-{
+__attribute__((noreturn)) void task_exit(void) {
   // Mark the current task as finished
   current_task->status =
       TASK_TERMINATED; // 0 = TASK_TERMINATED (define as you like)
@@ -207,23 +181,11 @@ __attribute__((noreturn)) void task_exit(void)
   while (1)
     ;
 }
-#define SCB_ICSR (*(volatile uint32_t *)0xE000ED04)
-#define PENDSVSET (1U << 28)
-void task_yield(void)
-{
-  SCB_ICSR |= PENDSVSET;
 
-  /* Data/Instruction barriers manually */
-  asm volatile("dsb");
-  asm volatile("isb");
-}
-
-void scheduler_init(void)
-{
+void scheduler_init(void) {
   // Initialize scheduler
 
-  for (uint8_t i = 0; i <= MAX_PRIORITY; i++)
-  {
+  for (uint8_t i = 0; i <= MAX_PRIORITY; i++) {
     ready_lists[i] = NULL;
   }
   ready_bitmap = 0;         // Bitmap for O(1) priority search
@@ -235,26 +197,4 @@ void scheduler_init(void)
   idle_task = ready_lists[0];
   ;                         // Idle task pointer
   current_task = idle_task; // Currently running task
-}
-__attribute__((naked)) void scheduler_start(void)
-{
-  __asm volatile(
-      "ldr r0, =scheduler_running\n"
-      "mov r1, #123             \n"
-      "strb r1, [r0]          \n"
-      " ldr r0, =0xE000ED08   \n" /* Use the NVIC offset register to locate the
-                                     stack. */
-      " ldr r0, [r0]          \n"
-      " ldr r0, [r0]          \n"
-      " msr msp, r0           \n" /* Set the msp back to the start of the stack.
-                                   */
-      " mov r0, #0            \n" /* Clear the bit that indicates the FPU is in
-                                     use, see comment above. */
-      " msr control, r0       \n"
-      " cpsie i               \n" /* Globally enable interrupts. */
-      " cpsie f               \n"
-      " dsb                   \n"
-      "svc 0                  \n"
-      " nop                   \n"
-      " .ltorg                \n");
 }
