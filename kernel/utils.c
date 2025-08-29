@@ -3,6 +3,7 @@
 #include "semihosting.h"
 #include <stdarg.h>
 #include <stdint.h>
+// #include <stddef.h >
 
 #ifdef NAVHAL
 #include "navhal.h"
@@ -192,7 +193,7 @@ void vaprint_fmt(const char *fmt, va_list args)
       }
       int len = strlen(buffer);
       for (int i = len; i < width; i++)
-        print(zero_pad ? '0' : ' ');
+        print(zero_pad ? "0\0" : " \0");
       print(buffer);
       memset(buffer, 0, sizeof(buffer));
       break;
