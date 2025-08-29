@@ -62,7 +62,7 @@ static int itoa_simple(int64_t value, char *buf, int base) {
 }
 
 void vaprint_fmt(const char *fmt, va_list args) {
-  char buffer[64];
+  char buffer[32];
   memset(buffer, 0, sizeof(buffer));
 
   for (const char *p = fmt; *p; p++) {

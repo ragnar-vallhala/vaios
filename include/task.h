@@ -2,19 +2,28 @@
 #define TASK_H
 
 #include "config.h"
+#ifndef CORTEX_M
+#else
+#error "Define valid architecture"
+#endif
+
+#include "port.h"
+
 #include <stdint.h>
 
 // Task status enumeration
-typedef enum {
+typedef enum
+{
   TASK_READY = 0,
   TASK_RUNNING = 1,
   TASK_BLOCKED = 2,
-  TASK_SUSPENDED = 3,
+  TASK_DELAYED = 3,
   TASK_TERMINATED = 4
 } Task_Status;
 
 // Task Control Block structure
-typedef struct Task_Control_Block {
+typedef struct Task_Control_Block
+{
   uint32_t *sp;          // Stack pointer
   uint32_t *mem_block;   // Stack memory block
   void *arg;             // Task argument
@@ -22,6 +31,7 @@ typedef struct Task_Control_Block {
   uint32_t stack_size;   // Stack size in bytes
   uint32_t task_id;      // Unique task identifier
   uint32_t delay_ticks;  // Delay remaining in ticks
+  uint32_t ticks_run;    // Total ticks run (for stats)
   uint32_t priority;     // Task priority (0-7)
   Task_Status status;    // Current task status
   // Links for doubly-linked lists
@@ -30,13 +40,17 @@ typedef struct Task_Control_Block {
 } TCB;
 
 // Scheduler configuration constants
-#define MAX_PRIORITY 7  // Highest priority level
-#define IDLE_PRIORITY 0 // Priority for idle task
+#define MAX_PRIORITY MAX_TASK_PRIORITY   // Highest priority level
+#define IDLE_PRIORITY IDLE_TASK_PRIORITY // Priority for idle task
 
-#define INITIAL_XPSR 0x01000000UL    // Thumb bit set
-#define TASK_ENTRY_MASK 0xFFFFFFFEUL // Set last bit 0
-#define TASK_EXIT task_exit          // Handler if task returns
+#define TASK_EXIT task_exit // Handler if task returns
+
 #define TCB_SP_OFF ((int)offsetof(TCB, sp))
+
+void enqueue_task(TCB **list, TCB *task);
+void remove_task(TCB **list, TCB *task);
+TCB *dequeue_task(TCB **list);
+TCB *peek_task(TCB **list);
 
 // Task list management functions
 void add_to_ready_list(TCB *task);
@@ -44,17 +58,17 @@ void remove_from_ready_list(TCB *task);
 TCB *get_highest_priority_task(void);
 
 // Task stack initialization
-void init_task_stack(TCB *task);
+void init_task_stack(TCB *task); // to be defined in port.c
 
 // Task creation and management
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
                      uint32_t priority);
 
 // Scheduler core functions
-TCB *get_next_task(void);     // Called from context switch handler
-void task_yield(void);        // Voluntary CPU yield
-void task_block(void);        // Block current task
-void task_unblock(TCB *task); // Unblock specified task
+TCB *get_next_task(void);           // Called from context switch handler
+void set_next_task(void);           // Select next task to run
+void load_next_task_from_isr(void); // From ISR context
+void task_yield(void);              // Voluntary CPU yield to be defined in port.c
 __attribute__((noreturn)) void task_exit(void);
 // Idle task function
 void idle_task_function(void *arg);
@@ -63,17 +77,21 @@ void idle_task_function(void *arg);
 void add_to_delayed_list(TCB *task);
 void remove_from_delayed_list(TCB *task);
 void task_delay(uint32_t ticks);
+void wake_up_delayed_tasks(void); // Check and wake delayed tasks
+
+// Blocked task management
+void task_block(void); // Block current task
+void add_to_blocked_list(TCB *task);
+void remove_from_blocked_list(TCB *task);
+void task_unblock(TCB *task); // Unblock specified task
 
 // Scheduler initialization and control
-void scheduler_init(void);             // Initialize scheduler
-void scheduler_start(void);            // Start scheduler
-void scheduler_add_task(TCB *task);    // Add task to ready queue
-void scheduler_remove_task(TCB *task); // Remove task from scheduler
-
+void scheduler_init(void);  // Initialize scheduler
+void scheduler_start(void); // Start scheduler
 // Utility functions
 TCB *get_current_task(void);             // Get current running task
-uint32_t get_tick_count(void);           // Get system tick count
 uint32_t get_context_switch_count(void); // Get context switch statistics
+uint32_t get_idle_tick_count(void);
 
 // Priority validation macro
 #define IS_VALID_PRIORITY(p) ((p) <= MAX_PRIORITY)
@@ -90,15 +108,16 @@ uint32_t get_context_switch_count(void); // Get context switch statistics
 #define TASK_DELAY_TICKS(ticks) task_delay((ticks) * SYSTICK_PERIOD)
 extern TCB *current_task;
 #define GET_CURRENT_TASK_ID() (current_task ? current_task->task_id : 0)
-#define GET_CURRENT_PRIORITY()                                                 \
+#define GET_CURRENT_PRIORITY() \
   (current_task ? current_task->priority : IDLE_PRIORITY)
 
 // Memory alignment for Cortex-M4 (8-byte aligned stacks)
-#define ALIGN_STACK_SIZE(size)                                                 \
+#define ALIGN_STACK_SIZE(size) \
   (((size) + STACK_ALIGN_SIZE - 1) & ~(STACK_ALIGN_SIZE - 1))
 
 // Error codes for task operations
-typedef enum {
+typedef enum
+{
   TASK_SUCCESS = 0,
   TASK_ERROR_NULL_POINTER,
   TASK_ERROR_INVALID_PRIORITY,

@@ -9,31 +9,25 @@
 int count = 0;
 
 // Example main function
-void delay(volatile uint32_t count)
-{
+void delay(volatile uint32_t count) {
   while (count--)
     ;
 }
 
-void task1_func(void *arg)
-{
-  while (1)
-  {
+void task1_func(void *arg) {
+  while (1) {
     ENTER_CRITICAL();
     count++;
-    // v_log(LOG_INFO, "Task ID: %d, Task ticks: %d, CPU Idle Ticks: %d, CPU_Utilization: %d", GET_CURRENT_TASK_ID(),
-    //       get_current_task()->ticks_run,
-    //       get_idle_tick_count(), (100 * (v_get_ticks() - get_idle_tick_count())) / v_get_ticks());
+    v_log(LOG_WARN, "Running %d, %d", GET_CURRENT_TASK_ID(),count);
     // Example work: toggle LED or simulate
     // yield CPU
-    // task_yield(); // optional: can call task_yield()
+    task_yield(); // optional: can call task_yield()
+    // delay(1000000);
     EXIT_CRITICAL();
-    task_delay(1); // Delay for 100 ticks
   }
 }
 
-int main(void)
-{
+int main(void) {
 
   v_init();
   heap_memory_init();
