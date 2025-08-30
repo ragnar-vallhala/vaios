@@ -89,6 +89,14 @@ void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t lr_unused,
 
 #define SCB_ICSR (*(volatile uint32_t *)0xE000ED04)
 #define PENDSVSET (1U << 28)
+void task_yield(void)
+{
+  SCB_ICSR |= PENDSVSET;
+
+  /* Data/Instruction barriers manually */
+  asm volatile("dsb");
+  asm volatile("isb");
+}
 
 __attribute__((naked)) void scheduler_start(void)
 {
@@ -203,15 +211,6 @@ void init_task_stack(TCB *task)
   *sp = 0xfffffffd;
   sp -= 8;
   task->sp = sp;
-}
-
-void task_yield(void)
-{
-  SCB_ICSR |= PENDSVSET;
-
-  /* Data/Instruction barriers manually */
-  asm volatile("dsb");
-  asm volatile("isb");
 }
 
 void load_next_task_from_isr(void)
