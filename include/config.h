@@ -4,7 +4,7 @@
 // Init settings
 #define SYSTICK_PERIOD 10000
 #define UART_LOGGING_ENABLE 1
-#define UART_BAUDRATE 9600
+#define UART_BAUDRATE 115200
 #define LOGGING_ENABLED 1
 
 // Interrupts
@@ -17,4 +17,9 @@
 #define MAIN_STACK_SIZE 128
 #define HEAP_SIZE 4096
 #define STACK_ALIGN_SIZE 8
+
+// Tasks
+#define MAX_TASK_PRIORITY 7
+#define IDLE_TASK_PRIORITY 0
+
 #endif // !VAIOS_CORTEX_M4_CONFIG_H
