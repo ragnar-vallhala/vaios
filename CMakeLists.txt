@@ -14,8 +14,11 @@ set(CMAKE_OBJCOPY ${TOOLCHAIN_PREFIX}objcopy)
 set(CMAKE_BINARY_SIZE ${TOOLCHAIN_PREFIX}size)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
-
+if(NOT DEFINED CMAKE_PROJECT_NAME)
 project(vaios C ASM)
+else()
+  add_compile_definitions(SUBMODULE)
+endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_COMPILE_COMMANDS_OUTPUT "${CMAKE_SOURCE_DIR}/compile_commands.json")
 
@@ -52,12 +55,21 @@ if(NAVHAL)
   add_compile_definitions(NAVHAL)
   include_directories(extern/NavHAL/include)
   add_subdirectory(extern/NavHAL)
+  set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
 endif()
+
+
+set(LINKER_FILE ${LINKER_FILE} PARENT_SCOPE)
+set(STARTUP_FILE ${STARTUP_FILE} PARENT_SCOPE)
+
+message("LINKER_FILE for VAIOS: ${LINKER_FILE}")
+message("STARTUP_FILE for VAIOS: ${STARTUP_FILE}")
 
 add_subdirectory(portable) # implementations for specific architectures (context switching, interrupt handling)
 add_subdirectory(kernel) # The heart of your RTOS (scheduling, tasks, synchronization, etc.) — totally architecture independent
+if(EXAMPLES)
 add_subdirectory(examples) # Small test apps showing how to use the RTOS
-
+endif()
 if(TEST)
   enable_testing()
   add_subdirectory(tests) # For unit tests 
