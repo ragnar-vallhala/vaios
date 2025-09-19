@@ -2,6 +2,7 @@
 #include "config.h"
 #include "utils.h"
 #include <stddef.h>
+#include <stdint.h>
 #ifdef NAVHAL
 #include "navhal.h"
 #else
@@ -46,7 +47,7 @@ void v_init(void) {
   systick_init(SYSTICK_PERIOD);
   hal_set_interrupt_priority(SysTick_IRQn, 14);
   hal_set_interrupt_priority(PendSV_IRQn, 15);
-  
+
 #if UART_LOGGING_ENABLE == 1
   uart2_init(UART_BAUDRATE);
   v_log(LOG_INFO, "[VAIOS INIT] SYSTICK started with time period of %d μs",
@@ -69,5 +70,12 @@ void v_init(void) {
 void v_start(void) {
   // start_scheduler();
   // scheduler_state = SCHEDULER_RUNNING;
+}
+void v_delay(uint32_t ms) {
+  uint32_t initial_ticks = systick_count;
+  uint32_t delay_ticks = (ms * 1000) / SYSTICK_PERIOD;
+  // Busy wait
+  while (systick_count < initial_ticks + delay_ticks)
+    ;
 }
 // void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }

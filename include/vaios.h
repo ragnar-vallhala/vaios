@@ -4,4 +4,5 @@
 void v_init(void);
 void v_start(void);
 void v_stop(void);
+void v_delay(uint32_t ms);
 #endif // !VAIOS_H
