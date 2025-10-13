@@ -4,7 +4,7 @@ message(STATUS "Startup File: ${STARTUP_FILE}")
 if(NOT NAVHAL)
   set(STARTUP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../startup.s)
 endif()
-add_executable(main main_race_cond.c ${STARTUP_FILE})
+add_executable(main main_task.c ${STARTUP_FILE})
 
 if(NAVHAL)
 target_link_libraries(main PRIVATE
