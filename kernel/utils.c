@@ -114,6 +114,35 @@ void vaprint_fmt(const char *fmt, va_list args) {
       memset(buffer, 0, sizeof(buffer));
       break;
     }
+    case 'f': { // floating point
+      double v = va_arg(args, double);
+
+      // Default precision: 6 decimal places
+      int precision = 6;
+      long long int_part = (long long)v;
+      double frac_part = v - (double)int_part;
+
+      if (frac_part < 0)
+        frac_part = -frac_part; // handle negative numbers
+
+      // Print integer part
+      itoa_simple(int_part, buffer, 10);
+      print(buffer);
+      print(".");
+
+      // Print fractional part
+      for (int i = 0; i < precision; i++) {
+        frac_part *= 10.0;
+        int digit = (int)frac_part;
+        char tmp[2] = {'0' + digit, '\0'};
+        print(tmp);
+        frac_part -= digit;
+      }
+
+      memset(buffer, 0, sizeof(buffer));
+      break;
+    }
+
     case 'l': {
       p++;
       if (*p == 'u') // %lu
