@@ -138,7 +138,7 @@ void kernel_task(void *arg)
     task_create(task_mutex, &id4, 512, 0);
     task_create(task_recursive_mutex, &id1, 512, 0); // reuse id
 
-    task_create(isr_simulator, NULL, 512, 1);
+    // task_create(isr_simulator, NULL, 512, 1);
 
     while (1)
     {

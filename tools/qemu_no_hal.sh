@@ -7,7 +7,7 @@ LOG_FILE=${1:-../logs/run_$(date +"%Y-%m-%d_%H:%M:%S").log}  # default if not pr
 rm -rf build
 mkdir build
 cd build
-cmake .. -DNAVHAL=OFF
+cmake .. -DNAVHAL=OFF -DEXAMPLES=ON
 cmake --build .
 
 # Run QEMU, output to both terminal and log file
