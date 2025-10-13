@@ -138,12 +138,6 @@ TCB *get_highest_priority_task(void)
   int p = highest_ready_prio();
   return (p < 0) ? NULL : ready_lists[p];
 }
-//-----------------------------------------------------------------------------
-// Garbage Collection for Terminated Tasks
-//-----------------------------------------------------------------------------
-void gc_terminated_tasks(void *)
-{
-}
 
 //-----------------------------------------------------------------------------
 // Task Creation and Management
@@ -214,7 +208,7 @@ void set_next_task(void)
 __attribute__((noreturn)) void task_exit(void)
 {
   ENTER_CRITICAL();
-  v_log(LOG_INFO, "Task %d Exiting", current_task->task_id);
+  v_log(LOG_INFO, "Task %u Exiting", current_task->task_id);
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   EXIT_CRITICAL();
@@ -239,7 +233,7 @@ void idle_task_function(void *arg)
     }
     while (task)
     {
-      v_log(LOG_DEBUG, "GC Checking Task %d Status: %d", task->task_id, task->status);
+      v_log(LOG_DEBUG, "GC Checking Task %u Status: %d", task->task_id, task->status);
       if (task->status == TASK_TERMINATED)
       {
         v_log(LOG_DEBUG, "Idle Task Running. CPU_Usage %d, %d/%d",

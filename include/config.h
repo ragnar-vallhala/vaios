@@ -2,6 +2,7 @@
 #define VAIOS_CORTEX_M4_CONFIG_H
 
 // Init settings
+#define CORTEX_M4
 #define SYSTICK_PERIOD 10000
 #define UART_LOGGING_ENABLE 1
 #define UART_BAUDRATE 115200
@@ -15,11 +16,15 @@
 
 // Memory
 #define MAIN_STACK_SIZE 128
-#define HEAP_SIZE 4096
+#define HEAP_SIZE 10240
 #define STACK_ALIGN_SIZE 8
 
 // Tasks
 #define MAX_TASK_PRIORITY 7
 #define IDLE_TASK_PRIORITY 0
+
+// IPC
+#define MAX_SEMAPHORE_COUNT 0xFFFFFFFF
+#define STATIC_SEMAPHORE_SIZE 32
 
 #endif // !VAIOS_CORTEX_M4_CONFIG_H

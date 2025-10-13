@@ -30,7 +30,7 @@ void task1_func(void *arg) {
 int main(void) {
 
   v_init();
-  heap_memory_init();
+  v_heap_memory_init();
   scheduler_init();
   count = 0;
   uint32_t t1 = task_create(task1_func, NULL, 512, 1);

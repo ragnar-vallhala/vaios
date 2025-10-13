@@ -8,7 +8,7 @@ uint32_t allocation_size = 0;
 uint32_t allocation_count = 0;
 Heap_Mem_Block *heap_mem_head = NULL;
 
-void heap_memory_init(void)
+void v_heap_memory_init(void)
 {
   heap_mem_head = (Heap_Mem_Block *)&_heap_start;
 

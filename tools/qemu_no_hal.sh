@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage: ./run_qemu.sh <log_file>
-LOG_FILE=${1:-../tools/alloc_logs.txt}  # default if not provided
+LOG_FILE=${1:-../logs/run_$(date +"%Y-%m-%d_%H:%M:%S").log}  # default if not provided
 
 # Clean and build
 rm -rf build
@@ -11,7 +11,7 @@ cmake .. -DNAVHAL=OFF
 cmake --build .
 
 # Run QEMU, output to both terminal and log file
-qemu-system-arm -M olimex-stm32-h405 \
+qemu-system-arm -M netduinoplus2 \
   -cpu cortex-m4 \
   -kernel examples/main \
   -nographic \
