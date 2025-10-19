@@ -10,11 +10,11 @@
 TCB *ready_lists[MAX_PRIORITY + 1]; // Ready task lists by priority
 TCB *blocked_list = NULL;           // Blocked tasks list
 TCB *delayed_list = NULL;           // Delayed tasks list
-TCB *current_task;                  // Currently running task
-TCB *idle_task;                     // Idle task pointer
-uint32_t ready_bitmap;              // Bitmap for O(1) priority search
-uint32_t context_switch_count;      // Context switch counter
-uint32_t task_count;
+TCB *current_task = NULL;           // Currently running task
+TCB *idle_task = NULL;              // Idle task pointer
+uint32_t ready_bitmap = 0;          // Bitmap for O(1) priority search
+uint32_t context_switch_count = 0;  // Context switch counter
+uint32_t task_count = 0;            // Total created tasks
 uint8_t scheduler_running = 0;
 static uint32_t last_context_switch_tick = 0; // To track ticks for current task
 
@@ -157,6 +157,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size, uint
   if (!task->mem_block)
   {
     v_free(task);
+    task = NULL;
     return 0;
   }
   task->task_id = ++task_count;
@@ -173,6 +174,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size, uint
 
   add_to_ready_list(task);
   EXIT_CRITICAL();
+  v_log(LOG_DEBUG, "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack size: 0x%x", task->task_id, priority, task->mem_block, stack_size);
   return task->task_id;
 }
 
@@ -197,6 +199,8 @@ TCB *get_next_task(void)
     current_task = idle_task;
   current_task->status = TASK_RUNNING;
   context_switch_count++;
+
+  // v_log(LOG_DEBUG, "[TASK] Task Switch to Task id: %u priority: %u", current_task->task_id, current_task->priority);
   return current_task;
 }
 
@@ -208,7 +212,7 @@ void set_next_task(void)
 __attribute__((noreturn)) void task_exit(void)
 {
   ENTER_CRITICAL();
-  v_log(LOG_INFO, "Task %u Exiting", current_task->task_id);
+  v_log(LOG_DEBUG, "Task %u Exiting", current_task->task_id);
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   EXIT_CRITICAL();
@@ -220,31 +224,37 @@ __attribute__((noreturn)) void task_exit(void)
 //-----------------------------------------------------------------------------
 // Idle Task Function
 //-----------------------------------------------------------------------------
+extern void v_log_flush(void);
+extern uint32_t print_buffer_count;
 void idle_task_function(void *arg)
 {
   TCB *task = blocked_list;
   while (1)
   {
+    for (int i = 0; i < 64; i++)
+      v_log_flush();
     task = blocked_list;
     if (task == NULL)
     {
       task_delay(100); // Sleep for a while if no blocked tasks
+      v_log(LOG_DEBUG, "[TASK] Idle Task Running. CPU_Usage %d\%, %d/%d ticks",
+            ((v_get_ticks() - idle_task->ticks_run + 1) * 100) / (v_get_ticks()),
+            idle_task->ticks_run, v_get_ticks());
       continue;
     }
     while (task)
     {
-      v_log(LOG_DEBUG, "GC Checking Task %u Status: %d", task->task_id, task->status);
+      v_log(LOG_DEBUG, "[TASK] Garbage Collector checking task %u status: %d", task->task_id, task->status);
       if (task->status == TASK_TERMINATED)
       {
-        v_log(LOG_DEBUG, "Idle Task Running. CPU_Usage %d, %d/%d",
-              ((v_get_ticks() - idle_task->ticks_run + 1) * 100) / (v_get_ticks()),
-              idle_task->ticks_run, v_get_ticks());
         TCB *to_free = task;
         task = task->next;
         remove_from_blocked_list(to_free);
         if (to_free->mem_block)
           v_free(to_free->mem_block);
+        to_free->mem_block = NULL;
         v_free(to_free);
+        to_free = NULL;
         continue;
       }
       task = task->next;
@@ -347,7 +357,7 @@ void scheduler_init(void)
   last_context_switch_tick = v_get_ticks();
   task_count = 0;
   scheduler_running = 0;
-  task_create(idle_task_function, NULL, 512, 0);
+  task_create(idle_task_function, NULL, IDLE_TASK_STACK_SIZE, 0);
   idle_task = ready_lists[0];
   current_task = idle_task;
 }

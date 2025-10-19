@@ -123,20 +123,21 @@ void isr_simulator(void *arg)
 
 //---------------------------- Kernel Task ----------------------------//
 
+int id1 = 1, id2 = 2, id3 = 3, id4 = 4;
+
 void kernel_task(void *arg)
 {
-    static int id1 = 1, id2 = 2, id3 = 3, id4 = 4;
 
     bin_sem = v_semaphore_create_binary();
     count_sem = v_semaphore_create_counting(2, 1);
     mtx = v_mutex_create();
     rmtx = v_mutex_create_recursive();
 
-    task_create(task_bin_sem, &id1, 512, 0);
-    task_create(task_bin_sem, &id2, 512, 0);
-    task_create(task_count_sem, &id3, 512, 0);
-    task_create(task_mutex, &id4, 512, 0);
-    task_create(task_recursive_mutex, &id1, 512, 0); // reuse id
+    task_create(task_bin_sem, &id1, 1024, 0);
+    task_create(task_bin_sem, &id2, 1024, 0);
+    task_create(task_count_sem, &id3, 1024, 0);
+    task_create(task_mutex, &id4, 1024, 0);
+    task_create(task_recursive_mutex, &id1, 1024, 0); // reuse id
 
     // task_create(isr_simulator, NULL, 512, 1);
 
@@ -153,7 +154,6 @@ int main(void)
     v_init();
     v_heap_memory_init();
     scheduler_init();
-
     task_create(kernel_task, NULL, 1024, 0);
     scheduler_start();
 
