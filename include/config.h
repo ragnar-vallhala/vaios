@@ -16,15 +16,23 @@
 
 // Memory
 #define MAIN_STACK_SIZE 128
-#define HEAP_SIZE 10240
+#define HEAP_SIZE 0x8000
 #define STACK_ALIGN_SIZE 8
 
 // Tasks
 #define MAX_TASK_PRIORITY 7
 #define IDLE_TASK_PRIORITY 0
+#define IDLE_TASK_STACK_SIZE 1024
 
 // IPC
 #define MAX_SEMAPHORE_COUNT 0xFFFFFFFF
 #define STATIC_SEMAPHORE_SIZE 32
+
+// Logging
+#define LOG_BUFFER_SIZE 64       // number of log entries
+#define LOG_MSG_MAX_LEN 64       // max chars per message
+#define BUFFERED_LOGGING 1       // 0: disable, 1: enable
+#define MIN_LOG_LEVEL LOG_TRACE  // Minimum log level to output
+#define ALLOWED_MODULES "TASK,MEMORY" // Comma-separated list of modules to log from, or "ALL"
 
 #endif // !VAIOS_CORTEX_M4_CONFIG_H
