@@ -3,7 +3,7 @@
 
 // Init settings
 #define CORTEX_M4
-#define SYSTICK_PERIOD 10000
+#define SYSTICK_PERIOD 1000 // in microseconds
 #define UART_LOGGING_ENABLE 1
 #define UART_BAUDRATE 9600
 #define LOGGING_ENABLED 1
@@ -11,6 +11,7 @@
 // Interrupts
 #define __NVIC_PRIO_BITS 4
 #define MAX_SYSCALL_INTERRUPT_PRIORITY (7 << (8 - __NVIC_PRIO_BITS))
+
 // Scheduling
 #define TIME_SLICE 10
 
@@ -33,6 +34,6 @@
 #define LOG_MSG_MAX_LEN 64       // max chars per message
 #define BUFFERED_LOGGING 1       // 0: disable, 1: enable
 #define MIN_LOG_LEVEL LOG_TRACE  // Minimum log level to output
-#define ALLOWED_MODULES "TASK,MEMORY" // Comma-separated list of modules to log from, or "ALL"
+#define ALLOWED_MODULES "ALL" // Comma-separated list of modules to log from, or "ALL"
 
 #endif // !VAIOS_CORTEX_M4_CONFIG_H
