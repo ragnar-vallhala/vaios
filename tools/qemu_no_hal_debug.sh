@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage: ./run_qemu.sh <log_file>
-LOG_FILE=${1:-../tools/alloc_logs.txt}  # default if not provided
+LOG_FILE=${1:-../logs/dbg_$(date +"%Y-%m-%d_%H:%M:%S").log}  # default if not provided
 
 # Clean and build
 rm -rf build

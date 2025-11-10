@@ -14,7 +14,7 @@ typedef struct {
 } Heap_Mem_Block;
 
 // Initialize heap memory
-void heap_memory_init(void);
+void v_heap_memory_init(void);
 
 // Allocate memory
 void *v_malloc(size_t size);

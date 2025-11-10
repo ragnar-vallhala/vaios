@@ -17,7 +17,7 @@ static inline uint32_t nonzero_sz(uint32_t ticks) {
 
 int main(void) {
   v_init();
-  heap_memory_init();
+  v_heap_memory_init();
 
   // Zero-initialized table so we never free garbage.
   void **arr = (void **)v_malloc(MAX_ALLOC_COUNT* sizeof(void *));

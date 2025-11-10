@@ -19,6 +19,7 @@
         "config.h": "c",
         "string.h": "c",
         "vaios.h": "c",
-        "port.h": "c"
+        "port.h": "c",
+        "ipc.h": "c"
     }
 }
