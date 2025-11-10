@@ -18,9 +18,9 @@
 // But for now it will stay the same I have no more courage
 //----------------
 
-void *memset(void *s, int c, unsigned int n);
-void *memcpy(void *dest, const void *src, unsigned int n);
-uint32_t strlen(const char *s);
+void *v_memset(void *s, int c, unsigned int n);
+void *v_memcpy(void *dest, const void *src, unsigned int n);
+uint32_t v_strlen(const char *s);
 
 // Basic print function (to UART or semihosting)
 void print(const char *str)
@@ -87,7 +87,7 @@ static int itoa_simple(int64_t value, char *buf, int base)
 void vaprint_fmt(const char *fmt, va_list args)
 {
   char buffer[32];
-  memset(buffer, 0, sizeof(buffer));
+  v_memset(buffer, 0, sizeof(buffer));
 
   for (const char *p = fmt; *p; p++)
   {
@@ -123,26 +123,26 @@ void vaprint_fmt(const char *fmt, va_list args)
     {
       int v = va_arg(args, int);
       itoa_simple(v, buffer, 10);
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
       {
         print(zero_pad ? "0\0" : " \0");
       }
       print(buffer);
-      memset(buffer, 0, sizeof(buffer));
+      v_memset(buffer, 0, sizeof(buffer));
       break;
     }
     case 'u': // unsigned int
     {
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 10);
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
       {
         print(zero_pad ? "0\0" : " \0");
       }
       print(buffer);
-      memset(buffer, 0, sizeof(buffer));
+      v_memset(buffer, 0, sizeof(buffer));
       break;
     }
     case 'f':
@@ -172,7 +172,7 @@ void vaprint_fmt(const char *fmt, va_list args)
         frac_part -= digit;
       }
 
-      memset(buffer, 0, sizeof(buffer));
+      v_memset(buffer, 0, sizeof(buffer));
       break;
     }
 
@@ -203,21 +203,21 @@ void vaprint_fmt(const char *fmt, va_list args)
           itoa_simple(v, buffer, 10);
         }
       }
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
       {
         print(zero_pad ? "0\0" : " \0");
       }
       print(buffer);
-      memset(buffer, 0, sizeof(buffer));
+      v_memset(buffer, 0, sizeof(buffer));
       break;
     }
     case 'x': // 32-bit hex lowercase
     {
       uint32_t v = va_arg(args, uint32_t);
-      memset(buffer, 0, sizeof(buffer));
+      v_memset(buffer, 0, sizeof(buffer));
       utoa_simple(v, buffer, 16);
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
         print(zero_pad ? "0\0" : " \0");
       print(buffer);
@@ -226,7 +226,7 @@ void vaprint_fmt(const char *fmt, va_list args)
     case 'X': // 32/64-bit hex uppercase
     {
       uint64_t v = va_arg(args, uint32_t);
-      memset(buffer, 0, sizeof(buffer));
+      v_memset(buffer, 0, sizeof(buffer));
       utoa_simple(v, buffer, 16);
       // convert to uppercase
       for (int i = 0; buffer[i] != '\0'; i++)
@@ -234,11 +234,11 @@ void vaprint_fmt(const char *fmt, va_list args)
         if (buffer[i] >= 'a' && buffer[i] <= 'f')
           buffer[i] -= 32;
       }
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
         print(zero_pad ? "0\0" : " \0");
       print(buffer);
-      memset(buffer, 0, sizeof(buffer));
+      v_memset(buffer, 0, sizeof(buffer));
       break;
     }
     case 'c':
@@ -308,7 +308,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
     {
       int v = va_arg(args, int);
       itoa_simple(v, buffer, 10);
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width && pos < out_size - 1; i++)
         out[pos++] = zero_pad ? '0' : ' ';
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
@@ -319,7 +319,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
     {
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 10);
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width && pos < out_size - 1; i++)
         out[pos++] = zero_pad ? '0' : ' ';
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
@@ -377,7 +377,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
         }
       }
 
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width && pos < out_size - 1; i++)
         out[pos++] = zero_pad ? '0' : ' ';
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
@@ -388,7 +388,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
     {
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 16);
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width && pos < out_size - 1; i++)
         out[pos++] = zero_pad ? '0' : ' ';
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
@@ -403,7 +403,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
       for (int i = 0; buffer[i]; i++)
         if (buffer[i] >= 'a' && buffer[i] <= 'f')
           buffer[i] -= 32;
-      int len = strlen(buffer);
+      int len = v_strlen(buffer);
       for (int i = len; i < width && pos < out_size - 1; i++)
         out[pos++] = zero_pad ? '0' : ' ';
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
@@ -544,7 +544,7 @@ void v_log(Log_Type type, const char *msg, ...)
   if (next_head != log_tail) // buffer not full
   {
     log_buffer[log_head].type = type;
-    memcpy(log_buffer[log_head].msg, formatted_msg, LOG_MSG_MAX_LEN - 1);
+    v_memcpy(log_buffer[log_head].msg, formatted_msg, LOG_MSG_MAX_LEN - 1);
     // strncpy(log_buffer[log_head].msg, msg, LOG_MSG_MAX_LEN - 1);
     log_buffer[log_head].msg[LOG_MSG_MAX_LEN - 1] = '\0';
     log_head = next_head;
@@ -661,7 +661,7 @@ void SysTick_Handler(void)
 
 uint32_t v_get_ticks(void) { return systick_count; }
 
-void *memset(void *s, int c, unsigned int n)
+void *v_memset(void *s, int c, unsigned int n)
 {
   uint8_t *p = (uint8_t *)s;
   for (unsigned int i = 0; i < n; i++)
@@ -670,7 +670,7 @@ void *memset(void *s, int c, unsigned int n)
   }
   return s;
 }
-void *memcpy(void *dest, const void *src, unsigned int n)
+void *v_memcpy(void *dest, const void *src, unsigned int n)
 {
   uint8_t *d = (uint8_t *)dest;
   const uint8_t *s = (const uint8_t *)src;
@@ -694,7 +694,7 @@ void *memcpy(void *dest, const void *src, unsigned int n)
 
   return dest;
 }
-uint32_t strlen(const char *s)
+uint32_t v_strlen(const char *s)
 {
   if (!s)
     return 0;
