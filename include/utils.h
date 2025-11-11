@@ -32,8 +32,8 @@ void v_log(Log_Type type, const char *msg, ...);
 
 // Useful Functions
 
-void *memset(void *s, int c, unsigned int n);
-uint32_t strlen(const char *s);
+void *v_memset(void *s, int c, unsigned int n);
+uint32_t v_strlen(const char *s);
 
 typedef struct
 {
