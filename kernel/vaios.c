@@ -3,6 +3,8 @@
 #include "utils.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "task.h"
+
 #ifdef NAVHAL
 #include "navhal.h"
 #else
@@ -74,8 +76,10 @@ void v_start(void) {
 void v_delay(uint32_t ms) {
   uint32_t initial_ticks = systick_count;
   uint32_t delay_ticks = (ms * 1000) / SYSTICK_PERIOD;
+  task_delay(delay_ticks);
+
   // Busy wait
-  while (systick_count < initial_ticks + delay_ticks)
-    ;
+  // while (systick_count < initial_ticks + delay_ticks)
+  //   ;
 }
 // void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }
