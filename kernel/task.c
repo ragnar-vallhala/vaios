@@ -236,7 +236,7 @@ void idle_task_function(void *arg)
     task = blocked_list;
     if (task == NULL)
     {
-      task_delay(100); // Sleep for a while if no blocked tasks
+      // task_delay(100); // Sleep for a while if no blocked tasks
       // v_log(LOG_DEBUG, "[TASK] Idle Task Running. CPU_Usage %d\%, %d/%d ticks",
       //       ((v_get_ticks() - idle_task->ticks_run + 1) * 100) / (v_get_ticks()),
       //       idle_task->ticks_run, v_get_ticks());
