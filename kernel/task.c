@@ -24,7 +24,7 @@ static uint32_t last_context_switch_tick = 0; // To track ticks for current task
 static inline void rb_set(uint32_t prio) { ready_bitmap |= (1u << prio); }
 static inline void rb_clear(uint32_t prio) { ready_bitmap &= ~(1u << prio); }
 static inline int rb_any(void) { return ready_bitmap != 0; }
-
+static TCB *get_task_by_id(uint32_t task_id);
 // Return highest set bit index (portable fallback)
 static inline int highest_ready_prio(void)
 {
@@ -212,7 +212,7 @@ void set_next_task(void)
 __attribute__((noreturn)) void task_exit(void)
 {
   ENTER_CRITICAL();
-  v_log(LOG_DEBUG, "Task %u Exiting", current_task->task_id);
+  v_log(LOG_DEBUG, "[TASK] Task %u Exiting", current_task->task_id);
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   EXIT_CRITICAL();
@@ -220,7 +220,19 @@ __attribute__((noreturn)) void task_exit(void)
   while (1)
     ;
 }
-
+void task_exit_request(uint32_t task_id)
+{
+  TCB *task = get_task_by_id(task_id);
+  ENTER_CRITICAL();
+  if (task->status == TASK_READY)
+    remove_from_ready_list(task);
+  else if (task->status == TASK_DELAYED)
+    remove_from_delayed_list(task);
+  task->status = TASK_TERMINATED;
+  enqueue_task(&blocked_list, task);
+  EXIT_CRITICAL();
+  task_yield();
+}
 //-----------------------------------------------------------------------------
 // Idle Task Function
 //-----------------------------------------------------------------------------
@@ -379,7 +391,36 @@ uint32_t get_idle_tick_count(void)
 {
   return idle_task->ticks_run;
 }
-
+TCB *get_task_by_id(uint32_t task_id)
+{
+  if (current_task->task_id == task_id)
+    return current_task;
+  for (int i = 0; i < MAX_PRIORITY; i++)
+  {
+    TCB *curr = ready_lists[i];
+    while (curr)
+    {
+      if (curr->task_id == task_id)
+        return curr;
+      curr = curr->next;
+    }
+  }
+  TCB *curr = blocked_list;
+  while (curr)
+  {
+    if (curr->task_id == task_id)
+      return curr;
+    curr = curr->next;
+  }
+  curr = delayed_list;
+  while (curr)
+  {
+    if (curr->task_id == task_id)
+      return curr;
+    curr = curr->next;
+  }
+  return NULL;
+}
 uint32_t get_task_run_time(TCB *task)
 {
   if (!task)
