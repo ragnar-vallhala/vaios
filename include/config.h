@@ -49,7 +49,6 @@
 #define CMD_MAX_LEN 32                   // maximum length of one command
 #define MAX_CMD_NUMBER 6                 // maximum number of commands defined
 #define ESCAPE_SEQ_LEN 2                 // \r, \n or \r\n length
-#define NEWLINE_CMD_PRINT "[TERM] cmd> "
 #define TERMINAL_TASK_STACK_SIZE 1024
 
 #endif // !VAIOS_CORTEX_M4_CONFIG_H
