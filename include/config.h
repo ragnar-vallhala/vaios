@@ -40,7 +40,7 @@
 #define LOG_MSG_MAX_LEN 64      // max chars per message
 #define BUFFERED_LOGGING 1      // 0: disable, 1: enable
 #define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
-#define ALLOWED_MODULES "ALL"   // Comma-separated list of modules to log from, or "ALL"
+#define ALLOWED_MODULES "TERM, VAIOS INIT"   // Comma-separated list of modules to log from, or "ALL"
 
 // Terminal
 #define ENABLE_TERMINAL 1                // 0: disable, 1: enable
@@ -49,5 +49,5 @@
 #define CMD_MAX_LEN 32                   // maximum length of one command
 #define MAX_CMD_NUMBER 6                 // maximum number of commands defined
 #define ESCAPE_SEQ_LEN 2                 // \r, \n or \r\n length
-#define NEWLINE_CMD_PRINT "[TERM] cmd> "
+
 #endif // !VAIOS_CORTEX_M4_CONFIG_H
