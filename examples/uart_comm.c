@@ -9,32 +9,21 @@
 #include "task.h"
 
 char msg[48];
+int ptr = 0;
 int available = 0;
-void recieve()
-{
-    while (1)
-    {
-        while (uart2_available())
-        {
-            v_log(LOG_WARN, "Recieved msg");
-            int reading = 1;
-            int i = 0;
-            while (reading)
-            {
-                char c = uart2_read_char();
-                msg[i++] = c;
-                if (c == '\n')
-                    reading = 0;
-            }
 
-            int n = uart2_read_until(msg, 100, '\n');
-            msg[i] = '\0';
-            v_log(LOG_WARN, msg);
-            available = 1;
-        }
-        v_delay(1);
+void onRecieve()
+{
+
+    char c = uart2_read_char();
+    msg[ptr++] = c;
+    if (c == '\n')
+    {
+        available = 1;
+        msg[ptr] = '\0';
     }
 }
+
 void send()
 {
     while (1)
@@ -43,6 +32,7 @@ void send()
         {
             v_log(LOG_INFO, msg);
             available = 0;
+            ptr = 0;
         }
     }
 }
@@ -50,9 +40,10 @@ int main()
 {
     msg[47] = '\0';
     v_init();
+    hal_interrupt_attach_callback(USART2_IRQn, onRecieve);
+    hal_enable_interrupt(USART2_IRQn);
     v_heap_memory_init();
     scheduler_init();
-    uint32_t t1 = task_create(recieve, NULL, 1024, 1);
     uint32_t t2 = task_create(send, NULL, 1024, 0);
     scheduler_start();
     while (1)
