@@ -11,7 +11,7 @@
 #define CORTEX_M4
 #define SYSTICK_PERIOD 1000 // in microseconds
 #define UART_LOGGING_ENABLE 1
-#define UART_BAUDRATE 9600
+#define UART_BAUDRATE 230400
 #define LOGGING_ENABLED 1
 
 // Interrupts
@@ -37,7 +37,7 @@
 
 // Logging
 #define LOG_BUFFER_SIZE 64      // number of log entries
-#define LOG_MSG_MAX_LEN 64      // max chars per message
+#define LOG_MSG_MAX_LEN 128      // max chars per message
 #define BUFFERED_LOGGING 1      // 0: disable, 1: enable
 #define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
 #define ALLOWED_MODULES "TERM, VAIOS INIT"   // Comma-separated list of modules to log from, or "ALL"
@@ -49,5 +49,7 @@
 #define CMD_MAX_LEN 32                   // maximum length of one command
 #define MAX_CMD_NUMBER 6                 // maximum number of commands defined
 #define ESCAPE_SEQ_LEN 2                 // \r, \n or \r\n length
+#define NEWLINE_CMD_PRINT "[TERM] cmd> "
+#define TERMINAL_TASK_STACK_SIZE 1024
 
 #endif // !VAIOS_CORTEX_M4_CONFIG_H
