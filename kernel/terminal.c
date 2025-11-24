@@ -119,6 +119,7 @@ static void _onRecieve(void)
 #endif
     }
 }
+
 void terminal_init(void)
 {
     for (int i = 0; i < CMD_BUFFER_SIZE; i++)
@@ -161,9 +162,9 @@ void terminal_run(void *args)
     {
         if (_is_cmd_running && _exit_requested)
         {
-            task_exit_request(_running_cmd_id);
             _is_cmd_running = 0;
             _exit_requested = 0;
+            task_exit_request(_running_cmd_id);
         }
         if (_command_exec_ready)
         {

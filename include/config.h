@@ -11,7 +11,7 @@
 #define CORTEX_M4
 #define SYSTICK_PERIOD 1000 // in microseconds
 #define UART_LOGGING_ENABLE 1
-#define UART_BAUDRATE 230400
+#define UART_BAUDRATE 115200
 #define LOGGING_ENABLED 1
 
 // Interrupts
@@ -40,7 +40,8 @@
 #define LOG_MSG_MAX_LEN 128      // max chars per message
 #define BUFFERED_LOGGING 1      // 0: disable, 1: enable
 #define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
-#define ALLOWED_MODULES "TERM, VAIOS INIT"   // Comma-separated list of modules to log from, or "ALL"
+// #define ALLOWED_MODULES "TERM,VAIOS INIT"   // Comma-separated list of modules to log from, or "ALL"
+#define ALLOWED_MODULES "ALL"   // Comma-separated list of modules to log from, or "ALL"
 
 // Terminal
 #define ENABLE_TERMINAL 1                // 0: disable, 1: enable

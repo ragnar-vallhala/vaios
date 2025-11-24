@@ -15,6 +15,7 @@ int main()
     v_init();
     terminal_init();
     register_command(inf, "inf");
+    register_command(inf, "inf1");
     v_heap_memory_init();
     scheduler_init();
     uint32_t t2 = task_create(terminal_run, NULL, 1024, 0);

@@ -75,7 +75,7 @@ void init_task_stack(TCB *task); // Implemented in port.c
 //-----------------------------------------------------------------------------
 uint32_t task_create(void (*entry)(void *), void *arg,
                      uint32_t stack_size, uint32_t priority);
-__attribute__((noreturn)) void task_exit_request(uint32_t task_id);
+void task_exit_request(uint32_t task_id);
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------

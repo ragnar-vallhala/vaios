@@ -269,7 +269,8 @@ void idle_task_function(void *arg)
         to_free = NULL;
         continue;
       }
-      task = task->next;
+      else
+        task = task->next;
     }
   }
 }
