@@ -43,6 +43,7 @@ int sh_write(int fd, const void *buf, int len);
 char sh_readc(void);
 void sh_exit(int code);
 uint32_t sh_get_ticks(void);
+
 #ifdef __cplusplus
 }
 #endif

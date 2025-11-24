@@ -29,11 +29,12 @@ typedef enum
 #define COLOR_FATAL "\x1B[35m"   // Magenta
 #define COLOR_UNKNOWN "\x1B[34m" // Blue
 void v_log(Log_Type type, const char *msg, ...);
-
 // Useful Functions
 
 void *v_memset(void *s, int c, unsigned int n);
 uint32_t v_strlen(const char *s);
+
+int v_strcmp(const char *s1, const char *s2);
 
 typedef struct
 {
