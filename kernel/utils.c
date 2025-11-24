@@ -24,11 +24,12 @@ uint32_t v_strlen(const char *s);
 
 int v_strcmp(const char *s1, const char *s2)
 {
-    while (*s1 && (*s1 == *s2)) {
-        s1++;
-        s2++;
-    }
-    return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+  while (*s1 && (*s1 == *s2))
+  {
+    s1++;
+    s2++;
+  }
+  return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
 // Basic print function (to UART or semihosting)
@@ -646,18 +647,10 @@ void v_log_flush(void)
       typeColor = COLOR_UNKNOWN;
       break;
     }
-    if (string_equal(NEWLINE_CMD_PRINT, entry->msg))
-    {
-      print_fmt("%s[%s %u]%s %s",
-                typeColor, typeName, v_get_ticks(),
-                COLOR_RESET, entry->msg);
-    }
-    else
-    {
-      print_fmt("%s[%s %u]%s %s\r\n",
-                typeColor, typeName, v_get_ticks(),
-                COLOR_RESET, entry->msg);
-    }
+
+    print_fmt("%s[%s %u]%s %s\r\n",
+              typeColor, typeName, v_get_ticks(),
+              COLOR_RESET, entry->msg);
 
     log_tail = (log_tail + 1) % LOG_BUFFER_SIZE;
   }
