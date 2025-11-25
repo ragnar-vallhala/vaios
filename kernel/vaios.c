@@ -24,10 +24,12 @@
 /* Define CPU clock for QEMU (adjust if needed) */
 #define CPU_CLOCK_HZ 16000000UL
 
-void _qemu_systick_init_ms(uint32_t period_ms) {
+void _qemu_systick_init_ms(uint32_t period_ms)
+{
   uint32_t reload = (CPU_CLOCK_HZ / 1000) * period_ms - 1;
 
-  if (reload > 0xFFFFFF) {
+  if (reload > 0xFFFFFF)
+  {
     // SysTick is only 24-bit, so max reload is 0xFFFFFF
     reload = 0xFFFFFF;
   }
@@ -41,7 +43,8 @@ void _qemu_systick_init_ms(uint32_t period_ms) {
 
 extern uint32_t systick_count;
 
-void v_init(void) {
+void v_init(void)
+{
   // resetting global variables
   systick_count = 0;
 #ifdef NAVHAL
@@ -69,12 +72,13 @@ void v_init(void) {
 #endif
 }
 // extern void start_scheduler(void);
-void v_start(void) {
+void v_start(void)
+{
   // start_scheduler();
   // scheduler_state = SCHEDULER_RUNNING;
 }
-void v_delay(uint32_t ms) {
-  uint32_t initial_ticks = systick_count;
+void v_delay(uint32_t ms)
+{
   uint32_t delay_ticks = (ms * 1000) / SYSTICK_PERIOD;
   task_delay(delay_ticks);
 

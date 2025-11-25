@@ -17,6 +17,9 @@
 // Still in future if I ever come accross it (I will have to) then I will make it better
 // But for now it will stay the same I have no more courage
 //----------------
+static LogEntry log_buffer[LOG_BUFFER_SIZE];
+static volatile int log_head = 0;
+static volatile int log_tail = 0;
 
 void *v_memset(void *s, int c, unsigned int n);
 void *v_memcpy(void *dest, const void *src, unsigned int n);
@@ -457,18 +460,6 @@ void print_fmt(const char *fmt, ...)
   va_start(args, fmt);
   vaprint_fmt(fmt, args);
   va_end(args);
-}
-
-static int string_equal(const char *a, const char *b)
-{
-  while (*a && *b)
-  {
-    if (*a != *b)
-      return 0;
-    a++;
-    b++;
-  }
-  return (*a == 0 && *b == 0);
 }
 
 // Returns 1 if this module is allowed to log
