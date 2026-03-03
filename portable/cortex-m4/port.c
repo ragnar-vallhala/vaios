@@ -3,6 +3,7 @@
 #include "utils.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "port.h"
 
 // Exception stack frame automatically pushed by Cortex-M on exception
 typedef struct

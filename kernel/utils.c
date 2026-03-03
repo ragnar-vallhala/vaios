@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "atomic.h"
 #include "config.h"
 #include "port.h"
 #include "semihosting.h"
@@ -23,6 +24,16 @@ void *v_memcpy(void *dest, const void *src, unsigned int n);
 uint32_t v_strlen(const char *s);
 
 LogEntry log_buffer[LOG_BUFFER_SIZE];
+
+// Double buffering for log messages
+static uint8_t log_buffer_storage1[LOG_BUFFER_STORAGE_SIZE];
+static uint8_t log_buffer_storage2[LOG_BUFFER_STORAGE_SIZE];
+static uint8_t *log_buffer_storage_current_writing = log_buffer_storage1;
+static uint8_t *log_buffer_storage_current_reading = log_buffer_storage2;
+static uint16_t log_buffer_storage_writing_head = 0;
+static atomic_t log_buffer_storage_read_lock = {.counter = 0};
+static uint16_t log_buffer_size_to_read = 0;
+
 volatile int log_head = 0;
 volatile int log_tail = 0;
 int v_strcmp(const char *s1, const char *s2) {
@@ -33,24 +44,29 @@ int v_strcmp(const char *s1, const char *s2) {
   return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
-// Basic print function (to UART or semihosting)
-void print(const char *str) {
-#ifdef NAVHAL
-#ifdef _UART_BACKEND_DMA
-  uint32_t len = v_strlen(str);
-  if (len >= DMA_MIN_THRESHOLD) {
-    uart2_write_dma((const uint8_t *)str, len);
-  } else {
-    uart2_write(str);
-  }
-#else
-  uart2_write(str);
+// Use safely only if DMA is enabled and you know what you are doing
+void direct_dma_print(const uint8_t *bytes, uint32_t len) {
+#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
+  uart2_write_dma(bytes, len);
 #endif
+}
+
+// Callback for DMA completion to release the read lock
+void dma_tx_complete_callback(void) {
+  atomic_set(&log_buffer_storage_read_lock, 0);
+}
+
+// Basic print function (to UART or semihosting)
+void v_print(const char *str) {
+#ifdef NAVHAL
+  uart2_write_string(str);
 #else
   sh_write0(str);
 #endif
 }
 
+// Basic print function (to UART or semihosting)
+void print(const char *str) { v_print(str); }
 // helper: reverse string in place
 static void reverse(char *str, int len) {
   int i = 0, j = len - 1;
@@ -94,38 +110,34 @@ static int itoa_simple(int64_t value, char *buf, int base) {
     return utoa_simple((uint64_t)value, buf, base);
   }
 }
-void vaprint_fmt(const char *fmt, va_list args)
-{
+void vaprint_fmt(const char *fmt, va_list args) {
   char out_buf[128];
   uint32_t out_pos = 0;
   char buffer[64];
 
-#define FLUSH_OUT_BUF()             \
-  if (out_pos > 0)                  \
-  {                                 \
-    out_buf[out_pos] = '\0';        \
-    print(out_buf);                 \
-    out_pos = 0;                    \
+#define FLUSH_OUT_BUF()                                                        \
+  if (out_pos > 0) {                                                           \
+    out_buf[out_pos] = '\0';                                                   \
+    print(out_buf);                                                            \
+    out_pos = 0;                                                               \
   }
 
-#define PUT_CHAR_BUF(c)              \
-  {                                  \
-    if (out_pos >= sizeof(out_buf) - 1) \
-      FLUSH_OUT_BUF();               \
-    out_buf[out_pos++] = (c);        \
+#define PUT_CHAR_BUF(c)                                                        \
+  {                                                                            \
+    if (out_pos >= sizeof(out_buf) - 1)                                        \
+      FLUSH_OUT_BUF();                                                         \
+    out_buf[out_pos++] = (c);                                                  \
   }
 
-#define PUT_STR_BUF(s)               \
-  {                                  \
-    const char *_s = (s);            \
-    while (*_s)                      \
-      PUT_CHAR_BUF(*_s++);           \
+#define PUT_STR_BUF(s)                                                         \
+  {                                                                            \
+    const char *_s = (s);                                                      \
+    while (*_s)                                                                \
+      PUT_CHAR_BUF(*_s++);                                                     \
   }
 
-  for (const char *p = fmt; *p; p++)
-  {
-    if (*p != '%')
-    {
+  for (const char *p = fmt; *p; p++) {
+    if (*p != '%') {
       PUT_CHAR_BUF(*p);
       continue;
     }
@@ -135,29 +147,25 @@ void vaprint_fmt(const char *fmt, va_list args)
     int zero_pad = 0;
 
     // Parse flags
-    if (*p == '0')
-    {
+    if (*p == '0') {
       zero_pad = 1;
       p++;
     }
 
     // Parse width
-    while (*p >= '0' && *p <= '9')
-    {
+    while (*p >= '0' && *p <= '9') {
       width = width * 10 + (*p - '0');
       p++;
     }
 
     // Handle specifiers
-    switch (*p)
-    {
+    switch (*p) {
     case 'd': // signed int
     {
       int v = va_arg(args, int);
       itoa_simple(v, buffer, 10);
       int len = v_strlen(buffer);
-      for (int i = len; i < width; i++)
-      {
+      for (int i = len; i < width; i++) {
         PUT_CHAR_BUF(zero_pad ? '0' : ' ');
       }
       PUT_STR_BUF(buffer);
@@ -168,15 +176,13 @@ void vaprint_fmt(const char *fmt, va_list args)
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 10);
       int len = v_strlen(buffer);
-      for (int i = len; i < width; i++)
-      {
+      for (int i = len; i < width; i++) {
         PUT_CHAR_BUF(zero_pad ? '0' : ' ');
       }
       PUT_STR_BUF(buffer);
       break;
     }
-    case 'f':
-    { // floating point
+    case 'f': { // floating point
       double v = va_arg(args, double);
 
       // Default precision: 6 decimal places
@@ -193,8 +199,7 @@ void vaprint_fmt(const char *fmt, va_list args)
       PUT_CHAR_BUF('.');
 
       // Print fractional part
-      for (int i = 0; i < precision; i++)
-      {
+      for (int i = 0; i < precision; i++) {
         frac_part *= 10.0;
         int digit = (int)frac_part;
         PUT_CHAR_BUF('0' + digit);
@@ -203,36 +208,31 @@ void vaprint_fmt(const char *fmt, va_list args)
       break;
     }
 
-    case 'l':
-    {
+    case 'l': {
       p++;
       if (*p == 'u') // %lu
       {
         unsigned long v = va_arg(args, unsigned long);
         utoa_simple(v, buffer, 10);
-      }
-      else if (*p == 'd') // %ld
+      } else if (*p == 'd') // %ld
       {
         long v = va_arg(args, long);
         itoa_simple(v, buffer, 10);
-      }
-      else if (*p == 'l') // %llu / %lld
+      } else if (*p == 'l') // %llu / %lld
       {
         p++;
         if (*p == 'u') // %llu
         {
           unsigned long long v = va_arg(args, unsigned long long);
           utoa_simple(v, buffer, 10);
-        }
-        else if (*p == 'd') // %lld
+        } else if (*p == 'd') // %lld
         {
           long long v = va_arg(args, long long);
           itoa_simple(v, buffer, 10);
         }
       }
       int len = v_strlen(buffer);
-      for (int i = len; i < width; i++)
-      {
+      for (int i = len; i < width; i++) {
         PUT_CHAR_BUF(zero_pad ? '0' : ' ');
       }
       PUT_STR_BUF(buffer);
@@ -253,8 +253,7 @@ void vaprint_fmt(const char *fmt, va_list args)
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 16);
       // convert to uppercase
-      for (int i = 0; buffer[i] != '\0'; i++)
-      {
+      for (int i = 0; buffer[i] != '\0'; i++) {
         if (buffer[i] >= 'a' && buffer[i] <= 'f')
           buffer[i] -= 32;
       }
@@ -264,25 +263,21 @@ void vaprint_fmt(const char *fmt, va_list args)
       PUT_STR_BUF(buffer);
       break;
     }
-    case 'c':
-    {
+    case 'c': {
       char c = (char)va_arg(args, int);
       PUT_CHAR_BUF(c);
       break;
     }
-    case 's':
-    {
+    case 's': {
       char *s = va_arg(args, char *);
       PUT_STR_BUF(s);
       break;
     }
-    case '%':
-    {
+    case '%': {
       PUT_CHAR_BUF('%');
       break;
     }
-    default:
-    {
+    default: {
       PUT_CHAR_BUF('%');
       PUT_CHAR_BUF(*p);
       break;
@@ -478,20 +473,16 @@ static int module_allowed(const char *msg) {
   module[module_len] = 0; // null terminate
 
   if (module_len == 0)
-    return 1; // malformed, allow
+    return 0; // malformed, disallow
 
   // Check for "ALL"
-  int is_all = 1;
-  for (i = 0; ALLOWED_MODULES[i] != 0 && i < 3; i++) {
-    if (ALLOWED_MODULES[i] != "ALL"[i]) {
-      is_all = 0;
-      break;
-    }
-  }
-  if (is_all)
+  if (string_equal(ALLOWED_MODULES, "ALL"))
     return 1;
 
   // Check if module exists in ALLOWED_MODULES
+  // TODO: This is a very inefficient way to check for module existence.
+  // TODO: Use a hash set or a trie to store the allowed modules for O(1)
+  // lookup.
   const char *p = ALLOWED_MODULES;
   int token_start = 0;
   int pos = 0;
@@ -533,17 +524,111 @@ void v_log(Log_Type type, const char *msg, ...) {
   vaprint_fmt_buf(formatted_msg, sizeof(formatted_msg), msg, args);
   va_end(args);
 
-  int next_head = (log_head + 1) % LOG_BUFFER_SIZE;
-  if (next_head != log_tail) // buffer not full
-  {
-    log_buffer[log_head].type = type;
-    v_memcpy(log_buffer[log_head].msg, formatted_msg, LOG_MSG_MAX_LEN - 1);
-    // strncpy(log_buffer[log_head].msg, msg, LOG_MSG_MAX_LEN - 1);
-    log_buffer[log_head].msg[LOG_MSG_MAX_LEN - 1] = '\0';
-    log_head = next_head;
-  } else {
-    // Optional: drop or overwrite oldest log
+  const char *typeName;
+  const char *typeColor;
+
+  switch (type) {
+  case LOG_TRACE:
+    typeName = "TRACE";
+    typeColor = COLOR_TRACE;
+    break;
+  case LOG_DEBUG:
+    typeName = "DEBUG";
+    typeColor = COLOR_DEBUG;
+    break;
+  case LOG_INFO:
+    typeName = "INFO";
+    typeColor = COLOR_INFO;
+    break;
+  case LOG_WARN:
+    typeName = "WARN";
+    typeColor = COLOR_WARN;
+    break;
+  case LOG_ERROR:
+    typeName = "ERROR";
+    typeColor = COLOR_ERROR;
+    break;
+  case LOG_FATAL:
+    typeName = "FATAL";
+    typeColor = COLOR_FATAL;
+    break;
+  default:
+    typeName = "UNKNOWN";
+    typeColor = COLOR_UNKNOWN;
+    break;
   }
+
+  char final_msg[LOG_MSG_MAX_LEN + 32];
+  uint32_t final_len = 0;
+
+  // Prepend color and tag: "COLOR[TAG] "
+  uint32_t color_len = v_strlen(typeColor);
+  v_memcpy(final_msg + final_len, typeColor, color_len);
+  final_len += color_len;
+
+  final_msg[final_len++] = '[';
+  uint32_t tag_len = v_strlen(typeName);
+  v_memcpy(final_msg + final_len, typeName, tag_len);
+  final_len += tag_len;
+  final_msg[final_len++] = ' ';
+  char ticks_str[11];
+  uint32_t ticks_len = utoa_simple(v_get_ticks(), ticks_str, 10);
+  v_memcpy(final_msg + final_len, ticks_str, ticks_len);
+  final_len += ticks_len;
+
+  final_msg[final_len++] = ']';
+
+  // Reset color after the tag
+  uint32_t reset_len = v_strlen(COLOR_RESET);
+  v_memcpy(final_msg + final_len, COLOR_RESET, reset_len);
+  final_len += reset_len;
+
+  final_msg[final_len++] = ' ';
+
+  // Append original message
+  uint32_t orig_msg_len = v_strlen(formatted_msg);
+  if (final_len + orig_msg_len + 5 > sizeof(final_msg)) {
+    orig_msg_len = sizeof(final_msg) - final_len - 5;
+  }
+  v_memcpy(final_msg + final_len, formatted_msg, orig_msg_len);
+  final_len += orig_msg_len;
+
+  ENTER_CRITICAL();
+  // Check if current message fits in current writing buffer
+  if (log_buffer_storage_writing_head + final_len + 3 >
+      LOG_BUFFER_STORAGE_SIZE) {
+    // Current buffer is full or doesn't have enough space
+    // Wait for previous flush to finish before swapping
+    if (atomic_get(&log_buffer_storage_read_lock)) {
+      EXIT_CRITICAL();
+      while (atomic_get(&log_buffer_storage_read_lock))
+        ;
+      ENTER_CRITICAL();
+    }
+
+    // Set size to read from current buffer
+    log_buffer_size_to_read = log_buffer_storage_writing_head;
+
+    // Swap buffers
+    if (log_buffer_storage1 == log_buffer_storage_current_writing) {
+      log_buffer_storage_current_writing = log_buffer_storage2;
+      log_buffer_storage_current_reading = log_buffer_storage1;
+    } else {
+      log_buffer_storage_current_writing = log_buffer_storage1;
+      log_buffer_storage_current_reading = log_buffer_storage2;
+    }
+    log_buffer_storage_writing_head = 0;
+  }
+
+  // Copy message + CRLF
+  v_memcpy(log_buffer_storage_current_writing + log_buffer_storage_writing_head,
+           final_msg, final_len);
+  log_buffer_storage_writing_head += final_len;
+  log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\r';
+  log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\n';
+  log_buffer_storage_current_writing[log_buffer_storage_writing_head] = '\0';
+
+  EXIT_CRITICAL();
 #elif BUFFERED_LOGGING == 0
   const char *typeName;
   const char *typeColor;
@@ -588,48 +673,46 @@ void v_log(Log_Type type, const char *msg, ...) {
 
 void v_log_flush(void) {
 #if LOGGING_ENABLED == 1
-  while (log_tail != log_head) {
-    LogEntry *entry = &log_buffer[log_tail];
+#if BUFFERED_LOGGING == 1
+  // If a flush is already in progress, just return
+  if (atomic_get(&log_buffer_storage_read_lock))
+    return;
 
-    const char *typeName;
-    const char *typeColor;
-
-    switch (entry->type) {
-    case LOG_TRACE:
-      typeName = "TRACE";
-      typeColor = COLOR_TRACE;
-      break;
-    case LOG_DEBUG:
-      typeName = "DEBUG";
-      typeColor = COLOR_DEBUG;
-      break;
-    case LOG_INFO:
-      typeName = "INFO ";
-      typeColor = COLOR_INFO;
-      break;
-    case LOG_WARN:
-      typeName = "WARN ";
-      typeColor = COLOR_WARN;
-      break;
-    case LOG_ERROR:
-      typeName = "ERROR";
-      typeColor = COLOR_ERROR;
-      break;
-    case LOG_FATAL:
-      typeName = "FATAL";
-      typeColor = COLOR_FATAL;
-      break;
-    default:
-      typeName = "UNK??";
-      typeColor = COLOR_UNKNOWN;
-      break;
+  ENTER_CRITICAL();
+  // If no data to read but there is data to write, swap buffers to flush
+  if (log_buffer_size_to_read == 0 && log_buffer_storage_writing_head > 0) {
+    log_buffer_size_to_read = log_buffer_storage_writing_head;
+    if (log_buffer_storage1 == log_buffer_storage_current_writing) {
+      log_buffer_storage_current_writing = log_buffer_storage2;
+      log_buffer_storage_current_reading = log_buffer_storage1;
+    } else {
+      log_buffer_storage_current_writing = log_buffer_storage1;
+      log_buffer_storage_current_reading = log_buffer_storage2;
     }
-
-    print_fmt("%s[%s %u]%s %s\r\n", typeColor, typeName, v_get_ticks(),
-              COLOR_RESET, entry->msg);
-
-    log_tail = (log_tail + 1) % LOG_BUFFER_SIZE;
+    log_buffer_storage_writing_head = 0;
   }
+
+  // If there is data to read, start flushing
+  if (log_buffer_size_to_read > 0) {
+    atomic_set(&log_buffer_storage_read_lock, 1);
+    EXIT_CRITICAL();
+
+#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
+    direct_dma_print((const uint8_t *)log_buffer_storage_current_reading,
+                     log_buffer_size_to_read);
+    // Note: read_lock is released by dma_tx_complete_callback
+#else
+    v_print((const char *)log_buffer_storage_current_reading);
+    atomic_set(&log_buffer_storage_read_lock, 0);
+#endif
+
+    ENTER_CRITICAL();
+    log_buffer_size_to_read = 0;
+    EXIT_CRITICAL();
+  } else {
+    EXIT_CRITICAL();
+  }
+#endif
 #endif
 }
 
@@ -640,6 +723,9 @@ volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 void SysTick_Handler(void) {
   systick_count++;
+  if ((systick_count % 10) == 0) {
+    v_log_flush();
+  }
   if ((scheduler_running == 123) && (systick_count % TIME_SLICE == 0))
     ICSR |= ICSR_PENDSVSET; // Trigger PENDSV
 }

@@ -1,9 +1,9 @@
 #include "vaios.h"
 #include "config.h"
+#include "task.h"
 #include "utils.h"
 #include <stddef.h>
 #include <stdint.h>
-#include "task.h"
 
 #ifdef NAVHAL
 #include "navhal.h"
@@ -52,6 +52,10 @@ void v_init(void) {
 
 #if UART_LOGGING_ENABLE == 1
   uart2_init(UART_BAUDRATE);
+#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA) &&                     \
+    (BUFFERED_LOGGING == 1)
+  hal_interrupt_attach_callback(DMA1_Stream6_IRQn, dma_tx_complete_callback);
+#endif
   v_log(LOG_INFO, "[VAIOS INIT] SYSTICK started with time period of %d μs",
         SYSTICK_PERIOD);
   v_log(LOG_INFO, "[VAIOS INIT] UART started with baudrate %d bps",

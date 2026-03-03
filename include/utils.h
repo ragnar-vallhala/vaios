@@ -1,14 +1,13 @@
 #ifndef VAIOS_UTILS_H
 #define VAIOS_UTILS_H
-#include <stdint.h>
 #include "config.h"
+#include <stdint.h>
 void print(const char *str);
 void print_fmt(const char *fmt, ...);
 
 uint32_t v_get_ticks(void);
 
-typedef enum
-{
+typedef enum {
   LOG_TRACE, // Extremely fine-grained information (every function call,
              // variable value changes)
   LOG_DEBUG, // Useful for developers to see what’s happening internally
@@ -29,6 +28,7 @@ typedef enum
 #define COLOR_FATAL "\x1B[35m"   // Magenta
 #define COLOR_UNKNOWN "\x1B[34m" // Blue
 void v_log(Log_Type type, const char *msg, ...);
+void dma_tx_complete_callback(void);
 // Useful Functions
 
 void *v_memset(void *s, int c, unsigned int n);
@@ -36,12 +36,9 @@ uint32_t v_strlen(const char *s);
 
 int v_strcmp(const char *s1, const char *s2);
 
-typedef struct
-{
+typedef struct {
   Log_Type type;
   char msg[LOG_MSG_MAX_LEN];
 } LogEntry;
-
-
 
 #endif //! VAIOS_UTILS_H

@@ -42,12 +42,17 @@
 #define STATIC_SEMAPHORE_SIZE 32
 
 // Logging
-#define LOG_BUFFER_SIZE 64      // number of log entries
-#define LOG_MSG_MAX_LEN 128     // max chars per message
+#define COLOR_LOGGING 1
+#define LOG_BUFFER_SIZE 64 // number of log entries
+#define LOG_MSG_MAX_LEN 128 // max chars per message
+#define LOG_BUFFER_STORAGE_SIZE                                                \
+  256                           // size of the log buffer
+                                // storage in bytes (use 2 buffer for
+                                // double buffering & couple with DMA)
 #define BUFFERED_LOGGING 1      // 0: disable, 1: enable
 #define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
-// #define ALLOWED_MODULES "TERM,VAIOS INIT"   // Comma-separated list of
-// modules to log from, or "ALL"
+// #define ALLOWED_MODULES "TERM,VAIOS INIT,MEMORY,TASK"   // Comma-separated
+// list of modules to log from, or "ALL"
 #define ALLOWED_MODULES                                                        \
   "ALL" // Comma-separated list of modules to log from, or "ALL"
 

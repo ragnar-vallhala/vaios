@@ -17,7 +17,7 @@ void heavy_math_operation(void *args) {
   int num_op = 0;
   while (1) {
     if (num_op % 100 == 0) {
-      v_log(LOG_WARN, "Math op count %d, in time %d", num_op, v_get_ticks());
+      v_log(LOG_WARN, "Math op count %d", num_op);
     }
     num_op++;
   }
@@ -28,7 +28,7 @@ void monitor_task(void *args) {
   uint32_t task_id_2 = task_id[1];
 
   while (1) {
-    if (v_get_ticks() >= 10000) {
+    if (v_get_ticks() >= 1000) {
       task_exit_request(task_id_1);
       task_exit_request(task_id_2);
       v_log(LOG_INFO, "Exiting tasks");
