@@ -2,6 +2,7 @@
 #include "config.h"
 #include "utils.h"
 #include <stdint.h>
+#include "port.h"
 
 extern uint32_t _heap_start;
 uint32_t allocation_size = 0;
@@ -48,7 +49,7 @@ void *v_malloc(size_t size)
   size = (size + 7) & ~((size_t)7);
 
   // Protect heap (uncomment or replace with your RTOS protection)
-  // taskENTER_CRITICAL();
+  ENTER_CRITICAL();
 
   Heap_Mem_Block *head = heap_mem_head;
   while (in_heap(head))
@@ -70,7 +71,7 @@ void *v_malloc(size_t size)
       allocation_count++;
       allocation_size += size;
 
-      // taskEXIT_CRITICAL();
+      EXIT_CRITICAL();
       v_log(LOG_DEBUG, "[MEMORY] Allocated fresh block at 0x%x size %u",
             (void *)payload, (unsigned)size);
       return (void *)payload;

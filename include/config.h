@@ -7,8 +7,13 @@
 #define VERSION_PATCH 0
 #define VERSION "0.1.0"
 #define AUTHOR "ASHUTOSH VISHWAKARMA"
+// Pull in NAVHAL configs
+#include "navhal.h"
+
 // Init settings
+#ifndef CORTEX_M4
 #define CORTEX_M4
+#endif
 #define SYSTICK_PERIOD 1000 // in microseconds
 #define UART_LOGGING_ENABLE 1
 #define UART_BAUDRATE 115200
@@ -17,6 +22,7 @@
 // Interrupts
 #define __NVIC_PRIO_BITS 4
 #define MAX_SYSCALL_INTERRUPT_PRIORITY (7 << (8 - __NVIC_PRIO_BITS))
+#define DMA_MIN_THRESHOLD 16
 
 // Scheduling
 #define TIME_SLICE 10
@@ -37,11 +43,13 @@
 
 // Logging
 #define LOG_BUFFER_SIZE 64      // number of log entries
-#define LOG_MSG_MAX_LEN 128      // max chars per message
+#define LOG_MSG_MAX_LEN 128     // max chars per message
 #define BUFFERED_LOGGING 1      // 0: disable, 1: enable
 #define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
-// #define ALLOWED_MODULES "TERM,VAIOS INIT"   // Comma-separated list of modules to log from, or "ALL"
-#define ALLOWED_MODULES "ALL"   // Comma-separated list of modules to log from, or "ALL"
+// #define ALLOWED_MODULES "TERM,VAIOS INIT"   // Comma-separated list of
+// modules to log from, or "ALL"
+#define ALLOWED_MODULES                                                        \
+  "ALL" // Comma-separated list of modules to log from, or "ALL"
 
 // Terminal
 #define ENABLE_TERMINAL 1                // 0: disable, 1: enable

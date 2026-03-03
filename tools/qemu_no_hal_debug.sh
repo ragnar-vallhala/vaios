@@ -9,7 +9,7 @@ mkdir build
 cd build
 cmake .. -DNAVHAL=OFF
 cmake --build .
-
+mv compile_commands.json ../compile_commands.json
 # Run QEMU, output to both terminal and log file
 qemu-system-arm -M olimex-stm32-h405 \
   -cpu cortex-m4 \

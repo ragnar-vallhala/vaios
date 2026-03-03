@@ -26,8 +26,7 @@ static inline void rb_clear(uint32_t prio) { ready_bitmap &= ~(1u << prio); }
 static inline int rb_any(void) { return ready_bitmap != 0; }
 static TCB *get_task_by_id(uint32_t task_id);
 // Return highest set bit index (portable fallback)
-static inline int highest_ready_prio(void)
-{
+static inline int highest_ready_prio(void) {
   if (!ready_bitmap)
     return -1;
   for (int p = (int)MAX_PRIORITY; p >= 0; --p)
@@ -39,23 +38,18 @@ static inline int highest_ready_prio(void)
 //-----------------------------------------------------------------------------
 // Task List Management Functions
 //-----------------------------------------------------------------------------
-void enqueue_task(TCB **list, TCB *task)
-{
+void enqueue_task(TCB **list, TCB *task) {
   if (!task)
     return;
 
   task->next = NULL;
   task->prev = NULL;
 
-  if (*list == NULL)
-  {
+  if (*list == NULL) {
     *list = task;
-  }
-  else
-  {
+  } else {
     TCB *curr = *list;
-    while (curr->next)
-    {
+    while (curr->next) {
       curr = curr->next;
     }
     curr->next = task;
@@ -63,21 +57,17 @@ void enqueue_task(TCB **list, TCB *task)
   }
 }
 
-void remove_task(TCB **list, TCB *task)
-{
+void remove_task(TCB **list, TCB *task) {
   if (!task || !*list)
     return;
 
-  if (*list == task)
-  {
+  if (*list == task) {
     *list = task->next;
     if (*list)
       (*list)->prev = NULL;
     if (task->next)
       task->next->prev = NULL;
-  }
-  else
-  {
+  } else {
     if (task->prev)
       task->prev->next = task->next;
     if (task->next)
@@ -88,24 +78,19 @@ void remove_task(TCB **list, TCB *task)
   task->prev = NULL;
 }
 
-TCB *dequeue_task(TCB **list)
-{
+TCB *dequeue_task(TCB **list) {
   TCB *task = peek_task(list);
   if (task)
     remove_task(list, task);
   return task;
 }
 
-TCB *peek_task(TCB **list)
-{
-  return (list && *list) ? *list : NULL;
-}
+TCB *peek_task(TCB **list) { return (list && *list) ? *list : NULL; }
 
 //-----------------------------------------------------------------------------
 // Ready List Management
 //-----------------------------------------------------------------------------
-void add_to_ready_list(TCB *task)
-{
+void add_to_ready_list(TCB *task) {
   if (!task)
     return;
   TCB **head = &ready_lists[task->priority];
@@ -115,8 +100,7 @@ void add_to_ready_list(TCB *task)
   task->status = TASK_READY;
 }
 
-void remove_from_ready_list(TCB *task)
-{
+void remove_from_ready_list(TCB *task) {
   if (!task)
     return;
 
@@ -133,8 +117,7 @@ void remove_from_ready_list(TCB *task)
   task->prev = NULL;
 }
 
-TCB *get_highest_priority_task(void)
-{
+TCB *get_highest_priority_task(void) {
   int p = highest_ready_prio();
   return (p < 0) ? NULL : ready_lists[p];
 }
@@ -142,8 +125,8 @@ TCB *get_highest_priority_task(void)
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
-uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size, uint32_t priority)
-{
+uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
+                     uint32_t priority) {
   ENTER_CRITICAL();
   if (stack_size < 128)
     stack_size = 128;
@@ -154,8 +137,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size, uint
     return 0;
   task->stack_size = stack_size;
   task->mem_block = (uint32_t *)v_malloc(stack_size);
-  if (!task->mem_block)
-  {
+  if (!task->mem_block) {
     v_free(task);
     task = NULL;
     return 0;
@@ -174,43 +156,40 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size, uint
 
   add_to_ready_list(task);
   EXIT_CRITICAL();
-  v_log(LOG_DEBUG, "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack size: 0x%x", task->task_id, priority, task->mem_block, stack_size);
+  v_log(LOG_DEBUG,
+        "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack "
+        "size: 0x%x",
+        task->task_id, priority, task->mem_block, stack_size);
   return task->task_id;
 }
 
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------
-TCB *get_next_task(void)
-{
+TCB *get_next_task(void) {
   current_task->ticks_run += v_get_ticks() - last_context_switch_tick;
   last_context_switch_tick = v_get_ticks();
   wake_up_delayed_tasks();
 
   TCB *t = get_highest_priority_task();
-  if (t)
-  {
+  if (t) {
     remove_from_ready_list(t);
     if (current_task->status == TASK_RUNNING)
       add_to_ready_list(current_task);
     current_task = t;
-  }
-  else
+  } else
     current_task = idle_task;
   current_task->status = TASK_RUNNING;
   context_switch_count++;
 
-  // v_log(LOG_DEBUG, "[TASK] Task Switch to Task id: %u priority: %u", current_task->task_id, current_task->priority);
+  // v_log(LOG_DEBUG, "[TASK] Task Switch to Task id: %u priority: %u",
+  // current_task->task_id, current_task->priority);
   return current_task;
 }
 
-void set_next_task(void)
-{
-  get_next_task();
-}
+void set_next_task(void) { get_next_task(); }
 
-__attribute__((noreturn)) void task_exit(void)
-{
+__attribute__((noreturn)) void task_exit(void) {
   ENTER_CRITICAL();
   v_log(LOG_DEBUG, "[TASK] Task %u Exiting", current_task->task_id);
   current_task->status = TASK_TERMINATED;
@@ -220,14 +199,17 @@ __attribute__((noreturn)) void task_exit(void)
   while (1)
     ;
 }
-void task_exit_request(uint32_t task_id)
-{
+void task_exit_request(uint32_t task_id) {
   TCB *task = get_task_by_id(task_id);
+  if (!task || task->status == TASK_TERMINATED)
+    return;
+
   ENTER_CRITICAL();
   if (task->status == TASK_READY)
     remove_from_ready_list(task);
   else if (task->status == TASK_DELAYED)
     remove_from_delayed_list(task);
+
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);
   EXIT_CRITICAL();
@@ -238,27 +220,24 @@ void task_exit_request(uint32_t task_id)
 //-----------------------------------------------------------------------------
 extern void v_log_flush(void);
 extern uint32_t print_buffer_count;
-void idle_task_function(void *arg)
-{
+void idle_task_function(void *arg) {
   TCB *task = blocked_list;
-  while (1)
-  {
+  while (1) {
     for (int i = 0; i < 64; i++)
       v_log_flush();
     task = blocked_list;
-    if (task == NULL)
-    {
+    if (task == NULL) {
       // task_delay(100); // Sleep for a while if no blocked tasks
-      // v_log(LOG_DEBUG, "[TASK] Idle Task Running. CPU_Usage %d\%, %d/%d ticks",
-      //       ((v_get_ticks() - idle_task->ticks_run + 1) * 100) / (v_get_ticks()),
-      //       idle_task->ticks_run, v_get_ticks());
+      // v_log(LOG_DEBUG, "[TASK] Idle Task Running. CPU_Usage %d\%, %d/%d
+      // ticks",
+      //       ((v_get_ticks() - idle_task->ticks_run + 1) * 100) /
+      //       (v_get_ticks()), idle_task->ticks_run, v_get_ticks());
       continue;
     }
-    while (task)
-    {
-      v_log(LOG_DEBUG, "[TASK] Garbage Collector checking task %u status: %d", task->task_id, task->status);
-      if (task->status == TASK_TERMINATED)
-      {
+    while (task) {
+      v_log(LOG_DEBUG, "[TASK] Garbage Collector checking task %u status: %d",
+            task->task_id, task->status);
+      if (task->status == TASK_TERMINATED) {
         TCB *to_free = task;
         task = task->next;
         remove_from_blocked_list(to_free);
@@ -268,8 +247,7 @@ void idle_task_function(void *arg)
         v_free(to_free);
         to_free = NULL;
         continue;
-      }
-      else
+      } else
         task = task->next;
     }
   }
@@ -278,21 +256,18 @@ void idle_task_function(void *arg)
 //-----------------------------------------------------------------------------
 // Delayed Task Management
 //-----------------------------------------------------------------------------
-void add_to_delayed_list(TCB *task)
-{
+void add_to_delayed_list(TCB *task) {
   enqueue_task(&delayed_list, task);
   task->status = TASK_DELAYED;
 }
 
-void remove_from_delayed_list(TCB *task)
-{
+void remove_from_delayed_list(TCB *task) {
   remove_task(&delayed_list, task);
   task->next = NULL;
   task->prev = NULL;
 }
 
-void task_delay(uint32_t ticks)
-{
+void task_delay(uint32_t ticks) {
   if (current_task == idle_task)
     return;
   if (ticks == 0)
@@ -303,13 +278,10 @@ void task_delay(uint32_t ticks)
   task_yield();
 }
 
-void wake_up_delayed_tasks(void)
-{
+void wake_up_delayed_tasks(void) {
   TCB *task = delayed_list;
-  while (task)
-  {
-    if (task->delay_ticks < v_get_ticks())
-    {
+  while (task) {
+    if (task->delay_ticks < v_get_ticks()) {
       TCB *to_wake = task;
       task = task->next;
       remove_from_delayed_list(to_wake);
@@ -325,8 +297,7 @@ void wake_up_delayed_tasks(void)
 //-----------------------------------------------------------------------------
 // Blocked Task Management
 //-----------------------------------------------------------------------------
-void task_block(void)
-{
+void task_block(void) {
   if (current_task == idle_task)
     return;
   current_task->status = TASK_BLOCKED;
@@ -334,21 +305,18 @@ void task_block(void)
   task_yield();
 }
 
-void add_to_blocked_list(TCB *task)
-{
+void add_to_blocked_list(TCB *task) {
   enqueue_task(&blocked_list, task);
   task->status = TASK_BLOCKED;
 }
 
-void remove_from_blocked_list(TCB *task)
-{
+void remove_from_blocked_list(TCB *task) {
   remove_task(&blocked_list, task);
   task->next = NULL;
   task->prev = NULL;
 }
 
-void task_unblock(TCB *task)
-{
+void task_unblock(TCB *task) {
   if (!task || task->status != TASK_BLOCKED)
     return;
   remove_from_blocked_list(task);
@@ -359,8 +327,7 @@ void task_unblock(TCB *task)
 //-----------------------------------------------------------------------------
 // Scheduler Initialization and Control
 //-----------------------------------------------------------------------------
-void scheduler_init(void)
-{
+void scheduler_init(void) {
   for (uint8_t i = 0; i <= MAX_PRIORITY; i++)
     ready_lists[i] = NULL;
   blocked_list = NULL;
@@ -378,65 +345,48 @@ void scheduler_init(void)
 //-----------------------------------------------------------------------------
 // Utility Functions
 //-----------------------------------------------------------------------------
-TCB *get_current_task(void)
-{
-  return current_task;
-}
+TCB *get_current_task(void) { return current_task; }
 
-uint32_t get_context_switch_count(void)
-{
-  return context_switch_count;
-}
+uint32_t get_context_switch_count(void) { return context_switch_count; }
 
-uint32_t get_idle_tick_count(void)
-{
-  return idle_task->ticks_run;
-}
-TCB *get_task_by_id(uint32_t task_id)
-{
+uint32_t get_idle_tick_count(void) { return idle_task->ticks_run; }
+TCB *get_task_by_id(uint32_t task_id) {
   if (current_task->task_id == task_id)
     return current_task;
-  for (int i = 0; i < MAX_PRIORITY; i++)
-  {
+  for (int i = 0; i < MAX_PRIORITY; i++) {
     TCB *curr = ready_lists[i];
-    while (curr)
-    {
+    while (curr) {
       if (curr->task_id == task_id)
         return curr;
       curr = curr->next;
     }
   }
   TCB *curr = blocked_list;
-  while (curr)
-  {
+  while (curr) {
     if (curr->task_id == task_id)
       return curr;
     curr = curr->next;
   }
   curr = delayed_list;
-  while (curr)
-  {
+  while (curr) {
     if (curr->task_id == task_id)
       return curr;
     curr = curr->next;
   }
   return NULL;
 }
-uint32_t get_task_run_time(TCB *task)
-{
+uint32_t get_task_run_time(TCB *task) {
   if (!task)
     return 0;
   return task->ticks_run;
 }
 
-void reset_task_run_time(TCB *task)
-{
+void reset_task_run_time(TCB *task) {
   if (task)
     task->ticks_run = 0;
 }
 
-void reset_idle_task_timer(void)
-{
+void reset_idle_task_timer(void) {
   if (idle_task)
     idle_task->ticks_run = 0;
 }

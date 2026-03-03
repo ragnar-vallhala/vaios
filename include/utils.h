@@ -42,8 +42,6 @@ typedef struct
   char msg[LOG_MSG_MAX_LEN];
 } LogEntry;
 
-static LogEntry log_buffer[LOG_BUFFER_SIZE];
-static volatile int log_head = 0;
-static volatile int log_tail = 0;
+
 
 #endif //! VAIOS_UTILS_H

@@ -1,10 +1,10 @@
 #include "utils.h"
 #include "config.h"
+#include "port.h"
 #include "semihosting.h"
 #include <stdarg.h>
-#include <stdint.h>
 #include <stddef.h>
-#include "port.h"
+#include <stdint.h>
 #ifdef NAVHAL
 #include "navhal.h"
 #endif
@@ -14,18 +14,19 @@
 // Strings are really hard to format without heap allocation or
 // complex state machines. This is a very basic implementation that
 // supports a few common format specifiers.
-// Still in future if I ever come accross it (I will have to) then I will make it better
-// But for now it will stay the same I have no more courage
+// Still in future if I ever come accross it (I will have to) then I will make
+// it better But for now it will stay the same I have no more courage
 //----------------
 
 void *v_memset(void *s, int c, unsigned int n);
 void *v_memcpy(void *dest, const void *src, unsigned int n);
 uint32_t v_strlen(const char *s);
 
-int v_strcmp(const char *s1, const char *s2)
-{
-  while (*s1 && (*s1 == *s2))
-  {
+LogEntry log_buffer[LOG_BUFFER_SIZE];
+volatile int log_head = 0;
+volatile int log_tail = 0;
+int v_strcmp(const char *s1, const char *s2) {
+  while (*s1 && (*s1 == *s2)) {
     s1++;
     s2++;
   }
@@ -33,21 +34,27 @@ int v_strcmp(const char *s1, const char *s2)
 }
 
 // Basic print function (to UART or semihosting)
-void print(const char *str)
-{
+void print(const char *str) {
 #ifdef NAVHAL
+#ifdef _UART_BACKEND_DMA
+  uint32_t len = v_strlen(str);
+  if (len >= DMA_MIN_THRESHOLD) {
+    uart2_write_dma((const uint8_t *)str, len);
+  } else {
+    uart2_write(str);
+  }
+#else
   uart2_write(str);
+#endif
 #else
   sh_write0(str);
 #endif
 }
 
 // helper: reverse string in place
-static void reverse(char *str, int len)
-{
+static void reverse(char *str, int len) {
   int i = 0, j = len - 1;
-  while (i < j)
-  {
+  while (i < j) {
     char tmp = str[i];
     str[i] = str[j];
     str[j] = tmp;
@@ -57,19 +64,16 @@ static void reverse(char *str, int len)
 }
 
 // helper: unsigned integer to string
-static int utoa_simple(uint64_t value, char *buf, int base)
-{
+static int utoa_simple(uint64_t value, char *buf, int base) {
   int i = 0;
 
-  if (value == 0)
-  {
+  if (value == 0) {
     buf[i++] = '0';
     buf[i] = '\0';
     return i;
   }
 
-  while (value > 0)
-  {
+  while (value > 0) {
     int rem = value % base;
     buf[i++] = (rem > 9) ? (rem - 10) + 'a' : rem + '0';
     value /= base;
@@ -81,30 +85,48 @@ static int utoa_simple(uint64_t value, char *buf, int base)
 }
 
 // helper: signed int wrapper (uses utoa_simple)
-static int itoa_simple(int64_t value, char *buf, int base)
-{
-  if (value < 0 && base == 10)
-  {
+static int itoa_simple(int64_t value, char *buf, int base) {
+  if (value < 0 && base == 10) {
     int len = utoa_simple((uint64_t)(-value), buf + 1, base);
     buf[0] = '-';
     return len + 1;
-  }
-  else
-  {
+  } else {
     return utoa_simple((uint64_t)value, buf, base);
   }
 }
 void vaprint_fmt(const char *fmt, va_list args)
 {
-  char buffer[32];
-  v_memset(buffer, 0, sizeof(buffer));
+  char out_buf[128];
+  uint32_t out_pos = 0;
+  char buffer[64];
+
+#define FLUSH_OUT_BUF()             \
+  if (out_pos > 0)                  \
+  {                                 \
+    out_buf[out_pos] = '\0';        \
+    print(out_buf);                 \
+    out_pos = 0;                    \
+  }
+
+#define PUT_CHAR_BUF(c)              \
+  {                                  \
+    if (out_pos >= sizeof(out_buf) - 1) \
+      FLUSH_OUT_BUF();               \
+    out_buf[out_pos++] = (c);        \
+  }
+
+#define PUT_STR_BUF(s)               \
+  {                                  \
+    const char *_s = (s);            \
+    while (*_s)                      \
+      PUT_CHAR_BUF(*_s++);           \
+  }
 
   for (const char *p = fmt; *p; p++)
   {
     if (*p != '%')
     {
-      char tmp[2] = {*p, '\0'};
-      print(tmp);
+      PUT_CHAR_BUF(*p);
       continue;
     }
 
@@ -136,10 +158,9 @@ void vaprint_fmt(const char *fmt, va_list args)
       int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
       {
-        print(zero_pad ? "0\0" : " \0");
+        PUT_CHAR_BUF(zero_pad ? '0' : ' ');
       }
-      print(buffer);
-      v_memset(buffer, 0, sizeof(buffer));
+      PUT_STR_BUF(buffer);
       break;
     }
     case 'u': // unsigned int
@@ -149,10 +170,9 @@ void vaprint_fmt(const char *fmt, va_list args)
       int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
       {
-        print(zero_pad ? "0\0" : " \0");
+        PUT_CHAR_BUF(zero_pad ? '0' : ' ');
       }
-      print(buffer);
-      v_memset(buffer, 0, sizeof(buffer));
+      PUT_STR_BUF(buffer);
       break;
     }
     case 'f':
@@ -169,20 +189,17 @@ void vaprint_fmt(const char *fmt, va_list args)
 
       // Print integer part
       itoa_simple(int_part, buffer, 10);
-      print(buffer);
-      print(".");
+      PUT_STR_BUF(buffer);
+      PUT_CHAR_BUF('.');
 
       // Print fractional part
       for (int i = 0; i < precision; i++)
       {
         frac_part *= 10.0;
         int digit = (int)frac_part;
-        char tmp[2] = {'0' + digit, '\0'};
-        print(tmp);
+        PUT_CHAR_BUF('0' + digit);
         frac_part -= digit;
       }
-
-      v_memset(buffer, 0, sizeof(buffer));
       break;
     }
 
@@ -216,27 +233,24 @@ void vaprint_fmt(const char *fmt, va_list args)
       int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
       {
-        print(zero_pad ? "0\0" : " \0");
+        PUT_CHAR_BUF(zero_pad ? '0' : ' ');
       }
-      print(buffer);
-      v_memset(buffer, 0, sizeof(buffer));
+      PUT_STR_BUF(buffer);
       break;
     }
     case 'x': // 32-bit hex lowercase
     {
       uint32_t v = va_arg(args, uint32_t);
-      v_memset(buffer, 0, sizeof(buffer));
       utoa_simple(v, buffer, 16);
       int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
-        print(zero_pad ? "0\0" : " \0");
-      print(buffer);
+        PUT_CHAR_BUF(zero_pad ? '0' : ' ');
+      PUT_STR_BUF(buffer);
       break;
     }
     case 'X': // 32/64-bit hex uppercase
     {
-      uint64_t v = va_arg(args, uint32_t);
-      v_memset(buffer, 0, sizeof(buffer));
+      uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 16);
       // convert to uppercase
       for (int i = 0; buffer[i] != '\0'; i++)
@@ -246,49 +260,49 @@ void vaprint_fmt(const char *fmt, va_list args)
       }
       int len = v_strlen(buffer);
       for (int i = len; i < width; i++)
-        print(zero_pad ? "0\0" : " \0");
-      print(buffer);
-      v_memset(buffer, 0, sizeof(buffer));
+        PUT_CHAR_BUF(zero_pad ? '0' : ' ');
+      PUT_STR_BUF(buffer);
       break;
     }
     case 'c':
     {
       char c = (char)va_arg(args, int);
-      char tmp[2] = {c, '\0'};
-      print(tmp);
+      PUT_CHAR_BUF(c);
       break;
     }
     case 's':
     {
       char *s = va_arg(args, char *);
-      print(s);
+      PUT_STR_BUF(s);
       break;
     }
     case '%':
     {
-      print("%");
+      PUT_CHAR_BUF('%');
       break;
     }
     default:
     {
-      print("%");
-      char tmp[2] = {*p, '\0'};
-      print(tmp);
+      PUT_CHAR_BUF('%');
+      PUT_CHAR_BUF(*p);
       break;
     }
     }
   }
+
+  FLUSH_OUT_BUF();
+
+#undef FLUSH_OUT_BUF
+#undef PUT_CHAR_BUF
+#undef PUT_STR_BUF
 }
 
-int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
-{
+int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
   size_t pos = 0;
   char buffer[32];
 
-  for (const char *p = fmt; *p && pos < out_size - 1; p++)
-  {
-    if (*p != '%')
-    {
+  for (const char *p = fmt; *p && pos < out_size - 1; p++) {
+    if (*p != '%') {
       out[pos++] = *p;
       continue;
     }
@@ -298,24 +312,20 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
     int zero_pad = 0;
 
     // Parse flags
-    if (*p == '0')
-    {
+    if (*p == '0') {
       zero_pad = 1;
       p++;
     }
 
     // Parse width
-    while (*p >= '0' && *p <= '9')
-    {
+    while (*p >= '0' && *p <= '9') {
       width = width * 10 + (*p - '0');
       p++;
     }
 
     // Handle specifiers
-    switch (*p)
-    {
-    case 'd':
-    {
+    switch (*p) {
+    case 'd': {
       int v = va_arg(args, int);
       itoa_simple(v, buffer, 10);
       int len = v_strlen(buffer);
@@ -325,8 +335,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
         out[pos++] = buffer[i];
       break;
     }
-    case 'u':
-    {
+    case 'u': {
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 10);
       int len = v_strlen(buffer);
@@ -336,8 +345,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
         out[pos++] = buffer[i];
       break;
     }
-    case 'f':
-    {
+    case 'f': {
       double v = va_arg(args, double);
       int precision = 6;
       long long int_part = (long long)v;
@@ -350,8 +358,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
         out[pos++] = buffer[i];
       out[pos++] = '.';
 
-      for (int i = 0; i < precision && pos < out_size - 1; i++)
-      {
+      for (int i = 0; i < precision && pos < out_size - 1; i++) {
         frac_part *= 10.0;
         int digit = (int)frac_part;
         out[pos++] = '0' + digit;
@@ -359,29 +366,20 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
       }
       break;
     }
-    case 'l':
-    {
+    case 'l': {
       p++;
-      if (*p == 'u')
-      {
+      if (*p == 'u') {
         unsigned long v = va_arg(args, unsigned long);
         utoa_simple(v, buffer, 10);
-      }
-      else if (*p == 'd')
-      {
+      } else if (*p == 'd') {
         long v = va_arg(args, long);
         itoa_simple(v, buffer, 10);
-      }
-      else if (*p == 'l')
-      {
+      } else if (*p == 'l') {
         p++;
-        if (*p == 'u')
-        {
+        if (*p == 'u') {
           unsigned long long v = va_arg(args, unsigned long long);
           utoa_simple(v, buffer, 10);
-        }
-        else if (*p == 'd')
-        {
+        } else if (*p == 'd') {
           long long v = va_arg(args, long long);
           itoa_simple(v, buffer, 10);
         }
@@ -394,8 +392,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
         out[pos++] = buffer[i];
       break;
     }
-    case 'x':
-    {
+    case 'x': {
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 16);
       int len = v_strlen(buffer);
@@ -405,8 +402,7 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
         out[pos++] = buffer[i];
       break;
     }
-    case 'X':
-    {
+    case 'X': {
       uint32_t v = va_arg(args, uint32_t);
       utoa_simple(v, buffer, 16);
       // uppercase
@@ -420,15 +416,13 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
         out[pos++] = buffer[i];
       break;
     }
-    case 'c':
-    {
+    case 'c': {
       char c = (char)va_arg(args, int);
       if (pos < out_size - 1)
         out[pos++] = c;
       break;
     }
-    case 's':
-    {
+    case 's': {
       char *s = va_arg(args, char *);
       for (int i = 0; s[i] && pos < out_size - 1; i++)
         out[pos++] = s[i];
@@ -451,18 +445,15 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args)
   return pos;
 }
 
-void print_fmt(const char *fmt, ...)
-{
+void print_fmt(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   vaprint_fmt(fmt, args);
   va_end(args);
 }
 
-static int string_equal(const char *a, const char *b)
-{
-  while (*a && *b)
-  {
+static int string_equal(const char *a, const char *b) {
+  while (*a && *b) {
     if (*a != *b)
       return 0;
     a++;
@@ -472,8 +463,7 @@ static int string_equal(const char *a, const char *b)
 }
 
 // Returns 1 if this module is allowed to log
-static int module_allowed(const char *msg)
-{
+static int module_allowed(const char *msg) {
   if (!msg || msg[0] != '[')
     return 1; // no module specified, allow by default
 
@@ -481,8 +471,8 @@ static int module_allowed(const char *msg)
   int i = 1;
   char module[32];
   int module_len = 0;
-  while (msg[i] != ']' && msg[i] != 0 && module_len < (int)(sizeof(module) - 1))
-  {
+  while (msg[i] != ']' && msg[i] != 0 &&
+         module_len < (int)(sizeof(module) - 1)) {
     module[module_len++] = msg[i++];
   }
   module[module_len] = 0; // null terminate
@@ -492,10 +482,8 @@ static int module_allowed(const char *msg)
 
   // Check for "ALL"
   int is_all = 1;
-  for (i = 0; ALLOWED_MODULES[i] != 0 && i < 3; i++)
-  {
-    if (ALLOWED_MODULES[i] != "ALL"[i])
-    {
+  for (i = 0; ALLOWED_MODULES[i] != 0 && i < 3; i++) {
+    if (ALLOWED_MODULES[i] != "ALL"[i]) {
       is_all = 0;
       break;
     }
@@ -507,18 +495,14 @@ static int module_allowed(const char *msg)
   const char *p = ALLOWED_MODULES;
   int token_start = 0;
   int pos = 0;
-  while (1)
-  {
+  while (1) {
     char c = p[pos];
-    if (c == ',' || c == 0)
-    {
+    if (c == ',' || c == 0) {
       // Compare module with token p[token_start .. pos-1]
       int match = 1;
       int k;
-      for (k = 0; k < module_len; k++)
-      {
-        if (k >= (pos - token_start) || module[k] != p[token_start + k])
-        {
+      for (k = 0; k < module_len; k++) {
+        if (k >= (pos - token_start) || module[k] != p[token_start + k]) {
           match = 0;
           break;
         }
@@ -537,8 +521,7 @@ static int module_allowed(const char *msg)
   return 0; // not allowed
 }
 
-void v_log(Log_Type type, const char *msg, ...)
-{
+void v_log(Log_Type type, const char *msg, ...) {
   if (type < MIN_LOG_LEVEL || !module_allowed(msg))
     return;
 
@@ -558,16 +541,13 @@ void v_log(Log_Type type, const char *msg, ...)
     // strncpy(log_buffer[log_head].msg, msg, LOG_MSG_MAX_LEN - 1);
     log_buffer[log_head].msg[LOG_MSG_MAX_LEN - 1] = '\0';
     log_head = next_head;
-  }
-  else
-  {
+  } else {
     // Optional: drop or overwrite oldest log
   }
 #elif BUFFERED_LOGGING == 0
   const char *typeName;
   const char *typeColor;
-  switch (type)
-  {
+  switch (type) {
   case LOG_TRACE:
     typeName = "TRACE";
     typeColor = COLOR_TRACE;
@@ -606,18 +586,15 @@ void v_log(Log_Type type, const char *msg, ...)
 #endif // LOGGING_ENABLED
 }
 
-void v_log_flush(void)
-{
+void v_log_flush(void) {
 #if LOGGING_ENABLED == 1
-  while (log_tail != log_head)
-  {
+  while (log_tail != log_head) {
     LogEntry *entry = &log_buffer[log_tail];
 
     const char *typeName;
     const char *typeColor;
 
-    switch (entry->type)
-    {
+    switch (entry->type) {
     case LOG_TRACE:
       typeName = "TRACE";
       typeColor = COLOR_TRACE;
@@ -648,8 +625,7 @@ void v_log_flush(void)
       break;
     }
 
-    print_fmt("%s[%s %u]%s %s\r\n",
-              typeColor, typeName, v_get_ticks(),
+    print_fmt("%s[%s %u]%s %s\r\n", typeColor, typeName, v_get_ticks(),
               COLOR_RESET, entry->msg);
 
     log_tail = (log_tail + 1) % LOG_BUFFER_SIZE;
@@ -662,8 +638,7 @@ volatile uint32_t systick_count = 0;
 #define ICSR_PENDSVSET (1 << 28) // Set this to trigger PendSV
 #define ICSR_PENDSVCLR (1 << 27) // Clear PendSV
 extern uint8_t scheduler_running;
-void SysTick_Handler(void)
-{
+void SysTick_Handler(void) {
   systick_count++;
   if ((scheduler_running == 123) && (systick_count % TIME_SLICE == 0))
     ICSR |= ICSR_PENDSVSET; // Trigger PENDSV
@@ -671,17 +646,14 @@ void SysTick_Handler(void)
 
 uint32_t v_get_ticks(void) { return systick_count; }
 
-void *v_memset(void *s, int c, unsigned int n)
-{
+void *v_memset(void *s, int c, unsigned int n) {
   uint8_t *p = (uint8_t *)s;
-  for (unsigned int i = 0; i < n; i++)
-  {
+  for (unsigned int i = 0; i < n; i++) {
     p[i] = (uint8_t)c;
   }
   return s;
 }
-void *v_memcpy(void *dest, const void *src, unsigned int n)
-{
+void *v_memcpy(void *dest, const void *src, unsigned int n) {
   uint8_t *d = (uint8_t *)dest;
   const uint8_t *s = (const uint8_t *)src;
 
@@ -690,13 +662,10 @@ void *v_memcpy(void *dest, const void *src, unsigned int n)
     return dest;
 
   // If dest < src, copy forward
-  if (d < s)
-  {
+  if (d < s) {
     for (unsigned int i = 0; i < n; i++)
       d[i] = s[i];
-  }
-  else
-  {
+  } else {
     // Overlapping regions — copy backwards
     for (unsigned int i = n; i != 0; i--)
       d[i - 1] = s[i - 1];
@@ -704,13 +673,11 @@ void *v_memcpy(void *dest, const void *src, unsigned int n)
 
   return dest;
 }
-uint32_t v_strlen(const char *s)
-{
+uint32_t v_strlen(const char *s) {
   if (!s)
     return 0;
   uint32_t count = 0;
-  while (s[count] != '\0' && count != ~(0))
-  {
+  while (s[count] != '\0' && count != ~(0)) {
     count++;
   }
   return count;
