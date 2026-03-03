@@ -12,6 +12,7 @@
 
 // Init settings
 #ifndef CORTEX_M4
+#ifndef CORTEX_M4
 #define CORTEX_M4
 #endif
 #define SYSTICK_PERIOD 1000 // in microseconds

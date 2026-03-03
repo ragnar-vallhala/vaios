@@ -18,6 +18,9 @@
 // Still in future if I ever come accross it (I will have to) then I will make
 // it better But for now it will stay the same I have no more courage
 //----------------
+static LogEntry log_buffer[LOG_BUFFER_SIZE];
+static volatile int log_head = 0;
+static volatile int log_tail = 0;
 
 void *v_memset(void *s, int c, unsigned int n);
 void *v_memcpy(void *dest, const void *src, unsigned int n);
