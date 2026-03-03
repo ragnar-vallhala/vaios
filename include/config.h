@@ -12,7 +12,6 @@
 
 // Init settings
 #ifndef CORTEX_M4
-#ifndef CORTEX_M4
 #define CORTEX_M4
 #endif
 #define SYSTICK_PERIOD 1000 // in microseconds
@@ -44,7 +43,7 @@
 
 // Logging
 #define COLOR_LOGGING 1
-#define LOG_BUFFER_SIZE 64 // number of log entries
+#define LOG_BUFFER_SIZE 64  // number of log entries
 #define LOG_MSG_MAX_LEN 128 // max chars per message
 #define LOG_BUFFER_STORAGE_SIZE                                                \
   256                           // size of the log buffer

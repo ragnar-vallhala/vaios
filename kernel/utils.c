@@ -2,7 +2,6 @@
 #include "atomic.h"
 #include "config.h"
 #include "port.h"
-#include "semihosting.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -18,15 +17,9 @@
 // Still in future if I ever come accross it (I will have to) then I will make
 // it better But for now it will stay the same I have no more courage
 //----------------
-static LogEntry log_buffer[LOG_BUFFER_SIZE];
-static volatile int log_head = 0;
-static volatile int log_tail = 0;
-
 void *v_memset(void *s, int c, unsigned int n);
 void *v_memcpy(void *dest, const void *src, unsigned int n);
 uint32_t v_strlen(const char *s);
-
-LogEntry log_buffer[LOG_BUFFER_SIZE];
 
 // Double buffering for log messages
 static uint8_t log_buffer_storage1[LOG_BUFFER_STORAGE_SIZE];
@@ -36,9 +29,6 @@ static uint8_t *log_buffer_storage_current_reading = log_buffer_storage2;
 static uint16_t log_buffer_storage_writing_head = 0;
 static atomic_t log_buffer_storage_read_lock = {.counter = 0};
 static uint16_t log_buffer_size_to_read = 0;
-
-volatile int log_head = 0;
-volatile int log_tail = 0;
 int v_strcmp(const char *s1, const char *s2) {
   while (*s1 && (*s1 == *s2)) {
     s1++;
