@@ -53,9 +53,7 @@
 #define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
 // #define ALLOWED_MODULES "TERM,VAIOS INIT,MEMORY,TASK"   // Comma-separated
 // list of modules to log from, or "ALL"
-#define ALLOWED_MODULES                                                        \
-  "ALL" // Comma-separated list of modules to log from, or "ALL"
-
+#define ALLOWED_MODULES "TERM,ATTITUDE,VAIOS INIT,BMX160" // Comma-separated list of modules to log from, or "ALL"
 // Terminal
 #define ENABLE_TERMINAL 1                // 0: disable, 1: enable
 #define TERMINAL_LOG_LEVEL MIN_LOG_LEVEL // Loglevel of terminal lines

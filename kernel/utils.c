@@ -36,7 +36,66 @@ int v_strcmp(const char *s1, const char *s2) {
   }
   return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
+int v_strncmp(const char *s1, const char *s2, int n) {
+  while (n > 0) {
+    if (*s1 != *s2) {
+      return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+    }
+    if (*s1 == '\0') {
+      return 0;
+    }
+    s1++;
+    s2++;
+    n--;
+  }
+  return 0;
+}
 
+float v_atof(const char *s) {
+  float res = 0.0f;
+  float fact = 1.0f;
+  int point_seen = 0;
+  int sign = 1;
+
+  // Skip whitespace
+  while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r' || *s == '\f' ||
+         *s == '\v') {
+    s++;
+  }
+
+  // Handle sign
+  if (*s == '-') {
+    sign = -1;
+    s++;
+  } else if (*s == '+') {
+    s++;
+  }
+
+  while (*s) {
+    if (*s == '.') {
+      if (point_seen)
+        break;
+      point_seen = 1;
+      s++;
+      continue;
+    }
+
+    int d = *s - '0';
+    if (d >= 0 && d <= 9) {
+      if (point_seen) {
+        fact /= 10.0f;
+        res = res + (float)d * fact;
+      } else {
+        res = res * 10.0f + (float)d;
+      }
+    } else {
+      break;
+    }
+    s++;
+  }
+
+  return res * (float)sign;
+}
 // Use safely only if DMA is enabled and you know what you are doing
 void direct_dma_print(const uint8_t *bytes, uint32_t len) {
 #if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
