@@ -33,7 +33,7 @@ set(VENDOR
     stm32
     CACHE STRING "Vendor")
 
-option(VAIOS_FPU "Enable FPU support" OFF)
+option(VAIOS_FPU "Enable FPU support" ON)
 
 if(VAIOS_FPU)
     set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
@@ -66,6 +66,7 @@ endif()
 if(NAVHAL)
   add_compile_definitions(NAVHAL)
   include_directories(extern/NavHAL/include)
+  set(USE_FPU ${VAIOS_FPU} CACHE BOOL "Pass FPU setting to NavHAL" FORCE)
   add_subdirectory(extern/NavHAL)
   set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
 endif()

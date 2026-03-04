@@ -6,31 +6,28 @@
 #ifdef _FPU_ENABLED
 #warning "FPU is ENABLED in this build"
 #else
-#error "FPU is DISABLED in this build. Please build with -DVAIOS_FPU=ON"
+// #error "FPU is DISABLED in this build. Please build with -DVAIOS_FPU=ON"
 #endif
 
 void v_task_sine(void *arg) {
-  float angle = 0.0f;
-  while (1) {
+  float angle = 0.01f; // Start slightly above 0
+  while (angle < 1000) {
     float s = sinf(angle);
-    v_log(LOG_INFO, "Task Sine: sin(%f) = %f", (double)angle, (float)s);
-    angle += 0.1f;
-    if (angle > 6.28f)
-      angle = 0.0f;
-    v_delay(500);
+    angle += 1.5f + s; //fabsf(s); 
+    // v_log(LOG_INFO, "Task Sine: sin(%f) = %f", (double)angle, (float)s);
   }
+  v_log(LOG_INFO, "Task Sine: Done");
 }
+
 
 void v_task_sqrt(void *arg) {
   float val = 1.0f;
-  while (1) {
+  while (val < 1000) {
     float r = sqrtf(val);
-    v_log(LOG_INFO, "Task Sqrt: sqrt(%f) = %f", (double)val, (float)r);
-    val += 1.5f;
-    if (val > 100.0f)
-      val = 1.0f;
-    v_delay(700);
+    // v_log(LOG_INFO, "Task Sqrt: sqrt(%f) = %f", (double)val, (float)r);
+    val += r;
   }
+  v_log(LOG_INFO, "Task Sqrt: Done");
 }
 
 int main(void) {
