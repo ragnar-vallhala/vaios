@@ -45,6 +45,9 @@ extern uint32_t systick_count;
 
 void v_init(void)
 {
+#ifdef _FPU_ENABLED
+  hal_fpu_enable();
+#endif
   // resetting global variables
   systick_count = 0;
 #ifdef NAVHAL

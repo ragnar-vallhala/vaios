@@ -32,18 +32,30 @@ set(BOARD
 set(VENDOR
     stm32
     CACHE STRING "Vendor")
-set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb")
+
+option(VAIOS_FPU "Enable FPU support" OFF)
+
+if(VAIOS_FPU)
+    set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
+    add_compile_definitions(_FPU_ENABLED __FPU_PRESENT=1)
+    message(STATUS "VAIOS: FPU Support Enabled")
+else()
+    set(FPU_FLAGS "-mfloat-abi=soft")
+    message(STATUS "VAIOS: FPU Support Disabled")
+endif()
+
+set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS}")
 
 set(CMAKE_C_STANDARD 11)
 
 set(CMAKE_C_FLAGS
-"-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb -Wall -O0 -g -std=c11") # C++
+"-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS} -Wall -O0 -g -std=c11") # C++
 # standard
 # 11
 
-set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb")
+set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS}")
 
-set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib") # can be
+set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs") # can be
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${CMAKE_SYSTEM_PROCESSOR})
 

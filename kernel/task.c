@@ -127,7 +127,6 @@ TCB *get_highest_priority_task(void) {
 //-----------------------------------------------------------------------------
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
                      uint32_t priority) {
-  ENTER_CRITICAL();
   if (stack_size < 128)
     stack_size = 128;
   stack_size &= ~(3); // Align to 4 bytes
@@ -154,6 +153,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   task->status = TASK_READY;
   init_task_stack(task);
 
+  ENTER_CRITICAL();
   add_to_ready_list(task);
   EXIT_CRITICAL();
   v_log(LOG_DEBUG,

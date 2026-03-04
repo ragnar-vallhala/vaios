@@ -28,7 +28,7 @@ static uint8_t *log_buffer_storage_current_writing = log_buffer_storage1;
 static uint8_t *log_buffer_storage_current_reading = log_buffer_storage2;
 static uint16_t log_buffer_storage_writing_head = 0;
 static atomic_t log_buffer_storage_read_lock = {.counter = 0};
-static uint16_t log_buffer_size_to_read = 0;
+static volatile uint16_t log_buffer_size_to_read = 0;
 int v_strcmp(const char *s1, const char *s2) {
   while (*s1 && (*s1 == *s2)) {
     s1++;
@@ -180,11 +180,12 @@ void vaprint_fmt(const char *fmt, va_list args) {
 
       // Default precision: 6 decimal places
       int precision = 6;
+      if (v < 0.0) {
+        PUT_CHAR_BUF('-');
+        v = -v;
+      }
       long long int_part = (long long)v;
       double frac_part = v - (double)int_part;
-
-      if (frac_part < 0)
-        frac_part = -frac_part; // handle negative numbers
 
       // Print integer part
       itoa_simple(int_part, buffer, 10);
@@ -336,10 +337,15 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
     case 'f': {
       double v = va_arg(args, double);
       int precision = 6;
+
+      if (v < 0.0) {
+        if (pos < out_size - 1)
+          out[pos++] = '-';
+        v = -v;
+      }
+
       long long int_part = (long long)v;
       double frac_part = v - (double)int_part;
-      if (frac_part < 0)
-        frac_part = -frac_part;
 
       itoa_simple(int_part, buffer, 10);
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
@@ -511,12 +517,6 @@ void v_log(Log_Type type, const char *msg, ...) {
 
 #if LOGGING_ENABLED == 1
 #if BUFFERED_LOGGING == 1
-  char formatted_msg[LOG_MSG_MAX_LEN];
-  va_list args;
-  va_start(args, msg);
-  vaprint_fmt_buf(formatted_msg, sizeof(formatted_msg), msg, args);
-  va_end(args);
-
   const char *typeName;
   const char *typeColor;
 
@@ -551,7 +551,7 @@ void v_log(Log_Type type, const char *msg, ...) {
     break;
   }
 
-  char final_msg[LOG_MSG_MAX_LEN + 32];
+  char final_msg[LOG_MSG_MAX_LEN + 64];
   uint32_t final_len = 0;
 
   // Prepend color and tag: "COLOR[TAG] "
@@ -578,13 +578,12 @@ void v_log(Log_Type type, const char *msg, ...) {
 
   final_msg[final_len++] = ' ';
 
-  // Append original message
-  uint32_t orig_msg_len = v_strlen(formatted_msg);
-  if (final_len + orig_msg_len + 5 > sizeof(final_msg)) {
-    orig_msg_len = sizeof(final_msg) - final_len - 5;
-  }
-  v_memcpy(final_msg + final_len, formatted_msg, orig_msg_len);
-  final_len += orig_msg_len;
+  // Format message directly into final_msg
+  va_list args;
+  va_start(args, msg);
+  final_len += vaprint_fmt_buf(final_msg + final_len,
+                               sizeof(final_msg) - final_len - 5, msg, args);
+  va_end(args);
 
   ENTER_CRITICAL();
   // Check if current message fits in current writing buffer
@@ -592,9 +591,11 @@ void v_log(Log_Type type, const char *msg, ...) {
       LOG_BUFFER_STORAGE_SIZE) {
     // Current buffer is full or doesn't have enough space
     // Wait for previous flush to finish before swapping
-    if (atomic_get(&log_buffer_storage_read_lock)) {
+    if (atomic_get(&log_buffer_storage_read_lock) ||
+        log_buffer_size_to_read > 0) {
       EXIT_CRITICAL();
-      while (atomic_get(&log_buffer_storage_read_lock))
+      while (atomic_get(&log_buffer_storage_read_lock) ||
+             log_buffer_size_to_read > 0)
         ;
       ENTER_CRITICAL();
     }
