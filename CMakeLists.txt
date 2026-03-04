@@ -32,18 +32,18 @@ set(BOARD
 set(VENDOR
     stm32
     CACHE STRING "Vendor")
-set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb")
+set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16")
 
 set(CMAKE_C_STANDARD 11)
 
 set(CMAKE_C_FLAGS
-"-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb -Wall -O0 -g -std=c11") # C++
+"-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb -Wall -O0 -g -std=c11 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -D_FPU_ENABLED") # C++
 # standard
 # 11
 
 set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb")
 
-set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib") # can be
+set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib -mfloat-abi=hard -mfpu=fpv4-sp-d16") # can be
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${CMAKE_SYSTEM_PROCESSOR})
 

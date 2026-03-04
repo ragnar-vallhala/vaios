@@ -1,13 +1,12 @@
+#include "port.h"
 #include "config.h"
 #include "task.h"
 #include "utils.h"
 #include <stddef.h>
 #include <stdint.h>
-#include "port.h"
 
 // Exception stack frame automatically pushed by Cortex-M on exception
-typedef struct
-{
+typedef struct {
   uint32_t r0;
   uint32_t r1;
   uint32_t r2;
@@ -18,8 +17,7 @@ typedef struct
   uint32_t xpsr;
 } ExceptionStackFrame;
 
-void print_registers(ExceptionStackFrame *frame)
-{
+void print_registers(ExceptionStackFrame *frame) {
   v_log(LOG_FATAL, "HardFault Register Dump:");
   v_log(LOG_TRACE, " R0  = 0x%08X", frame->r0);
   v_log(LOG_TRACE, " R1  = 0x%08X", frame->r1);
@@ -32,23 +30,19 @@ void print_registers(ExceptionStackFrame *frame)
 }
 
 // Optional: simple backtrace by scanning stack for plausible return addresses
-void print_backtrace(uint32_t *stack, uint32_t stack_size)
-{
+void print_backtrace(uint32_t *stack, uint32_t stack_size) {
   v_log(LOG_FATAL, "HardFault Backtrace (approx):");
-  for (uint32_t i = 0; i < stack_size; i++)
-  {
+  for (uint32_t i = 0; i < stack_size; i++) {
     uint32_t addr = stack[i];
     // crude check: skip null and small addresses
-    if (addr > 0x1000)
-    {
+    if (addr > 0x1000) {
       v_log(LOG_TRACE, " 0x%08X", addr);
     }
   }
 }
 
 // This function is called by the naked HardFault_Handler
-void hardfault_handler_c(ExceptionStackFrame *frame, uint32_t *stack_pointer)
-{
+void hardfault_handler_c(ExceptionStackFrame *frame, uint32_t *stack_pointer) {
   v_log(LOG_FATAL, "HARDFAULT occurred!");
   print_registers(frame);
 
@@ -59,8 +53,7 @@ void hardfault_handler_c(ExceptionStackFrame *frame, uint32_t *stack_pointer)
     ;
 }
 
-__attribute__((naked)) void HardFault_Handler(void)
-{
+__attribute__((naked)) void HardFault_Handler(void) {
   __asm volatile(
       "tst lr, #4                   \n" // Check EXC_RETURN, which stack to use
       "ite eq                       \n"
@@ -73,8 +66,7 @@ __attribute__((naked)) void HardFault_Handler(void)
 
 // Entry point that reconstructs ExceptionStackFrame
 void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t lr_unused,
-                             uint32_t dummy)
-{
+                             uint32_t dummy) {
   ExceptionStackFrame frame;
   frame.r0 = stack_pointer[0];
   frame.r1 = stack_pointer[1];
@@ -90,8 +82,7 @@ void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t lr_unused,
 
 #define SCB_ICSR (*(volatile uint32_t *)0xE000ED04)
 #define PENDSVSET (1U << 28)
-void task_yield(void)
-{
+void task_yield(void) {
   SCB_ICSR |= PENDSVSET;
 
   /* Data/Instruction barriers manually */
@@ -99,8 +90,7 @@ void task_yield(void)
   asm volatile("isb");
 }
 
-__attribute__((naked)) void scheduler_start(void)
-{
+__attribute__((naked)) void scheduler_start(void) {
   __asm volatile(
       "ldr r0, =scheduler_running\n"
       "mov r1, #123             \n"
@@ -126,23 +116,24 @@ extern TCB *current_task;
 extern void set_next_task(void);
 #define TCB_SP_OFF ((int)offsetof(TCB, sp))
 
-__attribute__((naked)) void PendSV_Handler(void)
-{
+__attribute__((naked)) void PendSV_Handler(void) {
   __asm volatile(
       "   mrs r0, psp                         \n"
       "   isb                                 \n"
-      "                                       \n"
       "   ldr r3, =current_task               \n" /* Get the location of the
                                                      current TCB. */
       "   ldr r2, [r3]                        \n"
-      "                                       \n"
-      "                                       \n"
-      "   stmdb r0!, {r4-r11,r14}            \n"  /* Save the core registers. */
+#ifdef _FPU_ENABLED
+      "   tst r14, #0x10                      \n" /* Is the FPU in use? (bit 4
+                                                     of EXC_RETURN is 0) */
+      "   it eq                               \n"
+      "   vstmdbeq r0!, {s16-s31}             \n" /* Save FPU registers S16-S31
+                                                   */
+#endif
+      "   stmdb r0!, {r4-r11,r14}            \n"  /* Save core registers and
+                                                     EXC_RETURN */
       "   str r0, [r2]                        \n" /* Save the new top of stack
-                                                     into the first member of
-                                                     the TCB. */
-      "                                       \n"
-      // "   stmdb sp!, {r0, r3}                 \n"
+                                                     into TCB. */
       "   mov r0, %0                          \n"
       "   msr basepri, r0                     \n"
       "   dsb                                 \n"
@@ -150,79 +141,88 @@ __attribute__((naked)) void PendSV_Handler(void)
       "   bl set_next_task                    \n"
       "   mov r0, #0                          \n"
       "   msr basepri, r0                     \n"
-      "ldr r3, =current_task\n"
-
-      // "   ldmia sp!, {r0, r3}                 \n"
-      "                                       \n"
-      "   ldr r1, [r3]                        \n" /* The first item in
-                                                     pxCurrentTCB is the task
-                                                     top of stack. */
-      "   ldr r0, [r1]                        \n"
-      "                                       \n"
-      "   ldmia r0!, {r4-r11,r14}            \n" /* Pop the core registers. */
-      "                                       \n"
-      "                                       \n"
+      "   ldr r3, =current_task               \n"
+      "   ldr r1, [r3]                        \n"
+      "   ldr r0, [r1]                        \n" /* Get top of stack for the
+                                                     next task. */
+      "   ldmia r0!, {r4-r11,r14}            \n"  /* Pop core registers and
+                                                     EXC_RETURN. */
+#ifdef _FPU_ENABLED
+      "   tst r14, #0x10                      \n" /* Does the next task use the
+                                                     FPU? */
+      "   it eq                               \n"
+      "   vldmiaeq r0!, {s16-s31}             \n" /* Restore FPU registers
+                                                     S16-S31 */
+#endif
       "   msr psp, r0                         \n"
       "   isb                                 \n"
-      "                                       \n"
-      "                                       \n"
-      "   bx lr                              \n"
-      "                                       \n"
+      "   bx r14                              \n"
       "   .ltorg                              \n" ::"i"(
           MAX_SYSCALL_INTERRUPT_PRIORITY)
       : "r0", "r1", "r2", "r3");
 }
 
-__attribute__((naked)) void SVCall_Handler(void)
-{
+__attribute__((naked)) void SVCall_Handler(void) {
   __asm volatile(
       "   ldr r3, =current_task           \n" /* Restore the context. */
-      "   ldr r1, [r3]                    \n" /* Get the pxCurrentTCB address.
+      "   ldr r1, [r3]                    \n"
+      "   ldr r0, [r1]                    \n"
+      "   ldmia r0!, {r4-r11,r14}        \n" /* Pop core registers and
+                                                EXC_RETURN. */
+#ifdef _FPU_ENABLED
+      "   tst r14, #0x10                  \n" /* Does the task use the FPU? */
+      "   it eq                           \n"
+      "   vldmiaeq r0!, {s16-s31}         \n" /* Restore FPU registers S16-S31
                                                */
-      "   ldr r0, [r1]                    \n" /* The first item in pxCurrentTCB
-                                                 is the task top of stack. */
-      "   ldmia r0!, {r4-r11,r14}        \n"  /* Pop the registers that are not
-                                                  automatically saved on
-                                                  exception entry and the
-                                                  critical nesting count. */
+#endif
       "   msr psp, r0                     \n" /* Restore the task stack pointer.
                                                */
       "   isb                             \n"
       "   mov r0, #0                      \n"
       "   msr basepri, r0                 \n"
       "   bx r14                          \n"
-      "                                   \n"
       "   .ltorg                          \n");
 }
 
 // Task stack initialization
-void init_task_stack(TCB *task)
-{
+void init_task_stack(TCB *task) {
   // Align sp to 8 bytes
   uint32_t *sp = (uint32_t *)((uint32_t)(task->sp) & (~7UL));
+
+  // --- Hardware Stack Frame ---
   sp--;
   *sp = INITIAL_XPSR;
   sp--;
   *sp = ((uint32_t)task->entry) & TASK_ENTRY_MASK;
   sp--;
-  *sp = (uint32_t)TASK_EXIT;
-  sp -= 5;
-  *sp = (uint32_t)task->arg;
+  *sp = (uint32_t)TASK_EXIT; // Hardware LR
+
+  // R12, R3, R2, R1
+  sp -= 4;
+
+  // R0 (argument)
   sp--;
-  *sp = 0xfffffffd;
+  *sp = (uint32_t)task->arg;
+
+  // --- Software Stack Frame ---
+  // Save EXC_RETURN (r14)
+  sp--;
+  *sp = 0xfffffffd; // Initial EXC_RETURN: Basic frame (no FPU)
+
+  // Save R4-R11
   sp -= 8;
+
   task->sp = sp;
 }
 
-void load_next_task_from_isr(void)
-{
-  __asm volatile(
-      "   mov r0, %0                          \n"
-      "   msr basepri, r0                     \n"
-      "   dsb                                 \n"
-      "   isb                                 \n"
-      "   bl set_next_task                    \n"
-      "   mov r0, #0                          \n"
-      "   msr basepri, r0                     \n" ::"i"(MAX_SYSCALL_INTERRUPT_PRIORITY)
-      : "r0");
+void load_next_task_from_isr(void) {
+  __asm volatile("   mov r0, %0                          \n"
+                 "   msr basepri, r0                     \n"
+                 "   dsb                                 \n"
+                 "   isb                                 \n"
+                 "   bl set_next_task                    \n"
+                 "   mov r0, #0                          \n"
+                 "   msr basepri, r0                     \n" ::"i"(
+                     MAX_SYSCALL_INTERRUPT_PRIORITY)
+                 : "r0");
 }
