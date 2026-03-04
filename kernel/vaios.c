@@ -24,12 +24,10 @@
 /* Define CPU clock for QEMU (adjust if needed) */
 #define CPU_CLOCK_HZ 16000000UL
 
-void _qemu_systick_init_ms(uint32_t period_ms)
-{
+void _qemu_systick_init_ms(uint32_t period_ms) {
   uint32_t reload = (CPU_CLOCK_HZ / 1000) * period_ms - 1;
 
-  if (reload > 0xFFFFFF)
-  {
+  if (reload > 0xFFFFFF) {
     // SysTick is only 24-bit, so max reload is 0xFFFFFF
     reload = 0xFFFFFF;
   }
@@ -52,6 +50,9 @@ void v_init(void)
   systick_count = 0;
 #ifdef NAVHAL
 #ifdef CORTEX_M4
+#ifdef _FPU_ENABLED
+  hal_fpu_enable();
+#endif
   systick_init(SYSTICK_PERIOD);
   hal_set_interrupt_priority(SysTick_IRQn, 14);
   hal_set_interrupt_priority(PendSV_IRQn, 15);
@@ -79,13 +80,11 @@ void v_init(void)
 #endif
 }
 // extern void start_scheduler(void);
-void v_start(void)
-{
+void v_start(void) {
   // start_scheduler();
   // scheduler_state = SCHEDULER_RUNNING;
 }
-void v_delay(uint32_t ms)
-{
+void v_delay(uint32_t ms) {
   uint32_t delay_ticks = (ms * 1000) / SYSTICK_PERIOD;
   task_delay(delay_ticks);
 
