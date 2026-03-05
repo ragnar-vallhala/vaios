@@ -1,24 +1,24 @@
 #ifndef TASK_H
 #define TASK_H
 
-#include <stdint.h>
-#include <stddef.h> // for offsetof
 #include "config.h"
 #include "port.h"
+#include <stddef.h> // for offsetof
+#include <stdint.h>
 
 //-----------------------------------------------------------------------------
 // Architecture Validation
 // Require CORTEX_M to be defined by the build system/port.
 //-----------------------------------------------------------------------------
 #ifndef CORTEX_M4
-#error "Define a valid architecture macro (e.g., CORTEX_M) before including task.h"
+#error                                                                         \
+    "Define a valid architecture macro (e.g., CORTEX_M) before including task.h"
 #endif
 
 //-----------------------------------------------------------------------------
 // Task Status Enumeration
 //-----------------------------------------------------------------------------
-typedef enum
-{
+typedef enum {
   TASK_READY = 0,
   TASK_RUNNING = 1,
   TASK_BLOCKED = 2,
@@ -29,18 +29,18 @@ typedef enum
 //-----------------------------------------------------------------------------
 // Task Control Block (TCB) Structure
 //-----------------------------------------------------------------------------
-typedef struct Task_Control_Block
-{
-  uint32_t *sp;                    // Current stack pointer (PSP)
-  uint32_t *mem_block;             // Base of allocated stack memory
-  void *arg;                       // Task argument
-  void (*entry)(void *);           // Task entry function
-  uint32_t stack_size;             // Stack size in bytes
-  uint32_t task_id;                // Unique task identifier
-  uint32_t delay_ticks;            // Remaining delay in ticks
-  uint32_t ticks_run;              // Total ticks executed (stats)
-  uint32_t priority;               // Priority (0..MAX_PRIORITY)
-  Task_Status status;              // Current status
+typedef struct Task_Control_Block {
+  uint32_t *sp;          // Current stack pointer (PSP)
+  uint32_t *mem_block;   // Base of allocated stack memory
+  void *arg;             // Task argument
+  void (*entry)(void *); // Task entry function
+  uint32_t stack_size;   // Stack size in bytes
+  uint32_t task_id;      // Unique task identifier
+  uint32_t delay_ticks;  // Absolute wakeup tick (deadline)
+  uint32_t ticks_run;    // Total ticks executed (stats)
+  uint32_t priority;     // Priority (0..MAX_PRIORITY)
+  Task_Status status;    // Current status
+  void *wait_sem;        // Semaphore this task is blocking on (NULL if none)
   struct Task_Control_Block *next; // Next in list (ready/blocked/etc.)
   struct Task_Control_Block *prev; // Prev in list
 } TCB;
@@ -73,8 +73,8 @@ void init_task_stack(TCB *task); // Implemented in port.c
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
-uint32_t task_create(void (*entry)(void *), void *arg,
-                     uint32_t stack_size, uint32_t priority);
+uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
+                     uint32_t priority);
 void task_exit_request(uint32_t task_id);
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
@@ -132,10 +132,12 @@ extern TCB *current_task;
 #define IS_TASK_TERMINATED(t) ((t) && (t)->status == TASK_TERMINATED)
 
 #define GET_CURRENT_TASK_ID() (current_task ? current_task->task_id : 0u)
-#define GET_CURRENT_PRIORITY() (current_task ? current_task->priority : IDLE_PRIORITY)
+#define GET_CURRENT_PRIORITY()                                                 \
+  (current_task ? current_task->priority : IDLE_PRIORITY)
 
 // Stack alignment (STACK_ALIGN_SIZE provided by config.h)
-#define ALIGN_STACK_SIZE(sz) (((sz) + (STACK_ALIGN_SIZE - 1u)) & ~(STACK_ALIGN_SIZE - 1u))
+#define ALIGN_STACK_SIZE(sz)                                                   \
+  (((sz) + (STACK_ALIGN_SIZE - 1u)) & ~(STACK_ALIGN_SIZE - 1u))
 
 // Delay helpers (map to ticks; define MS_TO_TICKS in config.h if desired)
 #ifndef MS_TO_TICKS
@@ -148,8 +150,7 @@ extern TCB *current_task;
 //-----------------------------------------------------------------------------
 // Error Codes for Task Operations
 //-----------------------------------------------------------------------------
-typedef enum
-{
+typedef enum {
   TASK_SUCCESS = 0,
   TASK_ERROR_NULL_POINTER,
   TASK_ERROR_INVALID_PRIORITY,

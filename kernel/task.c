@@ -1,4 +1,5 @@
 #include "task.h"
+#include "ipc.h"
 #include "memory.h"
 #include "utils.h"
 #include <stddef.h>
@@ -23,7 +24,6 @@ static uint32_t last_context_switch_tick = 0; // To track ticks for current task
 //-----------------------------------------------------------------------------
 static inline void rb_set(uint32_t prio) { ready_bitmap |= (1u << prio); }
 static inline void rb_clear(uint32_t prio) { ready_bitmap &= ~(1u << prio); }
-static inline int rb_any(void) { return ready_bitmap != 0; }
 static TCB *get_task_by_id(uint32_t task_id);
 // Return highest set bit index (portable fallback)
 static inline int highest_ready_prio(void) {
@@ -171,14 +171,26 @@ TCB *get_next_task(void) {
   last_context_switch_tick = v_get_ticks();
   wake_up_delayed_tasks();
 
+  if (current_task && current_task->status == TASK_RUNNING) {
+    add_to_ready_list(current_task);
+  }
+
   TCB *t = get_highest_priority_task();
   if (t) {
+    if ((uint32_t)t < 0x20000000 || (uint32_t)t > 0x20020000 ||
+        t->priority > MAX_PRIORITY) {
+      v_log(LOG_FATAL, "[SCHEDULER] FATAL: t is invalid! t=0x%08X prio=%u",
+            (uint32_t)t, (unsigned)(t->priority));
+      while (1)
+        ;
+    }
     remove_from_ready_list(t);
-    if (current_task->status == TASK_RUNNING)
-      add_to_ready_list(current_task);
     current_task = t;
-  } else
-    current_task = idle_task;
+  } else {
+    if (current_task->status != TASK_RUNNING) {
+      current_task = idle_task;
+    }
+  }
   current_task->status = TASK_RUNNING;
   context_switch_count++;
 
@@ -191,10 +203,10 @@ void set_next_task(void) { get_next_task(); }
 
 __attribute__((noreturn)) void task_exit(void) {
   ENTER_CRITICAL();
-  v_log(LOG_DEBUG, "[TASK] Task %u Exiting", current_task->task_id);
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   EXIT_CRITICAL();
+
   task_yield();
   while (1)
     ;
@@ -203,6 +215,8 @@ void task_exit_request(uint32_t task_id) {
   TCB *task = get_task_by_id(task_id);
   if (!task || task->status == TASK_TERMINATED)
     return;
+
+  v_log(LOG_DEBUG, "[TASK] Task %u Exit Requested", task_id);
 
   ENTER_CRITICAL();
   if (task->status == TASK_READY)
@@ -213,42 +227,41 @@ void task_exit_request(uint32_t task_id) {
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);
   EXIT_CRITICAL();
+
   task_yield();
 }
 //-----------------------------------------------------------------------------
 // Idle Task Function
 //-----------------------------------------------------------------------------
 extern void v_log_flush(void);
-extern uint32_t print_buffer_count;
 void idle_task_function(void *arg) {
-  TCB *task = blocked_list;
   while (1) {
     for (int i = 0; i < 64; i++)
       v_log_flush();
-    task = blocked_list;
-    if (task == NULL) {
-      // task_delay(100); // Sleep for a while if no blocked tasks
-      // v_log(LOG_DEBUG, "[TASK] Idle Task Running. CPU_Usage %d\%, %d/%d
-      // ticks",
-      //       ((v_get_ticks() - idle_task->ticks_run + 1) * 100) /
-      //       (v_get_ticks()), idle_task->ticks_run, v_get_ticks());
-      continue;
-    }
+
+    TCB *to_free = NULL;
+
+    // Find one terminated task to free under critical section
+    ENTER_CRITICAL();
+    TCB *task = blocked_list;
     while (task) {
-      v_log(LOG_DEBUG, "[TASK] Garbage Collector checking task %u status: %d",
-            task->task_id, task->status);
       if (task->status == TASK_TERMINATED) {
-        TCB *to_free = task;
-        task = task->next;
+        to_free = task;
         remove_from_blocked_list(to_free);
-        if (to_free->mem_block)
-          v_free(to_free->mem_block);
+        break; // we will free this one, then check again next loop
+      }
+      task = task->next;
+    }
+    EXIT_CRITICAL();
+
+    if (to_free) {
+      v_log(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
+            to_free->task_id);
+      if (to_free->mem_block) {
+        v_free(to_free->mem_block);
         to_free->mem_block = NULL;
-        v_free(to_free);
-        to_free = NULL;
-        continue;
-      } else
-        task = task->next;
+      }
+      v_free(to_free);
     }
   }
 }
@@ -279,6 +292,7 @@ void task_delay(uint32_t ticks) {
 }
 
 void wake_up_delayed_tasks(void) {
+  // 1. Wake tasks sleeping via task_delay() (in delayed_list)
   TCB *task = delayed_list;
   while (task) {
     if (task->delay_ticks < v_get_ticks()) {
@@ -291,6 +305,40 @@ void wake_up_delayed_tasks(void) {
       continue;
     }
     task = task->next;
+  }
+
+  // 2. Eject semaphore waiters whose timeout has expired (in blocked_list).
+  //    These have wait_sem != NULL and delay_ticks set to an absolute deadline.
+  task = blocked_list;
+  while (task) {
+    TCB *next = task->next;
+    if (task->wait_sem != NULL && task->delay_ticks != 0 &&
+        task->delay_ticks < v_get_ticks()) {
+      // Remove from semaphore wait_q (singly-linked via next in the sema).
+      sema_t *s = (sema_t *)task->wait_sem;
+      // Walk and remove from sema wait_q
+      if (s->wait_q == task) {
+        s->wait_q = task->next; // task->next is next in wait_q
+        if (!s->wait_q)
+          s->tail = NULL;
+      } else {
+        TCB *prev_node = s->wait_q;
+        while (prev_node && prev_node->next != task)
+          prev_node = prev_node->next;
+        if (prev_node) {
+          prev_node->next = task->next;
+          if (s->tail == task)
+            s->tail = prev_node;
+        }
+      }
+      // Remove from blocked_list and wake (leave wait_sem set → take returns
+      // VA_FAIL)
+      remove_from_blocked_list(task);
+      task->delay_ticks = 0;
+      task->status = TASK_READY;
+      add_to_ready_list(task);
+    }
+    task = next;
   }
 }
 

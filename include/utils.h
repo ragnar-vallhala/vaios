@@ -28,6 +28,7 @@ typedef enum {
 #define COLOR_FATAL "\x1B[35m"   // Magenta
 #define COLOR_UNKNOWN "\x1B[34m" // Blue
 void v_log(Log_Type type, const char *msg, ...);
+void v_log_flush(void);
 void dma_tx_complete_callback(void);
 // Useful Functions
 

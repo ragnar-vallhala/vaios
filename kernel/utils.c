@@ -2,6 +2,7 @@
 #include "atomic.h"
 #include "config.h"
 #include "port.h"
+#include "task.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -20,6 +21,7 @@
 void *v_memset(void *s, int c, unsigned int n);
 void *v_memcpy(void *dest, const void *src, unsigned int n);
 uint32_t v_strlen(const char *s);
+void v_log_flush(void);
 
 // Double buffering for log messages
 static uint8_t log_buffer_storage1[LOG_BUFFER_STORAGE_SIZE];
@@ -644,22 +646,41 @@ void v_log(Log_Type type, const char *msg, ...) {
                                sizeof(final_msg) - final_len - 5, msg, args);
   va_end(args);
 
-  ENTER_CRITICAL();
-  // Check if current message fits in current writing buffer
-  if (log_buffer_storage_writing_head + final_len + 3 >
-      LOG_BUFFER_STORAGE_SIZE) {
+  if (final_len + 3 > LOG_BUFFER_STORAGE_SIZE) {
+    final_len = LOG_BUFFER_STORAGE_SIZE - 3;
+  }
+
+  while (1) {
+    ENTER_CRITICAL();
+    // Check if current message fits in current writing buffer
+    if (log_buffer_storage_writing_head + final_len + 3 <=
+        LOG_BUFFER_STORAGE_SIZE) {
+      break; // Safe to copy, stay in critical section
+    }
+
     // Current buffer is full or doesn't have enough space
     // Wait for previous flush to finish before swapping
     if (atomic_get(&log_buffer_storage_read_lock) ||
         log_buffer_size_to_read > 0) {
       EXIT_CRITICAL();
-      while (atomic_get(&log_buffer_storage_read_lock) ||
-             log_buffer_size_to_read > 0)
-        ;
-      ENTER_CRITICAL();
+      /* Wait outside critical section, but with a bounded spin so a
+       * stuck DMA TC interrupt cannot permanently wedge the RTOS. */
+      uint32_t spin_guard = 0;
+      while ((atomic_get(&log_buffer_storage_read_lock) ||
+              log_buffer_size_to_read > 0) &&
+             spin_guard++ < 200000u) {
+        v_log_flush();
+      }
+      /* If we timed out, force-clear the lock so RTOS stays alive */
+      if (spin_guard >= 200000u) {
+        atomic_set(&log_buffer_storage_read_lock, 0);
+        log_buffer_size_to_read = 0;
+      }
+      // Loop around to re-enter critical section and check EVERYTHING again!
+      continue;
     }
 
-    // Set size to read from current buffer
+    // Read buffer is free! Set size to read from current buffer
     log_buffer_size_to_read = log_buffer_storage_writing_head;
 
     // Swap buffers
@@ -671,9 +692,12 @@ void v_log(Log_Type type, const char *msg, ...) {
       log_buffer_storage_current_reading = log_buffer_storage2;
     }
     log_buffer_storage_writing_head = 0;
+
+    // The new buffer is perfectly empty (writing_head=0), so we are safe!
+    break;
   }
 
-  // Copy message + CRLF
+  // Copy message + CRLF (we are still in the critical section)
   v_memcpy(log_buffer_storage_current_writing + log_buffer_storage_writing_head,
            final_msg, final_len);
   log_buffer_storage_writing_head += final_len;
@@ -779,8 +803,13 @@ void SysTick_Handler(void) {
   if ((systick_count % 10) == 0) {
     v_log_flush();
   }
-  if ((scheduler_running == 123) && (systick_count % TIME_SLICE == 0))
-    ICSR |= ICSR_PENDSVSET; // Trigger PENDSV
+  if (scheduler_running == 123) {
+    // Fire PendSV every tick so wake_up_delayed_tasks() (called from
+    // get_next_task inside PendSV) runs every 1 ms. This gives ≤1 ms delay
+    // jitter instead of ≤TIME_SLICE ms jitter. PendSV is idempotent —
+    // setting PENDSVSET while already pending is harmless.
+    ICSR |= ICSR_PENDSVSET;
+  }
 }
 
 uint32_t v_get_ticks(void) { return systick_count; }

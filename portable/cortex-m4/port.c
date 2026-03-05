@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+extern void v_print(const char *str);
+
 volatile uint32_t critical_nesting = 0;
 
 void v_enter_critical(void) {
@@ -44,25 +46,65 @@ void print_registers(ExceptionStackFrame *frame) {
   v_log(LOG_TRACE, " xPSR= 0x%08X", frame->xpsr);
 }
 
+static void print_hex_blocking(uint32_t val) {
+  char buf[9];
+  buf[8] = '\0';
+  for (int i = 7; i >= 0; i--) {
+    uint8_t nibble = val & 0xF;
+    buf[i] = (nibble < 10) ? ('0' + nibble) : ('A' + (nibble - 10));
+    val >>= 4;
+  }
+  v_print("0x");
+  v_print(buf);
+  v_print("\r\n");
+}
+
 // Optional: simple backtrace by scanning stack for plausible return addresses
 void print_backtrace(uint32_t *stack, uint32_t stack_size) {
-  v_log(LOG_FATAL, "HardFault Backtrace (approx):");
+  v_print("HardFault Backtrace (approx):\r\n");
   for (uint32_t i = 0; i < stack_size; i++) {
     uint32_t addr = stack[i];
     // crude check: skip null and small addresses
     if (addr > 0x1000) {
-      v_log(LOG_TRACE, " 0x%08X", addr);
+      v_print(" ");
+      print_hex_blocking(addr);
     }
   }
 }
 
 // This function is called by the naked HardFault_Handler
-void hardfault_handler_c(ExceptionStackFrame *frame, uint32_t *stack_pointer) {
-  v_log(LOG_FATAL, "HARDFAULT occurred!");
-  print_registers(frame);
+void hardfault_handler_c(ExceptionStackFrame *frame, uint32_t *stack_pointer,
+                         uint32_t exc_return) {
+  v_print("\r\n\r\n********************************\r\n");
+  v_print("**** SYSTEM HARDFAULT! ****\r\n");
+  v_print("********************************\r\n\r\n");
+  v_print("EXC_RET: ");
+  print_hex_blocking(exc_return);
+  v_print("PC: ");
+  print_hex_blocking(frame->pc);
+  v_print("LR: ");
+  print_hex_blocking(frame->lr);
+  v_print("R0: ");
+  print_hex_blocking(frame->r0);
+  v_print("SP: ");
+  print_hex_blocking((uint32_t)stack_pointer);
 
-  // Optional backtrace: scan 128 words from stack
-  print_backtrace(stack_pointer, 128);
+  // Print SCB fault registers
+  uint32_t cfsr = *(volatile uint32_t *)0xE000ED28;
+  uint32_t hfsr = *(volatile uint32_t *)0xE000ED2C;
+  uint32_t mmfar = *(volatile uint32_t *)0xE000ED34;
+  uint32_t bfar = *(volatile uint32_t *)0xE000ED38;
+  v_print("CFSR: ");
+  print_hex_blocking(cfsr);
+  v_print("HFSR: ");
+  print_hex_blocking(hfsr);
+  v_print("MMFAR: ");
+  print_hex_blocking(mmfar);
+  v_print("BFAR: ");
+  print_hex_blocking(bfar);
+
+  // Optional backtrace: scan 32 words from stack
+  print_backtrace(stack_pointer, 32);
 
   while (1)
     ;
@@ -80,7 +122,7 @@ __attribute__((naked)) void HardFault_Handler(void) {
 }
 
 // Entry point that reconstructs ExceptionStackFrame
-void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t lr_unused,
+void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t exc_return,
                              uint32_t dummy) {
   ExceptionStackFrame frame;
   frame.r0 = stack_pointer[0];
@@ -92,7 +134,7 @@ void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t lr_unused,
   frame.pc = stack_pointer[6];
   frame.xpsr = stack_pointer[7];
 
-  hardfault_handler_c(&frame, stack_pointer);
+  hardfault_handler_c(&frame, stack_pointer, exc_return);
 }
 
 #define SCB_ICSR (*(volatile uint32_t *)0xE000ED04)

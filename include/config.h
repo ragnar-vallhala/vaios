@@ -25,7 +25,7 @@
 #define DMA_MIN_THRESHOLD 16
 
 // Scheduling
-#define TIME_SLICE 10
+#define TIME_SLICE 2
 
 // Memory
 #define MAIN_STACK_SIZE 128
@@ -35,7 +35,7 @@
 // Tasks
 #define MAX_TASK_PRIORITY 7
 #define IDLE_TASK_PRIORITY 0
-#define IDLE_TASK_STACK_SIZE 1024
+#define IDLE_TASK_STACK_SIZE 2048
 
 // IPC
 #define MAX_SEMAPHORE_COUNT 0xFFFFFFFF
@@ -50,10 +50,12 @@
                                 // storage in bytes (use 2 buffer for
                                 // double buffering & couple with DMA)
 #define BUFFERED_LOGGING 1      // 0: disable, 1: enable
-#define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
+#define MIN_LOG_LEVEL LOG_INFO // Minimum log level to output
 // #define ALLOWED_MODULES "TERM,VAIOS INIT,MEMORY,TASK"   // Comma-separated
 // list of modules to log from, or "ALL"
-#define ALLOWED_MODULES "TERM,ATTITUDE,VAIOS INIT,BMX160" // Comma-separated list of modules to log from, or "ALL"
+// #define ALLOWED_MODULES "TERM,ATTITUDE,VAIOS INIT,BMX160" // Comma-separated
+// list of modules to log from, or "ALL"
+#define ALLOWED_MODULES "ALL"
 // Terminal
 #define ENABLE_TERMINAL 1                // 0: disable, 1: enable
 #define TERMINAL_LOG_LEVEL MIN_LOG_LEVEL // Loglevel of terminal lines

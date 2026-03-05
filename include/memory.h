@@ -8,9 +8,10 @@ typedef enum { MEM_FREE, MEM_ALOC } Heap_Mem_Type;
 #define SANITY_MAGIC_NUMBER 0x14U
 
 typedef struct {
-  uint8_t magic_number;
+  uint32_t magic_number;
   uint32_t size; // in bytes
-  Heap_Mem_Type status;
+  uint32_t status;
+  uint32_t padding; // Ensure sizeof(Heap_Mem_Block) == 16 for 8-byte alignment
 } Heap_Mem_Block;
 
 // Initialize heap memory
