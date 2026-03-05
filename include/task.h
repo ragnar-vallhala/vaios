@@ -1,8 +1,8 @@
 #ifndef TASK_H
 #define TASK_H
 
-#include "config.h"
 #include "port.h"
+#include "vaios_config.h"
 #include <stddef.h> // for offsetof
 #include <stdint.h>
 

@@ -90,16 +90,23 @@ MutexHandle_t v_mutex_create_static(StaticSemaphore_t *pxBuffer) {
 }
 
 MutexHandle_t v_mutex_create_recursive(void) {
-  sema_t *mtx = (sema_t *)v_malloc(sizeof(sema_t));
+  rmutex_t *mtx = (rmutex_t *)v_malloc(sizeof(rmutex_t));
   if (!mtx)
     return NULL;
-  return (MutexHandle_t)sema_init(mtx, 1, 1);
+  sema_init(&mtx->base, 1, 1);
+  mtx->owner = NULL;
+  mtx->recursion_count = 0;
+  return (MutexHandle_t)mtx;
 }
 
 MutexHandle_t v_mutex_create_recursive_static(StaticSemaphore_t *pxBuffer) {
   if (!pxBuffer)
     return NULL;
-  return (MutexHandle_t)sema_init((sema_t *)pxBuffer, 1, 1);
+  rmutex_t *mtx = (rmutex_t *)pxBuffer;
+  sema_init(&mtx->base, 1, 1);
+  mtx->owner = NULL;
+  mtx->recursion_count = 0;
+  return (MutexHandle_t)mtx;
 }
 
 //-----------------------------------------------------------------------------
@@ -211,19 +218,19 @@ int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   if (rm->owner == current) {
     rm->recursion_count++;
     EXIT_CRITICAL();
-    return 0;
+    return VA_PASS;
   }
   EXIT_CRITICAL();
 
   // otherwise, lock normally
-  if (v_mutex_lock((MutexHandle_t)&rm->base, ticks_to_wait) == 0) {
+  if (v_mutex_lock((MutexHandle_t)&rm->base, ticks_to_wait) == VA_PASS) {
     ENTER_CRITICAL();
     rm->owner = current;
     rm->recursion_count = 1;
     EXIT_CRITICAL();
-    return 0;
+    return VA_PASS;
   }
-  return -1;
+  return VA_FAIL;
 }
 
 int v_mutex_unlock_recursive(MutexHandle_t mtx) {
@@ -232,7 +239,7 @@ int v_mutex_unlock_recursive(MutexHandle_t mtx) {
   ENTER_CRITICAL();
   if (rm->owner != get_current_task()) {
     EXIT_CRITICAL();
-    return -1; // not owner
+    return VA_FAIL; // not owner
   }
 
   rm->recursion_count--;
@@ -242,5 +249,5 @@ int v_mutex_unlock_recursive(MutexHandle_t mtx) {
     return v_mutex_unlock((MutexHandle_t)&rm->base);
   }
   EXIT_CRITICAL();
-  return 0;
+  return VA_PASS;
 }

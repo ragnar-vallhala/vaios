@@ -47,6 +47,12 @@ message(STATUS "Selected flash address: ${FLASH_ADDRESS}")
 
 option(VAIOS_FPU "Enable FPU support" ON)
 set(VAIOS_EXAMPLE "" CACHE STRING "The example to build (e.g., FPU_USAGE, DMA_DUMP)")
+set(VAIOS_CONFIG_FILE "" CACHE STRING "Path to the user-provided vaios_config.h file")
+
+if(VAIOS_CONFIG_FILE)
+    add_compile_definitions(VAIOS_CONFIG_FILE="${VAIOS_CONFIG_FILE}")
+    message(STATUS "VAIOS: Using custom config file ${VAIOS_CONFIG_FILE}")
+endif()
 
 if(VAIOS_FPU)
     set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")

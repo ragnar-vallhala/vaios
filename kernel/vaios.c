@@ -1,7 +1,7 @@
 #include "vaios.h"
-#include "config.h"
 #include "task.h"
 #include "utils.h"
+#include "vaios_config.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -41,8 +41,7 @@ void _qemu_systick_init_ms(uint32_t period_ms) {
 
 extern uint32_t systick_count;
 
-void v_init(void)
-{
+void v_init(void) {
 #ifdef _FPU_ENABLED
   hal_fpu_enable();
 #endif

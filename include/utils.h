@@ -1,6 +1,6 @@
 #ifndef VAIOS_UTILS_H
 #define VAIOS_UTILS_H
-#include "config.h"
+#include "vaios_config.h"
 #include <stdint.h>
 void print(const char *str);
 void print_fmt(const char *fmt, ...);

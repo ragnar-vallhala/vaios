@@ -1,5 +1,5 @@
-#ifndef VAIOS_CORTEX_M4_CONFIG_H
-#define VAIOS_CORTEX_M4_CONFIG_H
+#ifndef VAIOS_CORTEX_M4_CONFIG_EXAMPLE_H
+#define VAIOS_CORTEX_M4_CONFIG_EXAMPLE_H
 
 // Version settings
 #define VERSION_MAJOR 0
@@ -28,7 +28,7 @@
 #define TIME_SLICE 2
 
 // Memory
-#define MAIN_STACK_SIZE 128
+#define MAIN_STACK_SIZE 512
 #define HEAP_SIZE 0x8000
 #define STACK_ALIGN_SIZE 8
 
@@ -43,14 +43,14 @@
 
 // Logging
 #define COLOR_LOGGING 1
-#define LOG_BUFFER_SIZE 64  // number of log entries
-#define LOG_MSG_MAX_LEN 128 // max chars per message
+#define LOG_BUFFER_SIZE 32 // number of log entries
+#define LOG_MSG_MAX_LEN 64 // max chars per message
 #define LOG_BUFFER_STORAGE_SIZE                                                \
   256                           // size of the log buffer
                                 // storage in bytes (use 2 buffer for
                                 // double buffering & couple with DMA)
 #define BUFFERED_LOGGING 1      // 0: disable, 1: enable
-#define MIN_LOG_LEVEL LOG_INFO // Minimum log level to output
+#define MIN_LOG_LEVEL LOG_TRACE // Minimum log level to output
 // #define ALLOWED_MODULES "TERM,VAIOS INIT,MEMORY,TASK"   // Comma-separated
 // list of modules to log from, or "ALL"
 // #define ALLOWED_MODULES "TERM,ATTITUDE,VAIOS INIT,BMX160" // Comma-separated
@@ -65,4 +65,4 @@
 #define ESCAPE_SEQ_LEN 2                 // \r, \n or \r\n length
 #define TERMINAL_TASK_STACK_SIZE 1024
 
-#endif // !VAIOS_CORTEX_M4_CONFIG_H
+#endif // !VAIOS_CORTEX_M4_CONFIG_EXAMPLE_H

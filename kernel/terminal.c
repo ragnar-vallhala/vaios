@@ -10,11 +10,11 @@
 #endif
 #include "navhal.h"
 #endif
-#include "config.h"
 #include "task.h"
 #include "terminal.h"
 #include "utils.h"
 #include "vaios.h"
+#include "vaios_config.h"
 #include <stddef.h>
 
 static char _term_history[CMD_BUFFER_SIZE]

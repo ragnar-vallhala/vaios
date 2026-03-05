@@ -1,8 +1,8 @@
 #include "utils.h"
 #include "atomic.h"
-#include "config.h"
 #include "port.h"
 #include "task.h"
+#include "vaios_config.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -576,6 +576,9 @@ void v_log(Log_Type type, const char *msg, ...) {
   if (type < MIN_LOG_LEVEL || !module_allowed(msg))
     return;
 
+  va_list args;
+  va_start(args, msg);
+
 #if LOGGING_ENABLED == 1
 #if BUFFERED_LOGGING == 1
   const char *typeName;
@@ -612,78 +615,85 @@ void v_log(Log_Type type, const char *msg, ...) {
     break;
   }
 
-  char final_msg[LOG_MSG_MAX_LEN + 64];
-  uint32_t final_len = 0;
+  // Build prefix on stack (small buffer)
+  char prefix[48];
+  uint32_t prefix_len = 0;
 
   // Prepend color and tag: "COLOR[TAG] "
   uint32_t color_len = v_strlen(typeColor);
-  v_memcpy(final_msg + final_len, typeColor, color_len);
-  final_len += color_len;
-
-  final_msg[final_len++] = '[';
-  uint32_t tag_len = v_strlen(typeName);
-  v_memcpy(final_msg + final_len, typeName, tag_len);
-  final_len += tag_len;
-  final_msg[final_len++] = ' ';
-  char ticks_str[11];
-  uint32_t ticks_len = utoa_simple(v_get_ticks(), ticks_str, 10);
-  v_memcpy(final_msg + final_len, ticks_str, ticks_len);
-  final_len += ticks_len;
-
-  final_msg[final_len++] = ']';
-
-  // Reset color after the tag
-  uint32_t reset_len = v_strlen(COLOR_RESET);
-  v_memcpy(final_msg + final_len, COLOR_RESET, reset_len);
-  final_len += reset_len;
-
-  final_msg[final_len++] = ' ';
-
-  // Format message directly into final_msg
-  va_list args;
-  va_start(args, msg);
-  final_len += vaprint_fmt_buf(final_msg + final_len,
-                               sizeof(final_msg) - final_len - 5, msg, args);
-  va_end(args);
-
-  if (final_len + 3 > LOG_BUFFER_STORAGE_SIZE) {
-    final_len = LOG_BUFFER_STORAGE_SIZE - 3;
+  if (color_len < sizeof(prefix)) {
+    v_memcpy(prefix + prefix_len, typeColor, color_len);
+    prefix_len += color_len;
   }
 
+  if (prefix_len < sizeof(prefix) - 1)
+    prefix[prefix_len++] = '[';
+  uint32_t tag_len = v_strlen(typeName);
+  if (prefix_len + tag_len < sizeof(prefix)) {
+    v_memcpy(prefix + prefix_len, typeName, tag_len);
+    prefix_len += tag_len;
+  }
+  if (prefix_len < sizeof(prefix) - 1)
+    prefix[prefix_len++] = ' ';
+
+  char ticks_str[11];
+  uint32_t ticks_len = utoa_simple(v_get_ticks(), ticks_str, 10);
+  if (prefix_len + ticks_len < sizeof(prefix)) {
+    v_memcpy(prefix + prefix_len, ticks_str, ticks_len);
+    prefix_len += ticks_len;
+  }
+
+  if (prefix_len < sizeof(prefix) - 1)
+    prefix[prefix_len++] = ']';
+
+  uint32_t reset_len = v_strlen(COLOR_RESET);
+  if (prefix_len + reset_len < sizeof(prefix)) {
+    v_memcpy(prefix + prefix_len, COLOR_RESET, reset_len);
+    prefix_len += reset_len;
+  }
+
+  if (prefix_len < sizeof(prefix) - 1)
+    prefix[prefix_len++] = ' ';
+
+  // Drop message if we are in a critical section/ISR and buffer is near full
+  // to avoid deadlocking on DMA synchronization.
+  extern volatile uint32_t critical_nesting;
+  uint32_t is_in_isr = (*(volatile uint32_t *)0xE000ED04) & 0x1FF;
+
+  // Wait/Flush loop
   while (1) {
     ENTER_CRITICAL();
-    // Check if current message fits in current writing buffer
-    if (log_buffer_storage_writing_head + final_len + 3 <=
+    // Conservatively check if we have enough room (Prefix + MAX_MSG + Suffix)
+    if (log_buffer_storage_writing_head + prefix_len + LOG_MSG_MAX_LEN + 3 <=
         LOG_BUFFER_STORAGE_SIZE) {
-      break; // Safe to copy, stay in critical section
+      break;
     }
 
-    // Current buffer is full or doesn't have enough space
-    // Wait for previous flush to finish before swapping
+    // IF WE ARE IN CRITICAL SECTION OR ISR, WE CANNOT SPIN!
+    // (Because interrupts are disabled, so DMA IRQ won't fire)
+    if (critical_nesting > 1 || is_in_isr) {
+      EXIT_CRITICAL();
+      va_end(args);
+      return; // Drop message to prevent deadlock
+    }
+
     if (atomic_get(&log_buffer_storage_read_lock) ||
         log_buffer_size_to_read > 0) {
       EXIT_CRITICAL();
-      /* Wait outside critical section, but with a bounded spin so a
-       * stuck DMA TC interrupt cannot permanently wedge the RTOS. */
       uint32_t spin_guard = 0;
       while ((atomic_get(&log_buffer_storage_read_lock) ||
               log_buffer_size_to_read > 0) &&
-             spin_guard++ < 200000u) {
+             spin_guard++ < 10000000u) {
         v_log_flush();
       }
-      /* If we timed out, force-clear the lock so RTOS stays alive */
-      if (spin_guard >= 200000u) {
+      if (spin_guard >= 10000000u) {
         atomic_set(&log_buffer_storage_read_lock, 0);
         log_buffer_size_to_read = 0;
       }
-      // Loop around to re-enter critical section and check EVERYTHING again!
       continue;
     }
 
-    // Read buffer is free! Set size to read from current buffer
     log_buffer_size_to_read = log_buffer_storage_writing_head;
-
-    // Swap buffers
     if (log_buffer_storage1 == log_buffer_storage_current_writing) {
       log_buffer_storage_current_writing = log_buffer_storage2;
       log_buffer_storage_current_reading = log_buffer_storage1;
@@ -692,20 +702,29 @@ void v_log(Log_Type type, const char *msg, ...) {
       log_buffer_storage_current_reading = log_buffer_storage2;
     }
     log_buffer_storage_writing_head = 0;
-
-    // The new buffer is perfectly empty (writing_head=0), so we are safe!
     break;
   }
 
-  // Copy message + CRLF (we are still in the critical section)
+  // Still in critical section!
+  // 1. Copy prefix
   v_memcpy(log_buffer_storage_current_writing + log_buffer_storage_writing_head,
-           final_msg, final_len);
-  log_buffer_storage_writing_head += final_len;
+           prefix, prefix_len);
+  log_buffer_storage_writing_head += prefix_len;
+
+  // 2. Format message directly into circular buffer
+  uint32_t msg_len =
+      vaprint_fmt_buf((char *)(log_buffer_storage_current_writing +
+                               log_buffer_storage_writing_head),
+                      LOG_MSG_MAX_LEN, msg, args);
+  log_buffer_storage_writing_head += msg_len;
+
+  // 3. Add suffix
   log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\r';
   log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\n';
   log_buffer_storage_current_writing[log_buffer_storage_writing_head] = '\0';
 
   EXIT_CRITICAL();
+  va_end(args);
 #elif BUFFERED_LOGGING == 0
   const char *typeName;
   const char *typeColor;
@@ -751,11 +770,12 @@ void v_log(Log_Type type, const char *msg, ...) {
 void v_log_flush(void) {
 #if LOGGING_ENABLED == 1
 #if BUFFERED_LOGGING == 1
-  // If a flush is already in progress, just return
-  if (atomic_get(&log_buffer_storage_read_lock))
-    return;
-
   ENTER_CRITICAL();
+  // If a flush is already in progress, just exit
+  if (atomic_get(&log_buffer_storage_read_lock)) {
+    EXIT_CRITICAL();
+    return;
+  }
   // If no data to read but there is data to write, swap buffers to flush
   if (log_buffer_size_to_read == 0 && log_buffer_storage_writing_head > 0) {
     log_buffer_size_to_read = log_buffer_storage_writing_head;
@@ -800,14 +820,7 @@ volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 void SysTick_Handler(void) {
   systick_count++;
-  if ((systick_count % 10) == 0) {
-    v_log_flush();
-  }
   if (scheduler_running == 123) {
-    // Fire PendSV every tick so wake_up_delayed_tasks() (called from
-    // get_next_task inside PendSV) runs every 1 ms. This gives ≤1 ms delay
-    // jitter instead of ≤TIME_SLICE ms jitter. PendSV is idempotent —
-    // setting PENDSVSET while already pending is harmless.
     ICSR |= ICSR_PENDSVSET;
   }
 }

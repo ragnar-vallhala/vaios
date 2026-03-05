@@ -18,12 +18,12 @@ void task1_func(void *arg) {
   while (1) {
     ENTER_CRITICAL();
     count++;
+    EXIT_CRITICAL();
     v_log(LOG_WARN, "Running %d, %d", GET_CURRENT_TASK_ID(),count);
     // Example work: toggle LED or simulate
     // yield CPU
     task_yield(); // optional: can call task_yield()
     // delay(1000000);
-    EXIT_CRITICAL();
   }
 }
 
@@ -33,8 +33,8 @@ int main(void) {
   v_heap_memory_init();
   scheduler_init();
   count = 0;
-  uint32_t t1 = task_create(task1_func, NULL, 512, 1);
-  uint32_t t2 = task_create(task1_func, NULL, 512, 1);
+  uint32_t t1 = task_create(task1_func, NULL, 700, 1);
+  uint32_t t2 = task_create(task1_func, NULL, 700, 1);
 
   // uint32_t t3 = task_create(task3_func, NULL, 512, 2);
   // uint32_t t4 = task_create(task4_func, NULL, 512, 2);

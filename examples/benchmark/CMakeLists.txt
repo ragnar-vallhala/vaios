@@ -54,11 +54,11 @@ endif()
 # -----------------------------------------------------------------------
 # Flash target: objcopy → bin → st-flash
 # -----------------------------------------------------------------------
-add_custom_target(flash_benchmark
+add_custom_target(flash
     COMMAND ${CMAKE_OBJCOPY} -O binary
             $<TARGET_FILE:benchmark>
             ${CMAKE_CURRENT_BINARY_DIR}/benchmark.bin
-    COMMAND ${FLASHER} write
+    COMMAND ${FLASHER} --connect-under-reset write
             ${CMAKE_CURRENT_BINARY_DIR}/benchmark.bin
             ${FLASH_ADDRESS}
     DEPENDS benchmark

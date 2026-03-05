@@ -9,7 +9,6 @@ void v_exit_critical(void);
 #define EXIT_CRITICAL() v_exit_critical()
 
 // Stack setup for new task
-#define INITIAL_XPSR 0x01000000UL    // Thumb bit set
-#define TASK_ENTRY_MASK 0xFFFFFFFEUL // Set last bit 0
+#define INITIAL_XPSR 0x01000000UL // Thumb bit set
 
 #endif // !VAIOS_CORTEX_M4_PORT_H

@@ -1,7 +1,7 @@
 #include "memory.h"
-#include "config.h"
 #include "port.h"
 #include "utils.h"
+#include "vaios_config.h"
 #include <stdint.h>
 
 extern uint32_t _heap_start;

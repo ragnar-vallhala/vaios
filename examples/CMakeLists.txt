@@ -4,40 +4,61 @@ message(STATUS "Startup File: ${STARTUP_FILE}")
 if(NOT NAVHAL)
   set(STARTUP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../startup.s)
 endif()
-add_executable(main fpu_usage.c ${STARTUP_FILE})
 
-
-if(NAVHAL)
-target_link_libraries(main PRIVATE
-    hal
-    -lgcc
-    -lm
-    vaios
-)
-else()
-target_link_libraries(main PRIVATE
-    -lgcc
-    -lm
-    vaios
-)
+if(VAIOS_EXAMPLE STREQUAL "DMA_DUMP")
+  add_executable(main dma_dump.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "FPU_USAGE")
+  add_executable(main fpu_usage.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "HEAP_ALLOCATOR")
+  add_executable(main heap_alloc_test.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "BASIC_TASK")
+  add_executable(main increment.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "IPC_TEST")
+  add_executable(main ipc_test.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "RACE_CONDITION")
+  add_executable(main main_race_cond.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "MULTI_TASK")
+  add_executable(main main_task.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "STARVATION")
+  add_executable(main starvation.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "SWITCHING")
+  add_executable(main switching.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "TERMINAL")
+  add_executable(main terminal_example.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "UART")
+  add_executable(main uart_comm.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "BENCHMARK")
+  add_subdirectory(benchmark)
 endif()
 
-add_custom_target(flash
-  COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:main> ${CMAKE_CURRENT_BINARY_DIR}/main.bin
-  COMMAND ${FLASHER} write ${CMAKE_CURRENT_BINARY_DIR}/main.bin ${FLASH_ADDRESS}
-  DEPENDS main
-  COMMENT "Converting ELF to BIN and flashing to board"
-)
+if(TARGET main)
+  if(NAVHAL)
+    target_link_libraries(main PRIVATE
+        hal
+        -lgcc
+        -lm
+        vaios
+    )
+  else()
+    target_link_libraries(main PRIVATE
+        -lgcc
+        -lm
+        vaios
+    )
+  endif()
 
-message(STATUS "TARGET File ${CMAKE_CURRENT_BINARY_DIR}/main.bin")
-# elf file size calculation
-add_custom_command(
-  TARGET main
-  POST_BUILD
-  COMMAND ${CMAKE_BINARY_SIZE} $<TARGET_FILE:main>
-  COMMENT "Calculating size of elf file")
+  add_custom_target(flash
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:main> ${CMAKE_CURRENT_BINARY_DIR}/main.bin
+    COMMAND ${FLASHER} --connect-under-reset write ${CMAKE_CURRENT_BINARY_DIR}/main.bin ${FLASH_ADDRESS}
+    DEPENDS main
+    COMMENT "Converting ELF to BIN and flashing to board"
+  )
 
-# ---------------------------------------------------------------------------
-# Benchmark project (DMA + FPU + Tasks + IPC + Memory stress suite)
-# ---------------------------------------------------------------------------
-add_subdirectory(benchmark)
+  # elf file size calculation
+  add_custom_command(
+    TARGET main
+    POST_BUILD
+    COMMAND ${CMAKE_BINARY_SIZE} $<TARGET_FILE:main>
+    COMMENT "Calculating size of elf file")
+endif()
+

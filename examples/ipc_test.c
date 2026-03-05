@@ -133,11 +133,11 @@ void kernel_task(void *arg)
     mtx = v_mutex_create();
     rmtx = v_mutex_create_recursive();
 
-    task_create(task_bin_sem, &id1, 1024, 0);
-    task_create(task_bin_sem, &id2, 1024, 0);
-    task_create(task_count_sem, &id3, 1024, 0);
-    task_create(task_mutex, &id4, 1024, 0);
-    task_create(task_recursive_mutex, &id1, 1024, 0); // reuse id
+    task_create(task_bin_sem, &id1, 2048, 0);
+    task_create(task_bin_sem, &id2, 2048, 0);
+    task_create(task_count_sem, &id3, 2048, 0);
+    task_create(task_mutex, &id4, 2048, 0);
+    task_create(task_recursive_mutex, &id1, 2048, 0); // reuse id
 
     // task_create(isr_simulator, NULL, 512, 1);
 
@@ -154,7 +154,7 @@ int main(void)
     v_init();
     v_heap_memory_init();
     scheduler_init();
-    task_create(kernel_task, NULL, 1024, 0);
+    task_create(kernel_task, NULL, 2048, 0);
     scheduler_start();
 
     while (1)

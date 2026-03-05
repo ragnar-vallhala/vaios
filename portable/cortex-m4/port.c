@@ -1,7 +1,7 @@
 #include "port.h"
-#include "config.h"
 #include "task.h"
 #include "utils.h"
+#include "vaios_config.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -264,7 +264,7 @@ void init_task_stack(TCB *task) {
   sp--;
   *sp = INITIAL_XPSR;
   sp--;
-  *sp = ((uint32_t)task->entry) & TASK_ENTRY_MASK;
+  *sp = (uint32_t)task->entry;
   sp--;
   *sp = (uint32_t)TASK_EXIT; // Hardware LR
 
