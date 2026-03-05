@@ -14,10 +14,10 @@ set(CMAKE_OBJCOPY ${TOOLCHAIN_PREFIX}objcopy)
 set(CMAKE_BINARY_SIZE ${TOOLCHAIN_PREFIX}size)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
-if(NOT DEFINED CMAKE_PROJECT_NAME)
-project(vaios C ASM)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(vaios C ASM)
 else()
-  add_compile_definitions(SUBMODULE)
+    add_compile_definitions(SUBMODULE)
 endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_COMPILE_COMMANDS_OUTPUT "${CMAKE_SOURCE_DIR}/compile_commands.json")
@@ -33,7 +33,20 @@ set(VENDOR
     stm32
     CACHE STRING "Vendor")
 
+# Flasher configuration
+if(NOT DEFINED FLASHER)
+  set(FLASHER st-flash CACHE STRING "Tool used for flashing")
+endif()
+
+if(NOT DEFINED FLASH_ADDRESS)
+  set(FLASH_ADDRESS 0x8000000 CACHE STRING "Address to flash the binary to")
+endif()
+
+message(STATUS "Selected flasher: ${FLASHER}")
+message(STATUS "Selected flash address: ${FLASH_ADDRESS}")
+
 option(VAIOS_FPU "Enable FPU support" ON)
+set(VAIOS_EXAMPLE "" CACHE STRING "The example to build (e.g., FPU_USAGE, DMA_DUMP)")
 
 if(VAIOS_FPU)
     set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
@@ -72,8 +85,11 @@ if(NAVHAL)
 endif()
 
 
-set(LINKER_FILE ${LINKER_FILE} PARENT_SCOPE)
-set(STARTUP_FILE ${STARTUP_FILE} PARENT_SCOPE)
+get_directory_property(has_parent PARENT_DIRECTORY)
+if(has_parent)
+  set(LINKER_FILE ${LINKER_FILE} PARENT_SCOPE)
+  set(STARTUP_FILE ${STARTUP_FILE} PARENT_SCOPE)
+endif()
 
 message("LINKER_FILE for VAIOS: ${LINKER_FILE}")
 message("STARTUP_FILE for VAIOS: ${STARTUP_FILE}")
