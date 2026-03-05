@@ -1,0 +1,76 @@
+[INFO 0] [VAIOS INIT] SYSTICK started with time period of 1000 μs
+[INFO 0] [VAIOS INIT] UART started with baudrate 115200 bps
+[INFO 11] [MEMORY] Heap memory head initialized at 0x200087a8 size 0x8000
+[INFO 12] === VAiOS Benchmark Suite Starting ===
+[INFO 12] Ticks at start: 12
+[INFO 12] FPU: ENABLED (hard-float ABI)
+[INFO 12] DMA: ENABLED
+[INFO 93] LOG
+[INFO 93] [BENCH] ========== FPU Benchmarks ==========
+[INFO 93] [BENCH] --- FPU: sinf throughput ---
+[INFO 97] [BENCH] sinf 1000 ops in 4 ticks -> 250000 ops/s
+[INFO 97] [BENCH] --- FPU: sqrtf throughput ---
+[INFO 100] [BENCH] sqrtf 1000 ops in 3 ticks -> 333333 ops/s
+[INFO 100] [BENCH] --- FPU: multi-task context-save ---
+[INFO 104] [BENCH] FPU context-save OK: sine_sum=30958 sqrt_sum=655 in 4 ticks
+[INFO 118] [BENCH] ====================================
+[INFO 139] [BENCH] ========== DMA Benchmarks ==========
+[INFO 139] [BENCH] --- DMA: M2M 64B (looped) ---
+[INFO 161] [BENCH] DMA M2M 64B x10: PASS in 20 ticks (~2000 KB/s)
+[INFO 162] [BENCH] --- DMA: M2M 4KB (looped) ---
+[INFO 186] [BENCH] DMA M2M 4KB x5: PASS in 20 ticks (~2000 KB/s)
+[INFO 186] [BENCH] --- DMA: concurrent streams (looped) ---
+[INFO 213] [BENCH] DMA concurrent x5: s0=OK s1=OK in 21 ticks (~1904 KB/s)
+[INFO 213] [BENCH] =====================================
+[INFO 234] [BENCH] ========== Task Benchmarks ==========
+[INFO 234] [BENCH] --- TASK: context switch rate ---
+[INFO 446] [BENCH] Context switches: 800 in 212 ms => 3773 sw/s
+[INFO 446] [BENCH] --- TASK: priority preemption ---
+[INFO 511] [BENCH] Priority preemption OK: low_iters=0 high_done=1 in 65 ticks
+[INFO 512] [BENCH] --- TASK: delay accuracy ---
+[INFO 613] [BENCH] Delay accuracy: requested 100 ms, got 101 ms (err=1%)
+[INFO 613] [BENCH] =====================================
+[INFO 634] [BENCH] ========== IPC Benchmarks ==========
+[INFO 634] [BENCH] --- IPC: semaphore ping-pong ---
+[INFO 665] [BENCH] Semaphore ping-pong: 1000 trips in 31 ms => 32258 trips/s
+[INFO 665] [BENCH] --- IPC: mutex shared counter ---
+[INFO 734] [BENCH] Mutex counter: 2000 == 2000 (expected) in 69 ms — no race
+[INFO 734] [BENCH] =====================================
+[INFO 755] [BENCH] ========== Memory Benchmarks ==========
+[INFO 755] [BENCH] --- MEM: alloc/free throughput ---
+[INFO 852] [BENCH] Alloc/free: small=14 ms  medium=24 ms  large=59 ms  total=97 ms  fails=0
+[INFO 852] [BENCH] --- MEM: fragmentation resilience ---
+[INFO 854] [BENCH] Fragmentation: mid_ok=1 big_ok=1 — heap coalesces correctly
+[INFO 854] [BENCH] =======================================
+[INFO 875] [BENCH] ========== Stress Benchmark ==========
+[INFO 875] [BENCH] Running for 3000 ms with all subsystems active...
+[INFO 8879] [BENCH] --- Stress Results (8004 ms) ---
+[INFO 8879] [BENCH]   FPU sine_acc=282 sqrt_acc=3622 : OK
+[INFO 8879] [BENCH]   DMA transfers=200 corrupt=0 : OK
+[INFO 8879] [BENCH]   IPC trips=65 : OK
+[INFO 8879] [BENCH]   MEM fails=0 : OK
+[INFO 8879] [BENCH] Stress overall: PASS
+[INFO 8879] [BENCH] =====================================
+[INFO 8900] 
+[INFO 8900] ==================================================
+[INFO 8917]            VAIOS BENCHMARK SUMMARY
+[INFO 8917] ==================================================
+[INFO 8917] [PASS   ] FPU: sinf throughput  (4 ticks, 250000 ops/s)
+[INFO 8918] [PASS   ] FPU: sqrtf throughput  (3 ticks, 333333 ops/s)
+[INFO 8918] [PASS   ] FPU: multi-task context-save  (4 ticks, 250000 ops/s)
+[INFO 8918] [PASS   ] DMA: M2M 64B (looped)  (20 ticks, 2000 ops/s)
+[INFO 8957] [PASS   ] DMA: M2M 4KB (looped)  (20 ticks, 2000 ops/s)
+[INFO 8957] [PASS   ] DMA: concurrent streams (looped)  (21 ticks, 1904 ops/s)
+[INFO 8957] [PASS   ] TASK: context switch rate  (212 ticks, 3773 ops/s)
+[INFO 8957] [PASS   ] TASK: priority preemption  (65 ticks, 0 ops/s)
+[INFO 8957] [PASS   ] TASK: delay accuracy  (101 ticks, 0 ops/s)
+[INFO 8958] [PASS   ] IPC: semaphore ping-pong  (31 ticks, 32258 ops/s)
+[INFO 8999] [PASS   ] IPC: mutex shared counter  (69 ticks, 0 ops/s)
+[INFO 9000] [PASS   ] MEM: alloc/free throughput  (97 ticks, 6185 ops/s)
+[INFO 9000] [PASS   ] MEM: fragmentation resilience  (0 ticks, 0 ops/s)
+[INFO 9000] [PASS   ] STRESS: all subsystems concurrent  (8004 ticks, 0 ops/s)
+[INFO 9007] --------------------------------------------------
+[INFO 9007] TOTAL: 14 PASS  0 FAIL  0 TIMEOUT  0 SKIP
+[INFO 9007] ==================================================
+[INFO 9047] *** ALL BENCHMARKS PASSED ***
+[INFO 9048] Benchmark runner finished. System idle.

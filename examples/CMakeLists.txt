@@ -36,3 +36,8 @@ add_custom_command(
   POST_BUILD
   COMMAND ${CMAKE_BINARY_SIZE} $<TARGET_FILE:main>
   COMMENT "Calculating size of elf file")
+
+# ---------------------------------------------------------------------------
+# Benchmark project (DMA + FPU + Tasks + IPC + Memory stress suite)
+# ---------------------------------------------------------------------------
+add_subdirectory(benchmark)

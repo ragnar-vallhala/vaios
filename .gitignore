@@ -3,3 +3,4 @@ build
 compile_commands.json
 logs
 build_tests
+build_bench
