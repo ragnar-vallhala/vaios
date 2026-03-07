@@ -134,14 +134,13 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   TCB *task = (TCB *)v_malloc(sizeof(TCB));
   if (!task)
     return 0;
+  task->task_id = ++task_count;
   task->stack_size = stack_size;
   task->mem_block = (uint32_t *)v_malloc(stack_size);
   if (!task->mem_block) {
-    v_free(task);
-    task = NULL;
-    return 0;
+    v_panic(__FILE__, __LINE__, "failed to allocate stack for task %u",
+            task->task_id);
   }
-  task->task_id = ++task_count;
   task->ticks_run = 0;
   task->entry = entry;
   task->arg = arg;
@@ -151,6 +150,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   task->next = NULL;
   task->prev = NULL;
   task->status = TASK_READY;
+  task->magic = TCB_MAGIC;
   init_task_stack(task);
 
   ENTER_CRITICAL();
@@ -179,10 +179,7 @@ TCB *get_next_task(void) {
   if (t) {
     if ((uint32_t)t < 0x20000000 || (uint32_t)t > 0x20020000 ||
         t->priority > MAX_PRIORITY) {
-      v_log(LOG_FATAL, "[SCHEDULER] FATAL: t is invalid! t=0x%08X prio=%u",
-            (uint32_t)t, (unsigned)(t->priority));
-      while (1)
-        ;
+      v_panic(__FILE__, __LINE__, "invalid task pointer: 0x%x", (uint32_t)t);
     }
     remove_from_ready_list(t);
     current_task = t;
@@ -193,13 +190,22 @@ TCB *get_next_task(void) {
   }
   current_task->status = TASK_RUNNING;
   context_switch_count++;
-
-  // v_log(LOG_DEBUG, "[TASK] Task Switch to Task id: %u priority: %u",
-  // current_task->task_id, current_task->priority);
+#if TASK_STACK_WATERMARK_ENABLE == 1
+  if ((uint32_t)(current_task->sp) <
+      ((uint32_t)current_task->mem_block + TASK_STACK_OVERFLOW_THRESHOLD)) {
+    v_panic(__FILE__, __LINE__,
+            "stack overflow in task %d | SP: 0x%x, Base: 0x%x",
+            current_task->task_id, (uint32_t)current_task->sp,
+            (uint32_t)current_task->mem_block);
+  }
+#endif
   return current_task;
 }
 
-void set_next_task(void) { get_next_task(); }
+void set_next_task(void) {
+  if (get_next_task() == NULL)
+    v_panic(__FILE__, __LINE__, "current_task is NULL");
+}
 
 __attribute__((noreturn)) void task_exit(void) {
   ENTER_CRITICAL();

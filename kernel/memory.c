@@ -1,7 +1,6 @@
 #include "memory.h"
 #include "port.h"
 #include "utils.h"
-#include "vaios_config.h"
 #include <stdint.h>
 
 extern uint32_t _heap_start;
@@ -120,6 +119,14 @@ void *v_malloc(size_t size) {
       break;
     head = (Heap_Mem_Block *)next_addr;
   }
+
+#if HEAP_WATERMARK_ENABLE == 1
+  if (v_get_heap_allocation_size() > HEAP_SIZE - HEAP_WATERMARK_THRESHOLD) {
+    v_panic(__FILE__, __LINE__, "Heap watermark exceeded! Used: %u, Limit: %u",
+            (unsigned)v_get_heap_allocation_size(),
+            (unsigned)(HEAP_SIZE - HEAP_WATERMARK_THRESHOLD));
+  }
+#endif
 
   EXIT_CRITICAL();
   v_log(LOG_ERROR, "[MEMORY] Dynamic allocation failed, memory exhausted.");

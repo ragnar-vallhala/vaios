@@ -70,11 +70,19 @@
 #endif
 
 #ifndef HEAP_SIZE
-#define HEAP_SIZE 0x8000
+#define HEAP_SIZE 0x16000 // 88kB
 #endif
 
 #ifndef STACK_ALIGN_SIZE
 #define STACK_ALIGN_SIZE 8
+#endif
+
+#ifndef HEAP_WATERMARK_ENABLE
+#define HEAP_WATERMARK_ENABLE 1
+#endif
+
+#ifndef HEAP_WATERMARK_THRESHOLD
+#define HEAP_WATERMARK_THRESHOLD 1024
 #endif
 
 // Tasks
@@ -88,6 +96,14 @@
 
 #ifndef IDLE_TASK_STACK_SIZE
 #define IDLE_TASK_STACK_SIZE 2048
+#endif
+
+#ifndef TASK_STACK_WATERMARK_ENABLE
+#define TASK_STACK_WATERMARK_ENABLE 1
+#endif
+
+#ifndef TASK_STACK_OVERFLOW_THRESHOLD
+#define TASK_STACK_OVERFLOW_THRESHOLD 64
 #endif
 
 // IPC
@@ -157,4 +173,11 @@
 #define TERMINAL_TASK_STACK_SIZE 1024
 #endif
 
+// General macros
+#ifndef PANIC
+#define PANIC(msg) v_panic(__FILE__, __LINE__, msg)
+#endif
+#if defined(PANIC) && defined(NAVHAL)
+#include "navhal.h"
+#endif
 #endif // !VAIOS_CONFIG_DEFAULT_H

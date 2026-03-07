@@ -37,6 +37,8 @@ void *v_memcpy(void *dest, const void *src, unsigned int n);
 uint32_t v_strlen(const char *s);
 float v_atof(const char *s);
 
+void v_panic(const char *file, int line, const char *fmt, ...);
+
 int v_strcmp(const char *s1, const char *s2);
 int v_strncmp(const char *s1, const char *s2, int n);
 typedef struct {

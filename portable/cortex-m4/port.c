@@ -1,8 +1,6 @@
 #include "port.h"
 #include "task.h"
 #include "utils.h"
-#include "vaios_config.h"
-#include <stddef.h>
 #include <stdint.h>
 
 extern void v_print(const char *str);
@@ -21,6 +19,25 @@ void v_exit_critical(void) {
     __asm volatile("cpsie i" ::: "memory");
   }
 }
+
+uint32_t v_port_get_psp(void) {
+  uint32_t psp;
+  __asm volatile("mrs %0, psp" : "=r"(psp));
+  return psp;
+}
+
+void v_port_disable_interrupts(void) { __asm volatile("cpsid i" ::: "memory"); }
+
+void v_port_halt(void) {
+  while (1) {
+    __asm volatile("nop");
+  }
+}
+
+#define ICSR (*(volatile uint32_t *)0xE000ED04)
+#define ICSR_PENDSVSET (1 << 28)
+
+void v_port_trigger_pendsv(void) { ICSR |= ICSR_PENDSVSET; }
 
 // Exception stack frame automatically pushed by Cortex-M on exception
 typedef struct {
@@ -106,8 +123,8 @@ void hardfault_handler_c(ExceptionStackFrame *frame, uint32_t *stack_pointer,
   // Optional backtrace: scan 32 words from stack
   print_backtrace(stack_pointer, 32);
 
-  while (1)
-    ;
+  v_panic("HardFault", 0,
+          "System encountered a HardFault! Check above for registers.");
 }
 
 __attribute__((naked)) void HardFault_Handler(void) {
@@ -150,7 +167,7 @@ void task_yield(void) {
 __attribute__((naked)) void scheduler_start(void) {
   __asm volatile(
       "ldr r0, =scheduler_running\n"
-      "mov r1, #123             \n"
+      "mov r1, #1             \n"
       "strb r1, [r0]          \n"
       " ldr r0, =0xE000ED08   \n" /* Use the NVIC offset register to locate the
                                      stack. */

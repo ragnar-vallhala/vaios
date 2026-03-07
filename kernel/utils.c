@@ -1,13 +1,12 @@
 #include "utils.h"
 #include "atomic.h"
+#include "memory.h"
 #include "port.h"
 #include "task.h"
-#include "vaios_config.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #ifdef NAVHAL
-#include "navhal.h"
 #endif
 
 //---------------
@@ -164,6 +163,61 @@ static int itoa_simple(int64_t value, char *buf, int base) {
     return utoa_simple((uint64_t)value, buf, base);
   }
 }
+// Global buffers for panic to avoid using stack when we are overflowing
+static char panic_out_buf[128];
+static char panic_val_buf[64];
+
+static void v_panic_vprintf(const char *fmt, va_list args) {
+  uint32_t out_pos = 0;
+
+#define PANIC_FLUSH()                                                          \
+  if (out_pos > 0) {                                                           \
+    panic_out_buf[out_pos] = '\0';                                             \
+    print(panic_out_buf);                                                      \
+    out_pos = 0;                                                               \
+  }
+
+#define PANIC_PUT(c)                                                           \
+  {                                                                            \
+    if (out_pos >= sizeof(panic_out_buf) - 1)                                  \
+      PANIC_FLUSH();                                                           \
+    panic_out_buf[out_pos++] = (c);                                            \
+  }
+
+  for (const char *p = fmt; *p; p++) {
+    if (*p != '%') {
+      PANIC_PUT(*p);
+      continue;
+    }
+
+    p++;
+    // Simple hex and unsigned handling for panic
+    if (*p == 'u' || *p == 'x' || *p == 'd') {
+      if (*p == 'u') {
+        uint32_t v = va_arg(args, uint32_t);
+        utoa_simple(v, panic_val_buf, 10);
+      } else if (*p == 'x') {
+        uint32_t v = va_arg(args, uint32_t);
+        utoa_simple(v, panic_val_buf, 16);
+      } else {
+        int v = va_arg(args, int);
+        itoa_simple(v, panic_val_buf, 10);
+      }
+      const char *s = panic_val_buf;
+      while (*s)
+        PANIC_PUT(*s++);
+    } else if (*p == 's') {
+      const char *s = va_arg(args, const char *);
+      while (s && *s)
+        PANIC_PUT(*s++);
+    } else {
+      PANIC_PUT('%');
+      PANIC_PUT(*p);
+    }
+  }
+  PANIC_FLUSH();
+}
+
 void vaprint_fmt(const char *fmt, va_list args) {
   char out_buf[128];
   uint32_t out_pos = 0;
@@ -572,7 +626,22 @@ static int module_allowed(const char *msg) {
   return 0; // not allowed
 }
 
+extern uint8_t scheduler_running;
 void v_log(Log_Type type, const char *msg, ...) {
+  // Proactive stack overflow check using live PSP
+  // Minimize overhead to avoid using stack before the check
+  if (scheduler_running && current_task && current_task->magic == TCB_MAGIC) {
+    uint32_t psp = v_port_get_psp();
+    // 300 bytes is safe for most panics, but let's be even safer with 320
+    if (psp != 0 && psp < (uint32_t)current_task->mem_block + 320) {
+      v_panic(__FILE__, __LINE__,
+              "Stack overflow detected in task %u during log! SP: 0x%x, Limit: "
+              "0x%x",
+              (unsigned)current_task->task_id, (unsigned)psp,
+              (unsigned)((uint32_t)current_task->mem_block + 320));
+    }
+  }
+
   if (type < MIN_LOG_LEVEL || !module_allowed(msg))
     return;
 
@@ -814,14 +883,11 @@ void v_log_flush(void) {
 }
 
 volatile uint32_t systick_count = 0;
-#define ICSR (*(volatile uint32_t *)0xE000ED04)
-#define ICSR_PENDSVSET (1 << 28) // Set this to trigger PendSV
-#define ICSR_PENDSVCLR (1 << 27) // Clear PendSV
 extern uint8_t scheduler_running;
 void SysTick_Handler(void) {
   systick_count++;
-  if (scheduler_running == 123) {
-    ICSR |= ICSR_PENDSVSET;
+  if (scheduler_running) {
+    v_port_trigger_pendsv();
   }
 }
 
@@ -862,4 +928,26 @@ uint32_t v_strlen(const char *s) {
     count++;
   }
   return count;
+}
+
+void v_panic(const char *file, int line, const char *fmt, ...) {
+  // Disable interrupts immediately
+  v_port_disable_interrupts();
+
+  v_print("\r\n\x1B[31;1m[KERNEL PANIC]\x1B[0m at ");
+  v_print(file);
+  v_print(":");
+  char line_buf[16];
+  itoa_simple(line, line_buf, 10);
+  v_print(line_buf);
+  v_print("\r\nReason: ");
+
+  va_list args;
+  va_start(args, fmt);
+  v_panic_vprintf(fmt, args);
+  va_end(args);
+
+  v_print("\r\nSystem Halted.\r\n");
+
+  v_port_halt();
 }

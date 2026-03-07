@@ -1,9 +1,7 @@
 #ifndef TASK_H
 #define TASK_H
 
-#include "port.h"
-#include "vaios_config.h"
-#include <stddef.h> // for offsetof
+#include <stddef.h>
 #include <stdint.h>
 
 //-----------------------------------------------------------------------------
@@ -43,7 +41,10 @@ typedef struct Task_Control_Block {
   void *wait_sem;        // Semaphore this task is blocking on (NULL if none)
   struct Task_Control_Block *next; // Next in list (ready/blocked/etc.)
   struct Task_Control_Block *prev; // Prev in list
+  uint32_t magic;                  // Sanity check (must be TCB_MAGIC)
 } TCB;
+
+#define TCB_MAGIC 0x54434221 // "TCB!"
 
 //-----------------------------------------------------------------------------
 // Scheduler Configuration Constants
