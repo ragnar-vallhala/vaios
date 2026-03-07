@@ -2,9 +2,9 @@
 #include "ipc.h"
 #include "memory.h"
 #include "utils.h"
+#include "vaios_config.h"
 #include <stddef.h>
 #include <stdint.h>
-
 //-----------------------------------------------------------------------------
 // Global Variables
 //-----------------------------------------------------------------------------
@@ -242,11 +242,12 @@ void task_exit_request(uint32_t task_id) {
 extern void v_log_flush(void);
 void idle_task_function(void *arg) {
   while (1) {
+#if LOGGING_ENABLED == 1
     for (int i = 0; i < 64; i++)
       v_log_flush();
-
+#endif
     TCB *to_free = NULL;
-
+    
     // Find one terminated task to free under critical section
     ENTER_CRITICAL();
     TCB *task = blocked_list;

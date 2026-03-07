@@ -39,6 +39,9 @@ float v_atof(const char *s);
 
 void v_panic(const char *file, int line, const char *fmt, ...);
 
+// Use safely only if DMA is enabled and you know what you are doing
+void direct_dma_print(const uint8_t *bytes, uint32_t len);
+
 int v_strcmp(const char *s1, const char *s2);
 int v_strncmp(const char *s1, const char *s2, int n);
 typedef struct {
