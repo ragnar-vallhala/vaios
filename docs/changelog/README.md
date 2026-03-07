@@ -15,6 +15,7 @@ Each file covers one discrete issue — root cause, fix, and lesson learned.
 | [improve-hardfault-handler-diagnostics.md](improve-hardfault-handler-diagnostics.md)           | Added CFSR, HFSR, MMFAR, BFAR register dump to HardFault handler for faster root-cause identification                   | Improvement  | 2026-03-05 |
 | [fix-scheduler-get-next-task-ordering.md](fix-scheduler-get-next-task-ordering.md)             | Scheduler re-enqueued `current_task` after picking next task — single-task yield fell through to `idle_task` spuriously | **Medium**   | 2026-03-05 |
 | [improve-memory-protection-and-panic-system.md](improve-memory-protection-and-panic-system.md) | Hardened memory safety via proactive stack monitoring (PSP), heap watermarks, and stack-safe panic reporter             | Improvement  | 2026-03-07 |
+| [improve-portability-and-dma-logging.md](improve-portability-and-dma-logging.md)               | Refactored architecture-specific ASM into portable layer and integrated DMA-backed logging                              | Improvement  | 2026-03-07 |
 
 ## Final Benchmark Results
 

@@ -23,7 +23,7 @@ uint32_t v_strlen(const char *s);
 void v_log_flush(void);
 
 // Double buffering for log messages
-#if LOGGING_ENABLED==1
+#if LOGGING_ENABLED == 1
 // #error "Logging is enabled"
 static uint8_t log_buffer_storage1[LOG_BUFFER_STORAGE_SIZE];
 static uint8_t log_buffer_storage2[LOG_BUFFER_STORAGE_SIZE];
@@ -110,7 +110,7 @@ void direct_dma_print(const uint8_t *bytes, uint32_t len) {
 
 // Callback for DMA completion to release the read lock
 void dma_tx_complete_callback(void) {
-#if LOGGING_ENABLED==1
+#if LOGGING_ENABLED == 1
   atomic_set(&log_buffer_storage_read_lock, 0);
 #endif
 }

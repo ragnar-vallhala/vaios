@@ -37,6 +37,7 @@ void *v_memcpy(void *dest, const void *src, unsigned int n);
 uint32_t v_strlen(const char *s);
 float v_atof(const char *s);
 
+extern volatile uint8_t is_panicking;
 void v_panic(const char *file, int line, const char *fmt, ...);
 
 // Use safely only if DMA is enabled and you know what you are doing

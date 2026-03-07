@@ -12,8 +12,8 @@ int main(){
     v_init();
     v_heap_memory_init();
     scheduler_init();
-    task_create(task1,NULL,512,0);
-    task_create(task1,NULL,512,0);
+    task_create(task1,NULL,600,0);
+    task_create(task1,NULL,600,0);
     scheduler_start();
     while (1)
         ;
