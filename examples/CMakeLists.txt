@@ -33,6 +33,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "STACK_OVERFLOW")
   add_executable(main stack_overflow.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "BENCHMARK")
   add_subdirectory(benchmark)
+elseif(VAIOS_EXAMPLE STREQUAL "BLOCKING")
+  add_executable(main block_wake_task.c ${STARTUP_FILE})
 endif()
 
 if(TARGET main)

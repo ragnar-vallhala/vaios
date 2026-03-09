@@ -105,7 +105,7 @@ void wake_up_delayed_tasks(void); // Decrement and wake as needed
 void task_block(void); // Block current task
 void add_to_blocked_list(TCB *task);
 void remove_from_blocked_list(TCB *task);
-void task_unblock(TCB *task);
+void task_unblock(uint32_t task_id);
 
 //-----------------------------------------------------------------------------
 // Scheduler Initialization and Control

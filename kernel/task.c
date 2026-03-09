@@ -42,6 +42,7 @@ void enqueue_task(TCB **list, TCB *task) {
   if (!task)
     return;
 
+  ENTER_CRITICAL();
   task->next = NULL;
   task->prev = NULL;
 
@@ -55,12 +56,14 @@ void enqueue_task(TCB **list, TCB *task) {
     curr->next = task;
     task->prev = curr;
   }
+  EXIT_CRITICAL();
 }
 
 void remove_task(TCB **list, TCB *task) {
   if (!task || !*list)
     return;
 
+  ENTER_CRITICAL();
   if (*list == task) {
     *list = task->next;
     if (*list)
@@ -76,6 +79,7 @@ void remove_task(TCB **list, TCB *task) {
 
   task->next = NULL;
   task->prev = NULL;
+  EXIT_CRITICAL();
 }
 
 TCB *dequeue_task(TCB **list) {
@@ -95,9 +99,11 @@ void add_to_ready_list(TCB *task) {
     return;
   TCB **head = &ready_lists[task->priority];
 
+  ENTER_CRITICAL();
   enqueue_task(head, task);
   rb_set(task->priority);
   task->status = TASK_READY;
+  EXIT_CRITICAL();
 }
 
 void remove_from_ready_list(TCB *task) {
@@ -106,8 +112,11 @@ void remove_from_ready_list(TCB *task) {
 
   TCB **head = &ready_lists[task->priority];
 
-  if (*head == NULL)
+  ENTER_CRITICAL();
+  if (*head == NULL) {
+    EXIT_CRITICAL();
     return;
+  }
 
   remove_task(head, task);
   if (*head == NULL)
@@ -115,6 +124,7 @@ void remove_from_ready_list(TCB *task) {
 
   task->next = NULL;
   task->prev = NULL;
+  EXIT_CRITICAL();
 }
 
 TCB *get_highest_priority_task(void) {
@@ -247,7 +257,7 @@ void idle_task_function(void *arg) {
       v_log_flush();
 #endif
     TCB *to_free = NULL;
-    
+
     // Find one terminated task to free under critical section
     ENTER_CRITICAL();
     TCB *task = blocked_list;
@@ -292,13 +302,18 @@ void task_delay(uint32_t ticks) {
     return;
   if (ticks == 0)
     return;
+
+  ENTER_CRITICAL();
   current_task->delay_ticks = v_get_ticks() + ticks;
   current_task->status = TASK_DELAYED;
   add_to_delayed_list(current_task);
+  EXIT_CRITICAL();
+
   task_yield();
 }
 
 void wake_up_delayed_tasks(void) {
+  ENTER_CRITICAL();
   // 1. Wake tasks sleeping via task_delay() (in delayed_list)
   TCB *task = delayed_list;
   while (task) {
@@ -347,7 +362,10 @@ void wake_up_delayed_tasks(void) {
     }
     task = next;
   }
+  EXIT_CRITICAL();
 }
+
+//-----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
 // Blocked Task Management
@@ -355,8 +373,19 @@ void wake_up_delayed_tasks(void) {
 void task_block(void) {
   if (current_task == idle_task)
     return;
-  current_task->status = TASK_BLOCKED;
+
+  ENTER_CRITICAL();
+  if (current_task->status == TASK_BLOCKED) {
+    EXIT_CRITICAL();
+    return;
+  }
+  if (current_task->status == TASK_DELAYED)
+    remove_from_delayed_list(current_task);
+  if (current_task->status == TASK_READY)
+    remove_from_ready_list(current_task);
   add_to_blocked_list(current_task);
+  EXIT_CRITICAL();
+
   task_yield();
 }
 
@@ -371,12 +400,19 @@ void remove_from_blocked_list(TCB *task) {
   task->prev = NULL;
 }
 
-void task_unblock(TCB *task) {
-  if (!task || task->status != TASK_BLOCKED)
+void task_unblock(uint32_t task_id) {
+  ENTER_CRITICAL();
+  TCB *task = get_task_by_id(task_id);
+  if (!task || task->status != TASK_BLOCKED) {
+    EXIT_CRITICAL();
     return;
+  }
   remove_from_blocked_list(task);
   task->status = TASK_READY;
   add_to_ready_list(task);
+  EXIT_CRITICAL();
+
+  task_yield();
 }
 
 //-----------------------------------------------------------------------------
@@ -406,28 +442,38 @@ uint32_t get_context_switch_count(void) { return context_switch_count; }
 
 uint32_t get_idle_tick_count(void) { return idle_task->ticks_run; }
 TCB *get_task_by_id(uint32_t task_id) {
-  if (current_task->task_id == task_id)
+  ENTER_CRITICAL();
+  if (current_task->task_id == task_id) {
+    EXIT_CRITICAL();
     return current_task;
+  }
   for (int i = 0; i < MAX_PRIORITY; i++) {
     TCB *curr = ready_lists[i];
     while (curr) {
-      if (curr->task_id == task_id)
+      if (curr->task_id == task_id) {
+        EXIT_CRITICAL();
         return curr;
+      }
       curr = curr->next;
     }
   }
   TCB *curr = blocked_list;
   while (curr) {
-    if (curr->task_id == task_id)
+    if (curr->task_id == task_id) {
+      EXIT_CRITICAL();
       return curr;
+    }
     curr = curr->next;
   }
   curr = delayed_list;
   while (curr) {
-    if (curr->task_id == task_id)
+    if (curr->task_id == task_id) {
+      EXIT_CRITICAL();
       return curr;
+    }
     curr = curr->next;
   }
+  EXIT_CRITICAL();
   return NULL;
 }
 uint32_t get_task_run_time(TCB *task) {
