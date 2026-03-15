@@ -891,8 +891,10 @@ void v_log_flush(void) {
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
+extern volatile uint64_t systick_ticks;
 void SysTick_Handler(void) {
   systick_count++;
+  systick_ticks++;
   if (scheduler_running) {
     v_port_trigger_pendsv();
   }
