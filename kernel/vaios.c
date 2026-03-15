@@ -83,13 +83,18 @@ void v_start(void) {
   // start_scheduler();
   // scheduler_state = SCHEDULER_RUNNING;
 }
+extern uint8_t scheduler_running;
 void v_delay(uint32_t ms) {
   uint32_t delay_ticks = (ms * 1000) / SYSTICK_PERIOD;
-  task_delay(delay_ticks);
-
-  // Busy wait
-  // while (systick_count < initial_ticks + delay_ticks)
-  //   ;
+  if (scheduler_running) {
+    task_delay(delay_ticks);
+  } else {
+    // Busy wait if scheduler is not running (e.g., during sensor init)
+    uint32_t initial_ticks = systick_count;
+    while (systick_count < initial_ticks + delay_ticks) {
+      __asm volatile("nop");
+    }
+  }
 }
 
 // void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }

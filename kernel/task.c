@@ -298,6 +298,8 @@ void remove_from_delayed_list(TCB *task) {
 }
 
 void task_delay(uint32_t ticks) {
+  if (current_task == NULL)
+    v_panic(__FILE__, __LINE__, "current_task is NULL");
   if (current_task == idle_task)
     return;
   if (ticks == 0)
