@@ -42,9 +42,6 @@ void _qemu_systick_init_ms(uint32_t period_ms) {
 extern uint32_t systick_count;
 
 void v_init(void) {
-#ifdef _FPU_ENABLED
-  hal_fpu_enable();
-#endif
   // resetting global variables
   systick_count = 0;
 #ifdef NAVHAL
@@ -56,8 +53,8 @@ void v_init(void) {
   hal_set_interrupt_priority(SysTick_IRQn, 14);
   hal_set_interrupt_priority(PendSV_IRQn, 15);
 
-#if UART_LOGGING_ENABLE == 1
   uart2_init(UART_BAUDRATE);
+#if UART_LOGGING_ENABLE == 1
 #if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA) &&                     \
     (BUFFERED_LOGGING == 1)
   hal_interrupt_attach_callback(DMA1_Stream6_IRQn, dma_tx_complete_callback);
