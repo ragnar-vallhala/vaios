@@ -33,6 +33,7 @@ static volatile uint32_t write_pos = 0;
  * Writer: seek to write_pos, write in-place, sync, close, advance.
  * The FAT chain is already allocated — no FAT update during the write.
  * ------------------------------------------------------------------ */
+static volatile uint8_t started = 0;
 void writer_task(void *arg) {
   while (1) {
     v_log(LOG_INFO, "[Writer] Opening file for in-place write at pos %d...",
@@ -45,6 +46,7 @@ void writer_task(void *arg) {
       int written = vfs_write(fd, TEST_DATA, TEST_DATA_LEN);
       vfs_sync(fd);
       vfs_close(fd);
+      started = 1;
       v_log(LOG_INFO, "[Writer] Wrote %d bytes.", written);
 
       /* Advance write cursor circularly — only AFTER close so reader is safe */
@@ -65,6 +67,10 @@ void writer_task(void *arg) {
 void reader_task(void *arg) {
   char read_buf[32];
   while (1) {
+    if (!started) {
+      task_yield();
+      continue;
+    }
     /* Compute read position: the slot just before the current write cursor.
      * Adding LOG_FILE_SIZE before subtracting handles the wrap-around case. */
     uint32_t read_pos =

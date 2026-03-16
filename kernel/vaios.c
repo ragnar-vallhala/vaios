@@ -97,7 +97,7 @@ void v_system_init(void) {
   scheduler_init();
 
   /* 3. SDIO Init: clock_div is auto-calculated from the system clock */
-  hal_sdio_config_t sd_config = {.clock_div = 0, .bus_width = 1};
+  hal_sdio_config_t sd_config = {.clock_div = 118, .bus_width = 1};
   if (sdio_init(&sd_config) != HAL_SDIO_OK) {
     v_log(LOG_ERROR, "SDIO Peripheral Init Failed!");
     while (1)
