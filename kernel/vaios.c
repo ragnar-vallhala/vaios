@@ -1,7 +1,8 @@
-#include "vaios.h"
+#include "memory.h"
 #include "task.h"
 #include "utils.h"
 #include "vaios_config.h"
+#include "vfs.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -46,6 +47,15 @@ void v_init(void) {
   systick_count = 0;
 #ifdef NAVHAL
 #ifdef CORTEX_M4
+  /* Setup clocks */
+  hal_pll_config_t pll_cfg = {.input_src = HAL_CLOCK_SOURCE_HSI,
+                              .pll_m = 16,
+                              .pll_n = 336,
+                              .pll_p = 4,
+                              .pll_q = 7};
+  hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL};
+  hal_clock_init(&clk_cfg, &pll_cfg);
+
 #ifdef _FPU_ENABLED
   hal_fpu_enable();
 #endif
@@ -76,6 +86,44 @@ void v_init(void) {
 #endif
 }
 // extern void start_scheduler(void);
+
+void v_system_init(void) {
+#ifdef NAVHAL
+  /* 1. Core VAIOS Init (Clocks, SysTick, UART, etc.) */
+  v_init();
+
+  /* 2. Memory & Scheduler Init */
+  v_heap_memory_init();
+  scheduler_init();
+
+  /* 3. SDIO Init: clock_div is auto-calculated from the system clock */
+  hal_sdio_config_t sd_config = {.clock_div = 118, .bus_width = 1};
+  if (sdio_init(&sd_config) != HAL_SDIO_OK) {
+    v_log(LOG_ERROR, "SDIO Peripheral Init Failed!");
+    while (1)
+      ;
+  }
+
+  /* 4. SD Card Handshake */
+  if (sdio_card_init() != HAL_SDIO_OK) {
+    v_log(LOG_ERROR, "SD Card Handshake Failed!");
+    while (1)
+      ;
+  }
+
+  /* 5. Mount FatFS via the thread-safe VFS layer */
+  if (vfs_init() != 0) {
+    v_log(LOG_ERROR, "Failed to initialize VFS.");
+    while (1)
+      ;
+  }
+#else
+  v_init();
+  v_heap_memory_init();
+  scheduler_init();
+#endif
+}
+
 void v_start(void) {
   // start_scheduler();
   // scheduler_state = SCHEDULER_RUNNING;

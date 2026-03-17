@@ -66,7 +66,7 @@
 
 // Memory
 #ifndef MAIN_STACK_SIZE
-#define MAIN_STACK_SIZE 512
+#define MAIN_STACK_SIZE 1024
 #endif
 
 #ifndef HEAP_SIZE

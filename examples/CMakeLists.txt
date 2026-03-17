@@ -35,12 +35,15 @@ elseif(VAIOS_EXAMPLE STREQUAL "BENCHMARK")
   add_subdirectory(benchmark)
 elseif(VAIOS_EXAMPLE STREQUAL "BLOCKING")
   add_executable(main block_wake_task.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "VFS_CONCURRENT")
+  add_executable(main vfs_concurrent.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "VFS_PERF")
+  add_executable(main vfs_perf.c ${STARTUP_FILE})
 endif()
 
 if(TARGET main)
   if(NAVHAL)
     target_link_libraries(main PRIVATE
-        hal
         -lgcc
         -lm
         vaios
