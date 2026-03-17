@@ -6,7 +6,7 @@
 #include <task.h>
 
 #define PERF_FILE "0:perf.bin"
-#define BUFFER_SIZE (2*1024)     /* 16KB buffer */
+#define BUFFER_SIZE (2 * 1024)      /* 16KB buffer */
 #define TEST_SIZE (1 * 1024 * 1024) /* 1MB test file */
 
 static uint8_t data_buf[BUFFER_SIZE] __attribute__((aligned(4)));
@@ -105,9 +105,11 @@ void perf_task(void *arg) {
 }
 
 int main(void) {
-  v_system_init();
+  vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                             .internal_sd_card_setup = 1};
+  v_system_init(&cfg);
   uart2_write_string("VAIOS Boot Successful");
-  
+
   /* 8KB stack for safety */
   task_create(perf_task, NULL, 8192, 1);
 

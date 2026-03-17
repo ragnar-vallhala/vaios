@@ -106,7 +106,9 @@ void reader_task(void *arg) {
 int main(void) {
   /* Initialize entire system: Clock, UART, SysTick, Heap, Scheduler, SDIO, VFS
    */
-  v_system_init();
+  vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                             .internal_sd_card_setup = 1};
+  v_system_init(&cfg);
 
   uart2_write_string("[MAIN] v_system_init done\r\n");
 
