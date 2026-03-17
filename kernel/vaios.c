@@ -1,3 +1,4 @@
+#include "vaios.h"
 #include "memory.h"
 #include "task.h"
 #include "utils.h"
@@ -42,19 +43,21 @@ void _qemu_systick_init_ms(uint32_t period_ms) {
 
 extern uint32_t systick_count;
 
-void v_init(void) {
+void v_init(vaios_init_config_t *cfg) {
   // resetting global variables
   systick_count = 0;
 #ifdef NAVHAL
 #ifdef CORTEX_M4
   /* Setup clocks */
-  hal_pll_config_t pll_cfg = {.input_src = HAL_CLOCK_SOURCE_HSI,
-                              .pll_m = 16,
-                              .pll_n = 336,
-                              .pll_p = 4,
-                              .pll_q = 7};
-  hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL};
-  hal_clock_init(&clk_cfg, &pll_cfg);
+  if (cfg->internal_clock_setup == 1) {
+    hal_pll_config_t pll_cfg = {.input_src = HAL_CLOCK_SOURCE_HSI,
+                                .pll_m = 16,
+                                .pll_n = 336,
+                                .pll_p = 4,
+                                .pll_q = 7};
+    hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL};
+    hal_clock_init(&clk_cfg, &pll_cfg);
+  }
 
 #ifdef _FPU_ENABLED
   hal_fpu_enable();
@@ -87,35 +90,37 @@ void v_init(void) {
 }
 // extern void start_scheduler(void);
 
-void v_system_init(void) {
+void v_system_init(vaios_init_config_t *cfg) {
 #ifdef NAVHAL
   /* 1. Core VAIOS Init (Clocks, SysTick, UART, etc.) */
-  v_init();
+  v_init(cfg);
 
   /* 2. Memory & Scheduler Init */
   v_heap_memory_init();
   scheduler_init();
+  if (cfg->internal_sd_card_setup) {
 
-  /* 3. SDIO Init: clock_div is auto-calculated from the system clock */
-  hal_sdio_config_t sd_config = {.clock_div = 118, .bus_width = 1};
-  if (sdio_init(&sd_config) != HAL_SDIO_OK) {
-    v_log(LOG_ERROR, "SDIO Peripheral Init Failed!");
-    while (1)
-      ;
-  }
+    /* 3. SDIO Init: clock_div is auto-calculated from the system clock */
+    hal_sdio_config_t sd_config = {.clock_div = 118, .bus_width = 1};
+    if (sdio_init(&sd_config) != HAL_SDIO_OK) {
+      v_log(LOG_ERROR, "SDIO Peripheral Init Failed!");
+      while (1)
+        ;
+    }
 
-  /* 4. SD Card Handshake */
-  if (sdio_card_init() != HAL_SDIO_OK) {
-    v_log(LOG_ERROR, "SD Card Handshake Failed!");
-    while (1)
-      ;
-  }
+    /* 4. SD Card Handshake */
+    if (sdio_card_init() != HAL_SDIO_OK) {
+      v_log(LOG_ERROR, "SD Card Handshake Failed!");
+      while (1)
+        ;
+    }
 
-  /* 5. Mount FatFS via the thread-safe VFS layer */
-  if (vfs_init() != 0) {
-    v_log(LOG_ERROR, "Failed to initialize VFS.");
-    while (1)
-      ;
+    /* 5. Mount FatFS via the thread-safe VFS layer */
+    if (vfs_init() != 0) {
+      v_log(LOG_ERROR, "Failed to initialize VFS.");
+      while (1)
+        ;
+    }
   }
 #else
   v_init();
