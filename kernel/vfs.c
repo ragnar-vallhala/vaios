@@ -88,6 +88,15 @@ int vfs_sync(vfs_fd_t fd) {
 }
 
 int vfs_preallocate(const char *path, uint32_t size) {
-  /* Called at boot before scheduler starts — do not lock. */
-  return v_preallocate(path, size);
+  vfs_lock();
+  int res = v_preallocate(path, size);
+  vfs_unlock();
+  return res;
+}
+
+long vfs_size(vfs_fd_t fd) {
+  vfs_lock();
+  long res = v_lseek((v_fd_t)fd, 0, VFS_SEEK_END);
+  vfs_unlock();
+  return res;
 }

@@ -180,4 +180,5 @@
 #if defined(PANIC) && defined(NAVHAL)
 #include "navhal.h"
 #endif
+#include "utils.h"
 #endif // !VAIOS_CONFIG_DEFAULT_H

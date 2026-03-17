@@ -33,6 +33,7 @@ int vfs_mkdir(const char *path);
 int vfs_unlink(const char *path);
 int vfs_sync(vfs_fd_t fd);
 int vfs_preallocate(const char *path, uint32_t size);
+long vfs_size(vfs_fd_t fd);
 
 #ifdef __cplusplus
 }
