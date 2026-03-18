@@ -132,9 +132,9 @@ extern TCB *current_task;
 #define IS_TASK_DELAYED(t) ((t) && (t)->status == TASK_DELAYED)
 #define IS_TASK_TERMINATED(t) ((t) && (t)->status == TASK_TERMINATED)
 
-#define GET_CURRENT_TASK_ID() (current_task ? current_task->task_id : 0u)
+#define GET_CURRENT_TASK_ID() (current_task ? current_task->task_id : -1)
 #define GET_CURRENT_PRIORITY()                                                 \
-  (current_task ? current_task->priority : IDLE_PRIORITY)
+  (current_task ? current_task->priority : -1)
 
 // Stack alignment (STACK_ALIGN_SIZE provided by config.h)
 #define ALIGN_STACK_SIZE(sz)                                                   \
