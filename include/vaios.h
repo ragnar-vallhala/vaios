@@ -4,7 +4,7 @@
 typedef struct {
   uint8_t internal_clock_setup; // 0: if vaios default clock setup is used else
                                 // 1 if user setups own clock
-  uint8_t internal_sd_card_setup; // 0: if vaios default sd card setup is is
+  uint8_t internal_sd_card_setup; // 0: if vaios default sd card setup is
                                   // used else 1 if user setups own sd card
 } vaios_init_config_t;
 void v_init(vaios_init_config_t *cfg);
