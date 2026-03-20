@@ -567,6 +567,14 @@ void print_fmt(const char *fmt, ...) {
   va_end(args);
 }
 
+int print_fmt_buf(char *out, uint32_t out_size, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  int len = vaprint_fmt_buf(out, out_size, fmt, args);
+  va_end(args);
+  return len;
+}
+
 static int string_equal(const char *a, const char *b) {
   while (*a && *b) {
     if (*a != *b)

@@ -4,6 +4,7 @@
 #include <stdint.h>
 void print(const char *str);
 void print_fmt(const char *fmt, ...);
+int print_fmt_buf(char *out, uint32_t out_size, const char *fmt, ...);
 
 uint32_t v_get_ticks(void);
 
