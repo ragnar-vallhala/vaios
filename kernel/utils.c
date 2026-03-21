@@ -272,6 +272,16 @@ void vaprint_fmt(const char *fmt, va_list args) {
       p++;
     }
 
+    int precision = -1;
+    if (*p == '.') {
+      p++;
+      precision = 0;
+      while (*p >= '0' && *p <= '9') {
+        precision = precision * 10 + (*p - '0');
+        p++;
+      }
+    }
+
     // Handle specifiers
     switch (*p) {
     case 'd': // signed int
@@ -299,8 +309,9 @@ void vaprint_fmt(const char *fmt, va_list args) {
     case 'f': { // floating point
       double v = va_arg(args, double);
 
-      // Default precision: 6 decimal places
-      int precision = 6;
+      // Default precision: 6 decimal places if not specified
+      if (precision < 0)
+        precision = 6;
       if (v < 0.0) {
         PUT_CHAR_BUF('-');
         v = -v;
@@ -433,6 +444,16 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
       p++;
     }
 
+    int precision = -1;
+    if (*p == '.') {
+      p++;
+      precision = 0;
+      while (*p >= '0' && *p <= '9') {
+        precision = precision * 10 + (*p - '0');
+        p++;
+      }
+    }
+
     // Handle specifiers
     switch (*p) {
     case 'd': {
@@ -457,7 +478,8 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
     }
     case 'f': {
       double v = va_arg(args, double);
-      int precision = 6;
+      if (precision < 0)
+        precision = 6;
 
       if (v < 0.0) {
         if (pos < out_size - 1)
@@ -471,7 +493,8 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
       itoa_simple(int_part, buffer, 10);
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
         out[pos++] = buffer[i];
-      out[pos++] = '.';
+      if (pos < out_size - 1)
+        out[pos++] = '.';
 
       for (int i = 0; i < precision && pos < out_size - 1; i++) {
         frac_part *= 10.0;
