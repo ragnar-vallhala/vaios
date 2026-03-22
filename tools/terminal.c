@@ -72,6 +72,7 @@ int convert_baud(int baud) {
         case 38400: return B38400;
         case 57600: return B57600;
         case 115200: return B115200;
+        case 230400: return B230400;
         default:
             fprintf(stderr, "Unsupported baud: %d\n", baud);
             exit(1);

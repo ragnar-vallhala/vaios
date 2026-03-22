@@ -17,7 +17,7 @@
 
 #define SYSTICK_PERIOD 1000 // in microseconds
 #define UART_LOGGING_ENABLE 1
-#define UART_BAUDRATE 115200
+#define UART_BAUDRATE 921600
 #define LOGGING_ENABLED 1
 
 // Interrupts
