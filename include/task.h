@@ -133,8 +133,7 @@ extern TCB *current_task;
 #define IS_TASK_TERMINATED(t) ((t) && (t)->status == TASK_TERMINATED)
 
 #define GET_CURRENT_TASK_ID() (current_task ? current_task->task_id : -1)
-#define GET_CURRENT_PRIORITY()                                                 \
-  (current_task ? current_task->priority : -1)
+#define GET_CURRENT_PRIORITY() (current_task ? current_task->priority : -1)
 
 // Stack alignment (STACK_ALIGN_SIZE provided by config.h)
 #define ALIGN_STACK_SIZE(sz)                                                   \
@@ -142,7 +141,8 @@ extern TCB *current_task;
 
 // Delay helpers (map to ticks; define MS_TO_TICKS in config.h if desired)
 #ifndef MS_TO_TICKS
-#define MS_TO_TICKS(ms) (ms) // fallback: assume 1 ms == 1 tick
+#define MS_TO_TICKS(ms)                                                        \
+  ((ms * 1000 )/ SYSTICK_PERIOD) // systick in us
 #endif
 
 #define TASK_DELAY_MS(ms) task_delay(MS_TO_TICKS(ms))
