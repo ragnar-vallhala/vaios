@@ -15,7 +15,7 @@ void v_heap_memory_init(void) {
   // for (uint8_t *ptr = (uint8_t *)heap_mem_head;
   //      ptr - (uint8_t *)heap_mem_head < HEAP_SIZE; ptr++)
   //   *ptr = 0;
-  v_memset(heap_mem_head, HEAP_SIZE, 0);
+  v_memset(heap_mem_head, 0, HEAP_SIZE);
 
   allocation_size = 0;
   allocation_count = 0;

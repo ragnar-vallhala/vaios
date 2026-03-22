@@ -36,26 +36,9 @@ static atomic_t log_buffer_storage_read_lock = {.counter = 0};
 static volatile uint16_t log_buffer_size_to_read = 0;
 #endif // !LOGGING_ENABLED
 
-int v_strcmp(const char *s1, const char *s2) {
-  while (*s1 && (*s1 == *s2)) {
-    s1++;
-    s2++;
-  }
-  return *(const unsigned char *)s1 - *(const unsigned char *)s2;
-}
-int v_strncmp(const char *s1, const char *s2, int n) {
-  while (n > 0) {
-    if (*s1 != *s2) {
-      return *(const unsigned char *)s1 - *(const unsigned char *)s2;
-    }
-    if (*s1 == '\0') {
-      return 0;
-    }
-    s1++;
-    s2++;
-    n--;
-  }
-  return 0;
+inline int v_strcmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
+inline int v_strncmp(const char *s1, const char *s2, int n) {
+  return strncmp(s1, s2, n);
 }
 
 float v_atof(const char *s) {
@@ -939,34 +922,10 @@ void *v_memset(void *s, int c, unsigned int n) {
   return memset(s, c, n);
 }
 void *v_memcpy(void *dest, const void *src, unsigned int n) {
-  uint8_t *d = (uint8_t *)dest;
-  const uint8_t *s = (const uint8_t *)src;
-
-  // Handle trivial case
-  if (dest == src || n == 0)
-    return dest;
-
-  // If dest < src, copy forward
-  if (d < s) {
-    for (unsigned int i = 0; i < n; i++)
-      d[i] = s[i];
-  } else {
-    // Overlapping regions — copy backwards
-    for (unsigned int i = n; i != 0; i--)
-      d[i - 1] = s[i - 1];
-  }
-
-  return dest;
+  return memcpy(dest, src, n);
 }
-uint32_t v_strlen(const char *s) {
-  if (!s)
-    return 0;
-  uint32_t count = 0;
-  while (s[count] != '\0' && count != ~(0)) {
-    count++;
-  }
-  return count;
-}
+
+uint32_t v_strlen(const char *s) { return strlen(s); }
 
 void v_panic(const char *file, int line, const char *fmt, ...) {
   // Disable interrupts immediately
