@@ -3,9 +3,11 @@
 #include "memory.h"
 #include "port.h"
 #include "task.h"
+#include "utils/util.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #ifdef NAVHAL
 #endif
 
@@ -934,11 +936,7 @@ void SysTick_Handler(void) {
 uint32_t v_get_ticks(void) { return systick_count; }
 
 void *v_memset(void *s, int c, unsigned int n) {
-  uint8_t *p = (uint8_t *)s;
-  for (unsigned int i = 0; i < n; i++) {
-    p[i] = (uint8_t)c;
-  }
-  return s;
+  return memset(s, c, n);
 }
 void *v_memcpy(void *dest, const void *src, unsigned int n) {
   uint8_t *d = (uint8_t *)dest;
