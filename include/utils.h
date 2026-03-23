@@ -1,9 +1,13 @@
 #ifndef VAIOS_UTILS_H
 #define VAIOS_UTILS_H
 #include "vaios_config.h"
+#include <stdarg.h>
 #include <stdint.h>
+#include "stddef.h"
 void print(const char *str);
 void print_fmt(const char *fmt, ...);
+int print_fmt_buf(char *out, uint32_t out_size, const char *fmt, ...);
+int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args);
 
 uint32_t v_get_ticks(void);
 

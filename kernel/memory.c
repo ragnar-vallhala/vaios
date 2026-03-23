@@ -1,6 +1,7 @@
 #include "memory.h"
 #include "port.h"
 #include "utils.h"
+#include "vaios_config_default.h"
 #include <stdint.h>
 
 extern uint32_t _heap_start;
@@ -10,11 +11,11 @@ Heap_Mem_Block *heap_mem_head = NULL;
 
 void v_heap_memory_init(void) {
   heap_mem_head = (Heap_Mem_Block *)&_heap_start;
-
   // Clear heap region so uninitialized area has magic==0
-  for (uint8_t *ptr = (uint8_t *)heap_mem_head;
-       ptr - (uint8_t *)heap_mem_head < HEAP_SIZE; ptr++)
-    *ptr = 0;
+  // for (uint8_t *ptr = (uint8_t *)heap_mem_head;
+  //      ptr - (uint8_t *)heap_mem_head < HEAP_SIZE; ptr++)
+  //   *ptr = 0;
+  v_memset(heap_mem_head, 0, HEAP_SIZE);
 
   allocation_size = 0;
   allocation_count = 0;

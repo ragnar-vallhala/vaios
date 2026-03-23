@@ -22,9 +22,9 @@ void stack_overflow_task(void *args) {
 }
 
 int main() {
-  v_init();
-  v_heap_memory_init();
-  scheduler_init();
+  vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                             .internal_sd_card_setup = 1};
+  v_system_init(&cfg);
 
   v_log(LOG_INFO, "Starting Stack Overflow Example");
 
