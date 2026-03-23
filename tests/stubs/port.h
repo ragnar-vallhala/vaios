@@ -18,6 +18,9 @@
 #define EXIT_CRITICAL()                                                        \
   do {                                                                         \
   } while (0)
+#define V_PORT_MB()                                                            \
+  do {                                                                         \
+  } while (0)
 
 /* Cortex-M4 initial stack frame constants (same values as the real header) */
 #define INITIAL_XPSR 0x01000000UL

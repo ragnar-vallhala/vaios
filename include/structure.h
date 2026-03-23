@@ -14,15 +14,29 @@ extern "C" {
  * SPSC FIFO (Single Producer, Single Consumer) - Lock-free
  * -------------------------------------------------------------------------- */
 
+typedef enum {
+  SPSC_POLICY_DROP = 0,     /* Default: drop new items if queue is full */
+  SPSC_POLICY_OVERWRITE = 1 /* Overwrite oldest items if queue is full */
+} spsc_policy_t;
+
 typedef struct {
   void *buffer;
   size_t capacity;
   size_t elem_size;
   volatile size_t head;
   volatile size_t tail;
+  spsc_policy_t policy;
 } spsc_fifo_t;
 
+/**
+ * @brief Initialize SPSC FIFO.
+ * @note buffer should be aligned to elem_size for optimal performance and
+ * safety.
+ * @note capacity must be at least 2.
+ */
 void spsc_init(spsc_fifo_t *f, void *buffer, size_t capacity, size_t elem_size);
+void spsc_set_policy(spsc_fifo_t *f, spsc_policy_t policy);
+
 size_t spsc_write(spsc_fifo_t *f, const void *items, size_t count);
 size_t spsc_read(spsc_fifo_t *f, void *out, size_t count);
 size_t spsc_available(const spsc_fifo_t *f); /* elements available to read */
@@ -45,9 +59,9 @@ typedef struct {
   void *buffer;
   size_t capacity;
   size_t elem_size;
-  size_t head;
-  size_t tail;
-  size_t count;
+  volatile size_t head;
+  volatile size_t tail;
+  volatile size_t count;
   MutexHandle_t lock;
   SemaphoreHandle_t not_empty;
   SemaphoreHandle_t not_full;
