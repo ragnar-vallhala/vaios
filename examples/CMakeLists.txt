@@ -41,6 +41,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "VFS_PERF")
   add_executable(main vfs_perf.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "SD_WRITE_TEST")
   add_executable(main writing_sd_test.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "PRIORITY_INVERSION")
+  add_executable(main priority_inversion.c ${STARTUP_FILE})
 endif()
 
 if(TARGET main)

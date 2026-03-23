@@ -28,17 +28,18 @@ typedef enum {
 // Task Control Block (TCB) Structure
 //-----------------------------------------------------------------------------
 typedef struct Task_Control_Block {
-  uint32_t *sp;          // Current stack pointer (PSP)
-  uint32_t *mem_block;   // Base of allocated stack memory
-  void *arg;             // Task argument
-  void (*entry)(void *); // Task entry function
-  uint32_t stack_size;   // Stack size in bytes
-  uint32_t task_id;      // Unique task identifier
-  uint32_t delay_ticks;  // Absolute wakeup tick (deadline)
-  uint32_t ticks_run;    // Total ticks executed (stats)
-  uint32_t priority;     // Priority (0..MAX_PRIORITY)
-  Task_Status status;    // Current status
-  void *wait_sem;        // Semaphore this task is blocking on (NULL if none)
+  uint32_t *sp;           // Current stack pointer (PSP)
+  uint32_t *mem_block;    // Base of allocated stack memory
+  void *arg;              // Task argument
+  void (*entry)(void *);  // Task entry function
+  uint32_t stack_size;    // Stack size in bytes
+  uint32_t task_id;       // Unique task identifier
+  uint32_t delay_ticks;   // Absolute wakeup tick (deadline)
+  uint32_t ticks_run;     // Total ticks executed (stats)
+  uint32_t priority;      // Current priority (0..MAX_PRIORITY)
+  uint32_t base_priority; // Base priority for inheritance
+  Task_Status status;     // Current status
+  void *wait_sem;         // Semaphore this task is blocking on (NULL if none)
   struct Task_Control_Block *next; // Next in list (ready/blocked/etc.)
   struct Task_Control_Block *prev; // Prev in list
   uint32_t magic;                  // Sanity check (must be TCB_MAGIC)
@@ -84,6 +85,7 @@ TCB *get_next_task(void);           // Called by context switch handler
 void set_next_task(void);           // Select next task to run
 void load_next_task_from_isr(void); // ISR-safe trigger to switch
 void task_yield(void);              // Voluntary yield (port.c)
+void task_change_priority(TCB *task, uint32_t new_priority);
 __attribute__((noreturn)) void task_exit(void);
 
 //-----------------------------------------------------------------------------

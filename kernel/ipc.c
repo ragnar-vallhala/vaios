@@ -77,16 +77,23 @@ v_semaphore_create_counting_static(uint32_t max_count, uint32_t initial_count,
 }
 
 MutexHandle_t v_mutex_create(void) {
-  sema_t *mtx = (sema_t *)v_malloc(sizeof(sema_t));
+  rmutex_t *mtx = (rmutex_t *)v_malloc(sizeof(rmutex_t));
   if (!mtx)
     return NULL;
-  return (MutexHandle_t)sema_init(mtx, 1, 1); // unlocked
+  sema_init(&mtx->base, 1, 1);
+  mtx->owner = NULL;
+  mtx->recursion_count = 0;
+  return (MutexHandle_t)mtx;
 }
 
 MutexHandle_t v_mutex_create_static(StaticSemaphore_t *pxBuffer) {
   if (!pxBuffer)
     return NULL;
-  return (MutexHandle_t)sema_init((sema_t *)pxBuffer, 1, 1);
+  rmutex_t *mtx = (rmutex_t *)pxBuffer;
+  sema_init(&mtx->base, 1, 1);
+  mtx->owner = NULL;
+  mtx->recursion_count = 0;
+  return (MutexHandle_t)mtx;
 }
 
 MutexHandle_t v_mutex_create_recursive(void) {
@@ -157,7 +164,25 @@ int v_semaphore_take(SemaphoreHandle_t sem, uint32_t ticks_to_wait) {
 int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   if (!mtx)
     return VA_FAIL;
-  return semaphore_take_common((sema_t *)mtx, ticks_to_wait);
+  rmutex_t *rm = (rmutex_t *)mtx;
+  TCB *current = get_current_task();
+
+  ENTER_CRITICAL();
+  // Priority Inheritance: Boost owner if current task has higher priority
+  if (rm->owner && rm->owner->priority < current->priority) {
+    task_change_priority(rm->owner, current->priority);
+  }
+  EXIT_CRITICAL();
+
+  int res = semaphore_take_common(&rm->base, ticks_to_wait);
+
+  if (res == VA_PASS) {
+    ENTER_CRITICAL();
+    rm->owner = current;
+    rm->recursion_count = 1;
+    EXIT_CRITICAL();
+  }
+  return res;
 }
 
 static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
@@ -207,7 +232,25 @@ int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
 int v_mutex_unlock(MutexHandle_t mtx) {
   if (!mtx)
     return VA_FAIL;
-  return semaphore_give_common((sema_t *)mtx, NULL);
+  rmutex_t *rm = (rmutex_t *)mtx;
+  TCB *current = get_current_task();
+
+  ENTER_CRITICAL();
+  if (rm->owner != current) {
+    EXIT_CRITICAL();
+    return VA_FAIL; // Not the owner
+  }
+
+  // Priority Inheritance: Restore priority if boosted
+  if (current->priority > current->base_priority) {
+    task_change_priority(current, current->base_priority);
+  }
+
+  rm->owner = NULL;
+  rm->recursion_count = 0;
+  EXIT_CRITICAL();
+
+  return v_semaphore_give((SemaphoreHandle_t)&rm->base);
 }
 
 int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait) {
@@ -223,11 +266,7 @@ int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   EXIT_CRITICAL();
 
   // otherwise, lock normally
-  if (v_mutex_lock((MutexHandle_t)&rm->base, ticks_to_wait) == VA_PASS) {
-    ENTER_CRITICAL();
-    rm->owner = current;
-    rm->recursion_count = 1;
-    EXIT_CRITICAL();
+  if (v_mutex_lock((MutexHandle_t)rm, ticks_to_wait) == VA_PASS) {
     return VA_PASS;
   }
   return VA_FAIL;
@@ -244,9 +283,7 @@ int v_mutex_unlock_recursive(MutexHandle_t mtx) {
 
   rm->recursion_count--;
   if (rm->recursion_count == 0) {
-    rm->owner = NULL;
-    EXIT_CRITICAL();
-    return v_mutex_unlock((MutexHandle_t)&rm->base);
+    return v_mutex_unlock((MutexHandle_t)rm);
   }
   EXIT_CRITICAL();
   return VA_PASS;

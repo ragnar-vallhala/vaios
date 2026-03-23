@@ -156,6 +156,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   task->arg = arg;
   task->sp = task->mem_block + (stack_size / sizeof(uint32_t));
   task->priority = priority;
+  task->base_priority = priority;
   task->delay_ticks = 0;
   task->next = NULL;
   task->prev = NULL;
@@ -415,6 +416,20 @@ void task_unblock(uint32_t task_id) {
   EXIT_CRITICAL();
 
   task_yield();
+}
+void task_change_priority(TCB *task, uint32_t new_priority) {
+  if (!task || new_priority > MAX_PRIORITY)
+    return;
+
+  ENTER_CRITICAL();
+  if (task->status == TASK_READY) {
+    remove_from_ready_list(task);
+    task->priority = new_priority;
+    add_to_ready_list(task);
+  } else {
+    task->priority = new_priority;
+  }
+  EXIT_CRITICAL();
 }
 
 //-----------------------------------------------------------------------------
