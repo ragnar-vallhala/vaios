@@ -255,8 +255,13 @@ void mpmc_init(mpmc_queue_t *q, void *buffer, size_t capacity,
   q->tail = 0;
   q->count = 0;
   q->lock = v_mutex_create();
+  q->policy = MPMC_POLICY_DROP;
   q->not_empty = v_semaphore_create_counting(capacity, 0);
   q->not_full = v_semaphore_create_counting(capacity, capacity);
+}
+
+void mpmc_set_policy(mpmc_queue_t *f, mpmc_policy_t policy) {
+  f->policy = policy;
 }
 
 bool mpmc_push(mpmc_queue_t *q, const void *item) {
@@ -276,17 +281,47 @@ bool mpmc_try_pop(mpmc_queue_t *q, void *item) {
 }
 
 bool mpmc_push_timeout(mpmc_queue_t *q, const void *item, uint32_t timeout) {
-  if (v_semaphore_take(q->not_full, timeout) != VA_PASS)
-    return false;
+  bool is_overwrite = (q->policy == MPMC_POLICY_OVERWRITE);
+  uint32_t take_timeout = is_overwrite ? 0 : timeout;
+
+  if (v_semaphore_take(q->not_full, take_timeout) != VA_PASS) {
+    if (is_overwrite) {
+      v_mutex_lock(q->lock, 0xFFFFFFFF);
+      if (q->capacity == 0) {
+        v_mutex_unlock(q->lock);
+        return false;
+      }
+      if (q->count == q->capacity) {
+        /* Overwrite oldest item */
+        v_memcpy((uint8_t *)q->buffer + q->head * q->elem_size, item,
+                 q->elem_size);
+        q->head = (q->head + 1) % q->capacity;
+        q->tail = (q->tail + 1) % q->capacity;
+        /* count stays q->capacity */
+        v_mutex_unlock(q->lock);
+        /* No semaphore changes: not_empty is already at max, not_full is 0 */
+        return true;
+      }
+      v_mutex_unlock(q->lock);
+      /* If not full, someone popped between take and lock. Try again. */
+      if (v_semaphore_take(q->not_full, 0) != VA_PASS) {
+        /* This should be rare, but if it happens, we can't push normally.
+         * Since it's not full, we could just lock and push, but we MUST
+         * keep the semaphore in sync. Let's just return false or retry.
+         * For reliability in MPMC, we'll try one more time with a small wait
+         * if it's supposed to be an overwrite. */
+        if (v_semaphore_take(q->not_full, 1) != VA_PASS)
+          return false;
+      }
+    } else {
+      return false;
+    }
+  }
 
   v_mutex_lock(q->lock, 0xFFFFFFFF);
   v_memcpy((uint8_t *)q->buffer + q->head * q->elem_size, item, q->elem_size);
 
-  size_t next_head = q->head + 1;
-  if (next_head >= q->capacity)
-    next_head = 0;
-  q->head = next_head;
-
+  q->head = (q->head + 1) % q->capacity;
   q->count++;
   v_mutex_unlock(q->lock);
 

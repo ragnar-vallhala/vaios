@@ -54,14 +54,20 @@ void spsc_commit_read(spsc_fifo_t *f, size_t count);
 /* --------------------------------------------------------------------------
  * MPMC Queue (Multiple Producer, Multiple Consumer) - Thread-safe
  * -------------------------------------------------------------------------- */
+typedef enum {
+  MPMC_POLICY_DROP = 1,     /* Default: drop new items if queue is full */
+  MPMC_POLICY_OVERWRITE = 2 /* Overwrite oldest items if queue is full */
+} mpmc_policy_t;
 
 typedef struct {
   void *buffer;
   size_t capacity;
   size_t elem_size;
+  mpmc_policy_t policy;
   volatile size_t head;
   volatile size_t tail;
   volatile size_t count;
+
   MutexHandle_t lock;
   SemaphoreHandle_t not_empty;
   SemaphoreHandle_t not_full;
@@ -69,6 +75,7 @@ typedef struct {
 
 void mpmc_init(mpmc_queue_t *q, void *buffer, size_t capacity,
                size_t elem_size);
+void mpmc_set_policy(mpmc_queue_t *f, mpmc_policy_t policy);
 bool mpmc_push(mpmc_queue_t *q, const void *item);     /* Blocking */
 bool mpmc_pop(mpmc_queue_t *q, void *item);            /* Blocking */
 bool mpmc_try_push(mpmc_queue_t *q, const void *item); /* Non-blocking */
