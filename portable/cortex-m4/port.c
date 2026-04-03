@@ -51,17 +51,6 @@ typedef struct {
   uint32_t xpsr;
 } ExceptionStackFrame;
 
-void print_registers(ExceptionStackFrame *frame) {
-  v_log(LOG_FATAL, "HardFault Register Dump:");
-  v_log(LOG_TRACE, " R0  = 0x%08X", frame->r0);
-  v_log(LOG_TRACE, " R1  = 0x%08X", frame->r1);
-  v_log(LOG_TRACE, " R2  = 0x%08X", frame->r2);
-  v_log(LOG_TRACE, " R3  = 0x%08X", frame->r3);
-  v_log(LOG_TRACE, " R12 = 0x%08X", frame->r12);
-  v_log(LOG_TRACE, " LR  = 0x%08X", frame->lr);
-  v_log(LOG_TRACE, " PC  = 0x%08X", frame->pc);
-  v_log(LOG_TRACE, " xPSR= 0x%08X", frame->xpsr);
-}
 
 static void print_hex_blocking(uint32_t val) {
   char buf[9];
