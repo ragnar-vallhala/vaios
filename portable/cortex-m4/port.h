@@ -20,4 +20,24 @@ void v_port_disable_interrupts(void);
 void v_port_halt(void);
 void v_port_trigger_pendsv(void);
 
+// Atomic operations (LL/SC)
+static inline uint32_t v_port_ldrex(volatile uint32_t *addr) {
+  uint32_t result;
+  __asm__ volatile("ldrex %0, [%1]" : "=r"(result) : "r"(addr) : "memory");
+  return result;
+}
+
+static inline uint32_t v_port_strex(uint32_t val, volatile uint32_t *addr) {
+  uint32_t result;
+  __asm__ volatile("strex %0, %1, [%2]"
+                   : "=&r"(result)
+                   : "r"(val), "r"(addr)
+                   : "memory");
+  return result;
+}
+
+static inline void v_port_clrex(void) {
+  __asm__ volatile("clrex" : : : "memory");
+}
+
 #endif // !VAIOS_CORTEX_M4_PORT_H
