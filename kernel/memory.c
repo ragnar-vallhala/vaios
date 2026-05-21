@@ -20,7 +20,7 @@ void v_heap_memory_init(void) {
   allocation_size = 0;
   allocation_count = 0;
 
-  v_log(LOG_INFO, "[MEMORY] Heap memory head initialized at 0x%x size 0x%x",
+  V_KLOG(LOG_INFO, "[MEMORY] Heap memory head initialized at 0x%x size 0x%x",
         (void *)heap_mem_head, (unsigned)HEAP_SIZE);
 }
 
@@ -31,7 +31,7 @@ static inline int in_heap(void *p) {
 
 void *v_malloc(size_t size) {
   if (!heap_mem_head) {
-    v_log(LOG_ERROR,
+    V_KLOG(LOG_ERROR,
           "[MEMORY] Dynamic allocation not allowed, init memory first");
     return NULL;
   }
@@ -43,7 +43,7 @@ void *v_malloc(size_t size) {
   size = (size + 7) & ~((size_t)7);
 
   // Protect heap (uncomment or replace with your RTOS protection)
-  v_log(LOG_DEBUG, "[MEMORY] Allocation request on heap of size: %u",
+  V_KLOG(LOG_DEBUG, "[MEMORY] Allocation request on heap of size: %u",
         (unsigned)size);
 
   ENTER_CRITICAL();
@@ -67,7 +67,7 @@ void *v_malloc(size_t size) {
       allocation_size += size;
 
       EXIT_CRITICAL();
-      v_log(LOG_DEBUG, "[MEMORY] Allocated fresh block at 0x%x size %u",
+      V_KLOG(LOG_DEBUG, "[MEMORY] Allocated fresh block at 0x%x size %u",
             (void *)payload, (unsigned)size);
       return (void *)payload;
     }
@@ -82,7 +82,7 @@ void *v_malloc(size_t size) {
         allocation_size += head->size;
 
         EXIT_CRITICAL();
-        v_log(LOG_DEBUG, "[MEMORY] Reused block at 0x%x size %u",
+        V_KLOG(LOG_DEBUG, "[MEMORY] Reused block at 0x%x size %u",
               (void *)((uint8_t *)head + sizeof(Heap_Mem_Block)),
               (unsigned)head->size);
         return (void *)((uint8_t *)head + sizeof(Heap_Mem_Block));
@@ -106,7 +106,7 @@ void *v_malloc(size_t size) {
         allocation_size += size;
 
         EXIT_CRITICAL();
-        v_log(LOG_DEBUG,
+        V_KLOG(LOG_DEBUG,
               "[MEMORY] Split block at 0x%x size %u (remaining %u at 0x%x)",
               (void *)((uint8_t *)head + sizeof(Heap_Mem_Block)),
               (unsigned)size, (unsigned)newBlock->size, (void *)newBlock);
@@ -130,17 +130,17 @@ void *v_malloc(size_t size) {
 #endif
 
   EXIT_CRITICAL();
-  v_log(LOG_ERROR, "[MEMORY] Dynamic allocation failed, memory exhausted.");
+  V_KLOG(LOG_ERROR, "[MEMORY] Dynamic allocation failed, memory exhausted.");
   return NULL;
 }
 
 void v_free(void *ptr) {
   if (ptr == NULL) {
-    v_log(LOG_ERROR, "[MEMORY] Deallocation not allowed of NULL pointers");
+    V_KLOG(LOG_ERROR, "[MEMORY] Deallocation not allowed of NULL pointers");
     return;
   }
   if (!heap_mem_head) {
-    v_log(LOG_ERROR, "[MEMORY] Heap not initialized");
+    V_KLOG(LOG_ERROR, "[MEMORY] Heap not initialized");
     return;
   }
 
@@ -152,13 +152,13 @@ void v_free(void *ptr) {
 
   // Validate pointer lies in heap and magic is valid
   if (!in_heap(block) || block->magic_number != SANITY_MAGIC_NUMBER) {
-    v_log(LOG_ERROR, "[MEMORY] Invalid free or corrupted block at 0x%x", ptr);
+    V_KLOG(LOG_ERROR, "[MEMORY] Invalid free or corrupted block at 0x%x", ptr);
     EXIT_CRITICAL();
     return;
   }
 
   if (block->status != MEM_ALOC) {
-    v_log(LOG_ERROR,
+    V_KLOG(LOG_ERROR,
           "[MEMORY] Double free or freeing non-allocated block at 0x%x", ptr);
     EXIT_CRITICAL();
     return;
@@ -175,14 +175,14 @@ void v_free(void *ptr) {
   while (cur != block) {
     if (cur->magic_number != SANITY_MAGIC_NUMBER) {
       EXIT_CRITICAL();
-      v_log(LOG_ERROR,
+      V_KLOG(LOG_ERROR,
             "[MEMORY] Heap corruption detected while walking during free");
       return;
     }
     uint8_t *next_addr = (uint8_t *)cur + sizeof(Heap_Mem_Block) + cur->size;
     if (!in_heap(next_addr)) {
       EXIT_CRITICAL();
-      v_log(LOG_ERROR, "[MEMORY] Reached end of heap unexpectedly while "
+      V_KLOG(LOG_ERROR, "[MEMORY] Reached end of heap unexpectedly while "
                        "walking during free");
       return;
     }
@@ -208,7 +208,7 @@ void v_free(void *ptr) {
   }
 
   EXIT_CRITICAL();
-  v_log(LOG_DEBUG, "[MEMORY] Deallocated pointer at 0x%x", ptr);
+  V_KLOG(LOG_DEBUG, "[MEMORY] Deallocated pointer at 0x%x", ptr);
 }
 
 uint32_t v_get_heap_size(void) { return HEAP_SIZE; }

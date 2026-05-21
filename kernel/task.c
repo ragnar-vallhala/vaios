@@ -167,7 +167,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   ENTER_CRITICAL();
   add_to_ready_list(task);
   EXIT_CRITICAL();
-  v_log(LOG_DEBUG,
+  V_KLOG(LOG_DEBUG,
         "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack "
         "size: 0x%x",
         task->task_id, priority, task->mem_block, stack_size);
@@ -233,7 +233,7 @@ void task_exit_request(uint32_t task_id) {
   if (!task || task->status == TASK_TERMINATED)
     return;
 
-  v_log(LOG_DEBUG, "[TASK] Task %u Exit Requested", task_id);
+  V_KLOG(LOG_DEBUG, "[TASK] Task %u Exit Requested", task_id);
 
   ENTER_CRITICAL();
   if (task->status == TASK_READY)
@@ -273,7 +273,7 @@ void idle_task_function(void *arg) {
     EXIT_CRITICAL();
 
     if (to_free) {
-      v_log(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
+      V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
             to_free->task_id);
       if (to_free->mem_block) {
         v_free(to_free->mem_block);

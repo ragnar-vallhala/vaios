@@ -33,6 +33,20 @@ typedef enum {
 #define COLOR_UNKNOWN "\x1B[34m" // Blue
 void v_log(Log_Type type, const char *msg, ...);
 void v_log_flush(void);
+
+// Kernel-internal log macro. Calls in kernel hot paths (memory, task, ipc)
+// route through this so the entire call site can be compiled out below a
+// chosen severity. Avoids paying the v_log() prologue cost (PSP read,
+// stack-overflow check, module_allowed scan, vararg promotion) when the
+// message would just be filtered.
+#ifndef VAIOS_KERNEL_LOG_LEVEL
+#define VAIOS_KERNEL_LOG_LEVEL LOG_WARN
+#endif
+#define V_KLOG(level, ...)                                                     \
+  do {                                                                         \
+    if ((int)(level) >= (int)(VAIOS_KERNEL_LOG_LEVEL))                         \
+      v_log((level), __VA_ARGS__);                                             \
+  } while (0)
 void dma_tx_complete_callback(void);
 // Useful Functions
 

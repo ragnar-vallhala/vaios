@@ -140,6 +140,14 @@
 #define MIN_LOG_LEVEL LOG_INFO
 #endif
 
+// Kernel hot-path log gate. See V_KLOG in utils.h. Setting this to LOG_ERROR
+// or LOG_FATAL drops every DEBUG/INFO/WARN call site in memory.c, task.c,
+// ipc.c at compile time — required for flight builds to meet the latency
+// budget.
+#ifndef VAIOS_KERNEL_LOG_LEVEL
+#define VAIOS_KERNEL_LOG_LEVEL LOG_WARN
+#endif
+
 #ifndef ALLOWED_MODULES
 #define ALLOWED_MODULES "ALL"
 #endif
