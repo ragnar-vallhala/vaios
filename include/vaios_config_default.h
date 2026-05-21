@@ -55,6 +55,23 @@
 #define MAX_SYSCALL_INTERRUPT_PRIORITY (7 << (8 - __NVIC_PRIO_BITS))
 #endif
 
+// Critical-section masking strategy. When 1, v_enter_critical / v_exit_critical
+// use BASEPRI so IRQs with priority numerically below MAX_SYSCALL_INTERRUPT_-
+// PRIORITY (i.e. more urgent — motor PWM, IMU EXTI, ESC telemetry) stay
+// unmaskable. When 0, fall back to global cpsid i / cpsie i.
+//
+// Required NVIC priority bands when running with BASEPRI:
+//   0  .. (MAX_SYSCALL_INTERRUPT_PRIORITY >> (8-__NVIC_PRIO_BITS)) - 1
+//     Unmaskable. Must NOT call any vaios API. Reserve for hard-real-time
+//     hardware service (motor PWM, IMU EXTI, ESC telemetry).
+//   MAX_SYSCALL_INTERRUPT_PRIORITY >> (8-__NVIC_PRIO_BITS) .. 14
+//     Maskable by critical sections. May call *_from_isr APIs.
+//   15 (lowest)
+//     PendSV and SysTick.
+#ifndef VAIOS_USE_BASEPRI
+#define VAIOS_USE_BASEPRI 1
+#endif
+
 #ifndef DMA_MIN_THRESHOLD
 #define DMA_MIN_THRESHOLD 16
 #endif
