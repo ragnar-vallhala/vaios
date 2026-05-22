@@ -5,18 +5,35 @@
 #include "utils.h"
 
 //-----------------------------------------------------------------------------
-// Wait Queue Helpers (FIFO)
+// Wait Queue Helpers (priority-ordered, highest priority at head)
 //-----------------------------------------------------------------------------
+// Insert sorted by priority, most urgent at the head, so wait_q_dequeue
+// (which pops the head) always hands the slot to the highest-priority
+// waiter. Ties keep FIFO order among equal priorities, so a slow
+// low-priority waiter can no longer delay a high-priority control task
+// blocked on the same semaphore. O(n) in waiters on this one semaphore,
+// which is bounded and typically 1-3.
 static void wait_q_enqueue(sema_t *sem, TCB *task) {
   task->next = NULL;
 
-  if (!sem->wait_q) {
+  // Empty queue, or task outranks the current head -> new head.
+  if (!sem->wait_q || sem->wait_q->priority < task->priority) {
+    task->next = sem->wait_q;
     sem->wait_q = task;
-    sem->tail = task;
-  } else {
-    sem->tail->next = task;
-    sem->tail = task;
+    if (!task->next)
+      sem->tail = task;
+    return;
   }
+
+  // Walk past every waiter with priority >= task's (keeps ties FIFO).
+  TCB *p = sem->wait_q;
+  while (p->next && p->next->priority >= task->priority)
+    p = p->next;
+
+  task->next = p->next;
+  p->next = task;
+  if (!task->next)
+    sem->tail = task;
 }
 
 static TCB *wait_q_dequeue(sema_t *sem) {
