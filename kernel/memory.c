@@ -38,7 +38,7 @@ static Heap_Mem_Block *free_lists[NUM_SIZE_CLASSES];
 
 // Map a payload size to its free-list class (upper bounds 8/16/32/64/128/
 // 256/512, then a catch-all for anything larger).
-static int size_class(uint32_t size) {
+__attribute__((always_inline)) static inline int size_class(uint32_t size) {
   if (size <= 8)
     return 0;
   if (size <= 16)
@@ -57,7 +57,8 @@ static int size_class(uint32_t size) {
 }
 
 // Push a free block onto the head of its size-class list.
-static void fl_insert(Heap_Mem_Block *blk) {
+__attribute__((always_inline)) static inline void
+fl_insert(Heap_Mem_Block *blk) {
   int c = size_class(blk->size);
   FreeNode *n = FREE_NODE(blk);
   n->prev_free = NULL;
@@ -68,7 +69,8 @@ static void fl_insert(Heap_Mem_Block *blk) {
 }
 
 // Splice a free block out of whatever list it currently sits on.
-static void fl_remove(Heap_Mem_Block *blk) {
+__attribute__((always_inline)) static inline void
+fl_remove(Heap_Mem_Block *blk) {
   FreeNode *n = FREE_NODE(blk);
   if (n->prev_free)
     FREE_NODE(n->prev_free)->next_free = n->next_free;

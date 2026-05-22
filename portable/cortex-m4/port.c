@@ -5,34 +5,11 @@
 
 extern void v_print(const char *str);
 
+// Nesting counter for v_enter_critical / v_exit_critical. The functions
+// themselves are defined inline in port.h so each critical section emits a
+// bare `msr basepri` instead of a bl round-trip; only the shared counter
+// lives here.
 volatile uint32_t critical_nesting = 0;
-
-void v_enter_critical(void) {
-#if VAIOS_USE_BASEPRI
-  // Mask only IRQs at or below MAX_SYSCALL_INTERRUPT_PRIORITY. IRQs with a
-  // numerically lower priority value (= higher urgency) such as motor PWM,
-  // IMU EXTI, and ESC telemetry are NOT masked here and must not call vaios
-  // APIs from inside their handlers.
-  uint32_t pri = MAX_SYSCALL_INTERRUPT_PRIORITY;
-  __asm volatile("msr basepri, %0" : : "r"(pri) : "memory");
-#else
-  __asm volatile("cpsid i" ::: "memory");
-  __asm volatile("" ::: "memory"); // compiler barrier
-#endif
-  critical_nesting++;
-}
-
-void v_exit_critical(void) {
-  critical_nesting--;
-  if (critical_nesting == 0) {
-#if VAIOS_USE_BASEPRI
-    uint32_t pri = 0;
-    __asm volatile("msr basepri, %0" : : "r"(pri) : "memory");
-#else
-    __asm volatile("cpsie i" ::: "memory");
-#endif
-  }
-}
 
 uint32_t v_port_get_psp(void) {
   uint32_t psp;
