@@ -8,7 +8,8 @@
 //-----------------------------------------------------------------------------
 // Global Variables
 //-----------------------------------------------------------------------------
-TCB *ready_lists[MAX_PRIORITY + 1]; // Ready task lists by priority
+TCB *ready_lists[MAX_PRIORITY + 1];        // Ready list heads by priority
+static TCB *ready_tails[MAX_PRIORITY + 1]; // Ready list tails — O(1) append
 TCB *blocked_list = NULL;           // Blocked tasks list
 TCB *delayed_list = NULL;           // Delayed tasks list
 TCB *current_task = NULL;           // Currently running task
@@ -25,6 +26,58 @@ static uint32_t last_context_switch_tick = 0; // To track ticks for current task
 static inline void rb_set(uint32_t prio) { ready_bitmap |= (1u << prio); }
 static inline void rb_clear(uint32_t prio) { ready_bitmap &= ~(1u << prio); }
 static TCB *get_task_by_id(uint32_t task_id);
+
+// O(1) ready-list primitives. Each priority's ready list is a doubly-linked
+// queue with head (ready_lists[]) and tail (ready_tails[]) pointers;
+// ready_bitmap bit p is set iff that list is non-empty. The caller must
+// already hold a critical section, or run in the basepri-masked PendSV path.
+static inline void rl_append(TCB *task) {
+  uint32_t p = task->priority;
+  task->next = NULL;
+  task->prev = ready_tails[p];
+  if (ready_lists[p])
+    ready_tails[p]->next = task;
+  else {
+    ready_lists[p] = task;
+    rb_set(p);
+  }
+  ready_tails[p] = task;
+  task->status = TASK_READY;
+}
+
+// Pop the head of priority p's ready list. Caller ensures the list is
+// non-empty (ready_bitmap bit p set).
+static inline TCB *rl_pop_head(uint32_t p) {
+  TCB *t = ready_lists[p];
+  ready_lists[p] = t->next;
+  if (ready_lists[p])
+    ready_lists[p]->prev = NULL;
+  else {
+    ready_tails[p] = NULL;
+    rb_clear(p);
+  }
+  t->next = NULL;
+  t->prev = NULL;
+  return t;
+}
+
+// Splice an arbitrary task out of its priority's ready list (caller ensures
+// the task is actually on that list).
+static inline void rl_remove(TCB *task) {
+  uint32_t p = task->priority;
+  if (task->prev)
+    task->prev->next = task->next;
+  else
+    ready_lists[p] = task->next;
+  if (task->next)
+    task->next->prev = task->prev;
+  else
+    ready_tails[p] = task->prev;
+  if (!ready_lists[p])
+    rb_clear(p);
+  task->next = NULL;
+  task->prev = NULL;
+}
 // Highest set bit of the ready bitmap = highest ready priority. The Cortex-M4
 // `clz` instruction (via __builtin_clz) makes this one instruction instead of
 // an up-to-MAX_PRIORITY-iteration scan.
@@ -96,33 +149,16 @@ TCB *peek_task(TCB **list) { return (list && *list) ? *list : NULL; }
 void add_to_ready_list(TCB *task) {
   if (!task)
     return;
-  TCB **head = &ready_lists[task->priority];
-
   ENTER_CRITICAL();
-  enqueue_task(head, task);
-  rb_set(task->priority);
-  task->status = TASK_READY;
+  rl_append(task);
   EXIT_CRITICAL();
 }
 
 void remove_from_ready_list(TCB *task) {
   if (!task)
     return;
-
-  TCB **head = &ready_lists[task->priority];
-
   ENTER_CRITICAL();
-  if (*head == NULL) {
-    EXIT_CRITICAL();
-    return;
-  }
-
-  remove_task(head, task);
-  if (*head == NULL)
-    rb_clear(task->priority);
-
-  task->next = NULL;
-  task->prev = NULL;
+  rl_remove(task);
   EXIT_CRITICAL();
 }
 
@@ -187,17 +223,20 @@ TCB *get_next_task(void) {
   // Delayed-task and semaphore-timeout wakeups are driven once per tick by
   // SysTick (wake_up_delayed_tasks_isr) — no per-context-switch list scan.
 
-  if (current_task && current_task->status == TASK_RUNNING) {
-    add_to_ready_list(current_task);
-  }
+  // Runs inside PendSV / load_next_task_from_isr — basepri already masks
+  // syscall-level IRQs and nothing else can touch the ready lists here, so
+  // the surgery is done inline with the O(1) rl_* helpers (no calls, no
+  // nested critical section).
+  if (current_task && current_task->status == TASK_RUNNING)
+    rl_append(current_task);
 
-  TCB *t = get_highest_priority_task();
-  if (t) {
+  int p = highest_ready_prio();
+  if (p >= 0) {
+    TCB *t = rl_pop_head((uint32_t)p);
     if ((uint32_t)t < 0x20000000 || (uint32_t)t > 0x20020000 ||
         t->priority > MAX_PRIORITY) {
       v_panic(__FILE__, __LINE__, "invalid task pointer: 0x%x", (uint32_t)t);
     }
-    remove_from_ready_list(t);
     current_task = t;
   } else {
     if (current_task->status != TASK_RUNNING) {
@@ -479,8 +518,10 @@ void task_change_priority(TCB *task, uint32_t new_priority) {
 // Scheduler Initialization and Control
 //-----------------------------------------------------------------------------
 void scheduler_init(void) {
-  for (uint8_t i = 0; i <= MAX_PRIORITY; i++)
+  for (uint8_t i = 0; i <= MAX_PRIORITY; i++) {
     ready_lists[i] = NULL;
+    ready_tails[i] = NULL;
+  }
   blocked_list = NULL;
   delayed_list = NULL;
   ready_bitmap = 0;
