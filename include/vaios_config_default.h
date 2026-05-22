@@ -72,6 +72,24 @@
 #define VAIOS_USE_BASEPRI 1
 #endif
 
+// Optional kernel modules. The CMake build owns these (option() in the
+// top-level CMakeLists.txt) — it both excludes the module's .c file and
+// passes -DVAIOS_MODULE_X=0/1. These #ifndef fallbacks only apply when a
+// translation unit is compiled outside that CMake; they also document the
+// knobs. Set a module to 0 to drop it from the build and #if out its API.
+#ifndef VAIOS_MODULE_TERMINAL
+#define VAIOS_MODULE_TERMINAL 1
+#endif
+#ifndef VAIOS_MODULE_VFS
+#define VAIOS_MODULE_VFS 1
+#endif
+#ifndef VAIOS_MODULE_SEMIHOSTING
+#define VAIOS_MODULE_SEMIHOSTING 1
+#endif
+#ifndef VAIOS_MODULE_FIFO
+#define VAIOS_MODULE_FIFO 1
+#endif
+
 #ifndef DMA_MIN_THRESHOLD
 #define DMA_MIN_THRESHOLD 16
 #endif

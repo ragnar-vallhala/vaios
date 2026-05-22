@@ -49,6 +49,30 @@ option(VAIOS_FPU "Enable FPU support" ON)
 set(VAIOS_EXAMPLE "" CACHE STRING "The example to build (e.g., FPU_USAGE, DMA_DUMP)")
 set(VAIOS_CONFIG_FILE "" CACHE STRING "Path to the user-provided vaios_config.h file")
 
+# ---------------------------------------------------------------------------
+# Optional kernel modules. Each maps to one kernel/*.c file. OFF excludes that
+# file from the build entirely (smaller flash) and defines the matching macro
+# to 0 so C code can #if out init calls and APIs. Defaults mirror
+# vaios_config_default.h. Override with -DVAIOS_MODULE_X=OFF.
+# ---------------------------------------------------------------------------
+option(VAIOS_MODULE_TERMINAL    "Build the interactive command terminal"   ON)
+option(VAIOS_MODULE_VFS         "Build the virtual file system (FatFs)"    ON)
+option(VAIOS_MODULE_SEMIHOSTING "Build the semihosting debug I/O module"   ON)
+option(VAIOS_MODULE_FIFO        "Build the SPSC/MPMC FIFO data structures" ON)
+
+# Dependency resolution (Kconfig-style 'select').
+if(VAIOS_MODULE_TERMINAL AND NOT VAIOS_MODULE_SEMIHOSTING)
+  message(WARNING "VAIOS_MODULE_TERMINAL needs semihosting (sh_readc) -- forcing VAIOS_MODULE_SEMIHOSTING ON.")
+  set(VAIOS_MODULE_SEMIHOSTING ON CACHE BOOL "Build the semihosting debug I/O module" FORCE)
+endif()
+if(NOT NAVHAL AND NOT VAIOS_MODULE_SEMIHOSTING)
+  message(WARNING "Non-NAVHAL build needs semihosting for systick/pendsv setup -- forcing VAIOS_MODULE_SEMIHOSTING ON.")
+  set(VAIOS_MODULE_SEMIHOSTING ON CACHE BOOL "Build the semihosting debug I/O module" FORCE)
+endif()
+
+message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
+               "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO}")
+
 if(VAIOS_CONFIG_FILE)
     add_compile_definitions(VAIOS_CONFIG_FILE="${VAIOS_CONFIG_FILE}")
     message(STATUS "VAIOS: Using custom config file ${VAIOS_CONFIG_FILE}")

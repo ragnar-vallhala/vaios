@@ -3,7 +3,9 @@
 #include "task.h"
 #include "utils.h"
 #include "vaios_config.h"
+#if VAIOS_MODULE_VFS
 #include "vfs.h"
+#endif
 #include <stddef.h>
 #include <stdint.h>
 
@@ -115,12 +117,14 @@ void v_system_init(vaios_init_config_t *cfg) {
         ;
     }
 
+#if VAIOS_MODULE_VFS
     /* 5. Mount FatFS via the thread-safe VFS layer */
     if (vfs_init() != 0) {
       v_log(LOG_ERROR, "Failed to initialize VFS.");
       while (1)
         ;
     }
+#endif
   }
 #else
   v_init();
