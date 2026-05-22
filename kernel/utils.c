@@ -907,10 +907,8 @@ void v_log_flush(void) {
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
-extern volatile uint64_t systick_ticks;
 void SysTick_Handler(void) {
   systick_count++;
-  systick_ticks++;
   if (scheduler_running) {
     // Drain any tasks whose absolute wakeup tick is now due. This runs
     // before PendSV is pended so the next get_next_task() pick already

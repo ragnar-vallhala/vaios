@@ -84,8 +84,22 @@ endif()
 
 if(NAVHAL)
   add_compile_definitions(NAVHAL)
+  # NavHAL is always embedded inside vaios. Define SUBMODULE so NavHAL cedes
+  # the SysTick / PendSV / SVCall / HardFault vectors to vaios (which owns
+  # them in port.c / utils.c). Without it NavHAL's timebase.c emits a strong
+  # SysTick_Handler that collides with vaios's at link time.
+  add_compile_definitions(SUBMODULE)
   include_directories(extern/NavHAL/include)
   set(USE_FPU ${VAIOS_FPU} CACHE BOOL "Pass FPU setting to NavHAL" FORCE)
+  # NavHAL's Kconfig reads extern/NavHAL/.config from a hardcoded path. Keep
+  # the authoritative copy here in the vaios repo (navhal.config) so NavHAL
+  # stays an unmodified submodule, and stage it into place before NavHAL's
+  # CMake runs kconfig.py. .config is gitignored inside NavHAL, so this never
+  # dirties the submodule. Editing navhal.config re-triggers configure.
+  configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/navhal.config
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config
+    COPYONLY)
   add_subdirectory(extern/NavHAL)
   set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
 endif()
