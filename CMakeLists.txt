@@ -92,7 +92,7 @@ set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS}")
 set(CMAKE_C_STANDARD 11)
 
 set(CMAKE_C_FLAGS
-"-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS} -Wall -O0 -g -std=c11") # C++
+"-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS} -Wall -O2 -g -std=c11") # C++
 # standard
 # 11
 
@@ -125,6 +125,12 @@ if(NAVHAL)
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config
     COPYONLY)
   add_subdirectory(extern/NavHAL)
+  # NavHAL hardcodes -O0 in its own CMAKE_C_FLAGS. Rather than editing the
+  # submodule, override per target from here — gcc honours the last -O flag,
+  # so a trailing -O2 wins. Keeps NavHAL (incl. the DWT cycle counter)
+  # optimized without dirtying the submodule.
+  target_compile_options(hal    PRIVATE -O2)
+  target_compile_options(common PRIVATE -O2)
   set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
 endif()
 
