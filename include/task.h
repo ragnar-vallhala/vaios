@@ -107,11 +107,10 @@ void idle_task_function(void *arg);
 void add_to_delayed_list(TCB *task);
 void remove_from_delayed_list(TCB *task);
 void task_delay(uint32_t ticks);
-void wake_up_delayed_tasks(void); // Decrement and wake as needed
-// ISR-context fast path: only inspects the head of the (sorted) delayed list.
-// Returns nonzero if any woken task has priority strictly greater than the
-// current task — lets SysTick pend PendSV to switch immediately. Safe to
-// call from SysTick_Handler.
+// SysTick wake path: drains due sleepers from the sorted delayed list and
+// ejects timed-out semaphore waiters. The only place delayed/timeout wakeups
+// happen — get_next_task does not scan. Returns nonzero if a woken task
+// outranks the current task, so SysTick can pend an immediate switch.
 int wake_up_delayed_tasks_isr(void);
 
 //-----------------------------------------------------------------------------

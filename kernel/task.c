@@ -25,14 +25,13 @@ static uint32_t last_context_switch_tick = 0; // To track ticks for current task
 static inline void rb_set(uint32_t prio) { ready_bitmap |= (1u << prio); }
 static inline void rb_clear(uint32_t prio) { ready_bitmap &= ~(1u << prio); }
 static TCB *get_task_by_id(uint32_t task_id);
-// Return highest set bit index (portable fallback)
+// Highest set bit of the ready bitmap = highest ready priority. The Cortex-M4
+// `clz` instruction (via __builtin_clz) makes this one instruction instead of
+// an up-to-MAX_PRIORITY-iteration scan.
 static inline int highest_ready_prio(void) {
   if (!ready_bitmap)
     return -1;
-  for (int p = (int)MAX_PRIORITY; p >= 0; --p)
-    if (ready_bitmap & (1u << p))
-      return p;
-  return -1;
+  return 31 - __builtin_clz(ready_bitmap);
 }
 
 //-----------------------------------------------------------------------------
@@ -182,9 +181,11 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------
 TCB *get_next_task(void) {
-  current_task->ticks_run += v_get_ticks() - last_context_switch_tick;
-  last_context_switch_tick = v_get_ticks();
-  wake_up_delayed_tasks();
+  uint32_t now = v_get_ticks();
+  current_task->ticks_run += now - last_context_switch_tick;
+  last_context_switch_tick = now;
+  // Delayed-task and semaphore-timeout wakeups are driven once per tick by
+  // SysTick (wake_up_delayed_tasks_isr) — no per-context-switch list scan.
 
   if (current_task && current_task->status == TASK_RUNNING) {
     add_to_ready_list(current_task);
@@ -346,31 +347,41 @@ void task_delay(uint32_t ticks) {
   task_yield();
 }
 
-void wake_up_delayed_tasks(void) {
+// SysTick wake path — runs once per tick, and is the ONLY place delayed-task
+// and semaphore-timeout wakeups happen (get_next_task no longer scans, so a
+// context switch stays lean). delayed_list is sorted ascending by delay_ticks
+// so a head-only walk drains every due sleeper. Returns nonzero if any woken
+// task outranks the current task, letting SysTick pend an immediate switch.
+int wake_up_delayed_tasks_isr(void) {
+  int higher_woken = 0;
+  uint32_t now = v_get_ticks();
+
   ENTER_CRITICAL();
-  // 1. Wake tasks sleeping via task_delay() (in delayed_list)
-  TCB *task = delayed_list;
-  while (task) {
-    if (task->delay_ticks < v_get_ticks()) {
-      TCB *to_wake = task;
-      task = task->next;
-      remove_from_delayed_list(to_wake);
-      to_wake->delay_ticks = 0;
-      to_wake->status = TASK_READY;
-      add_to_ready_list(to_wake);
-      continue;
-    }
-    task = task->next;
+
+  // 1. Sleepers from task_delay(). <= (not <) so an N-tick delay wakes on
+  //    the Nth tick, not the N+1th.
+  while (delayed_list && delayed_list->delay_ticks <= now) {
+    TCB *to_wake = delayed_list;
+    delayed_list = to_wake->next;
+    if (delayed_list)
+      delayed_list->prev = NULL;
+    to_wake->next = NULL;
+    to_wake->prev = NULL;
+    to_wake->delay_ticks = 0;
+    to_wake->status = TASK_READY;
+    add_to_ready_list(to_wake);
+    if (current_task && to_wake->priority > current_task->priority)
+      higher_woken = 1;
   }
 
-  // 2. Eject semaphore waiters whose timeout has expired (in blocked_list).
-  //    These have wait_sem != NULL and delay_ticks set to an absolute deadline.
-  task = blocked_list;
+  // 2. Eject semaphore waiters whose take() timeout has expired. wait_sem is
+  //    left set so the resumed take() returns VA_FAIL.
+  TCB *task = blocked_list;
   while (task) {
     TCB *next = task->next;
     if (task->wait_sem != NULL && task->delay_ticks != 0 &&
-        task->delay_ticks < v_get_ticks()) {
-      // Remove from semaphore wait_q (singly-linked via wait_next).
+        task->delay_ticks < now) {
+      // Remove from the semaphore wait queue (threaded via wait_next).
       sema_t *s = (sema_t *)task->wait_sem;
       if (s->wait_q == task) {
         s->wait_q = task->wait_next;
@@ -386,40 +397,16 @@ void wake_up_delayed_tasks(void) {
             s->tail = prev_node;
         }
       }
-      // Remove from blocked_list and wake (leave wait_sem set → take returns
-      // VA_FAIL)
       remove_from_blocked_list(task);
       task->delay_ticks = 0;
       task->status = TASK_READY;
       add_to_ready_list(task);
+      if (current_task && task->priority > current_task->priority)
+        higher_woken = 1;
     }
     task = next;
   }
-  EXIT_CRITICAL();
-}
 
-// SysTick fast path. delayed_list is sorted ascending by delay_ticks, so a
-// head-only walk drains every due task without scanning the rest. Uses <=
-// (not the slow path's <) so a task delayed by N ticks wakes on the Nth
-// tick instead of N+1th.
-int wake_up_delayed_tasks_isr(void) {
-  int higher_woken = 0;
-  uint32_t now = v_get_ticks();
-
-  ENTER_CRITICAL();
-  while (delayed_list && delayed_list->delay_ticks <= now) {
-    TCB *to_wake = delayed_list;
-    delayed_list = to_wake->next;
-    if (delayed_list)
-      delayed_list->prev = NULL;
-    to_wake->next = NULL;
-    to_wake->prev = NULL;
-    to_wake->delay_ticks = 0;
-    to_wake->status = TASK_READY;
-    add_to_ready_list(to_wake);
-    if (current_task && to_wake->priority > current_task->priority)
-      higher_woken = 1;
-  }
   EXIT_CRITICAL();
   return higher_woken;
 }
