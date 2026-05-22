@@ -288,8 +288,35 @@ void idle_task_function(void *arg) {
 // Delayed Task Management
 //-----------------------------------------------------------------------------
 void add_to_delayed_list(TCB *task) {
-  enqueue_task(&delayed_list, task);
+  if (!task)
+    return;
+
+  ENTER_CRITICAL();
+  task->next = NULL;
+  task->prev = NULL;
   task->status = TASK_DELAYED;
+
+  // Insert sorted by absolute wakeup tick (ascending) so the SysTick ISR
+  // only needs an O(1) head check to find the next-due task.
+  if (!delayed_list || task->delay_ticks < delayed_list->delay_ticks) {
+    task->next = delayed_list;
+    if (delayed_list)
+      delayed_list->prev = task;
+    delayed_list = task;
+    EXIT_CRITICAL();
+    return;
+  }
+
+  TCB *cur = delayed_list;
+  while (cur->next && cur->next->delay_ticks <= task->delay_ticks)
+    cur = cur->next;
+
+  task->next = cur->next;
+  task->prev = cur;
+  if (cur->next)
+    cur->next->prev = task;
+  cur->next = task;
+  EXIT_CRITICAL();
 }
 
 void remove_from_delayed_list(TCB *task) {
@@ -366,6 +393,32 @@ void wake_up_delayed_tasks(void) {
     task = next;
   }
   EXIT_CRITICAL();
+}
+
+// SysTick fast path. delayed_list is sorted ascending by delay_ticks, so a
+// head-only walk drains every due task without scanning the rest. Uses <=
+// (not the slow path's <) so a task delayed by N ticks wakes on the Nth
+// tick instead of N+1th.
+int wake_up_delayed_tasks_isr(void) {
+  int higher_woken = 0;
+  uint32_t now = v_get_ticks();
+
+  ENTER_CRITICAL();
+  while (delayed_list && delayed_list->delay_ticks <= now) {
+    TCB *to_wake = delayed_list;
+    delayed_list = to_wake->next;
+    if (delayed_list)
+      delayed_list->prev = NULL;
+    to_wake->next = NULL;
+    to_wake->prev = NULL;
+    to_wake->delay_ticks = 0;
+    to_wake->status = TASK_READY;
+    add_to_ready_list(to_wake);
+    if (current_task && to_wake->priority > current_task->priority)
+      higher_woken = 1;
+  }
+  EXIT_CRITICAL();
+  return higher_woken;
 }
 
 //-----------------------------------------------------------------------------

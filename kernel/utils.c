@@ -912,6 +912,11 @@ void SysTick_Handler(void) {
   systick_count++;
   systick_ticks++;
   if (scheduler_running) {
+    // Drain any tasks whose absolute wakeup tick is now due. This runs
+    // before PendSV is pended so the next get_next_task() pick already
+    // sees the freshly-ready high-priority task. PendSV is still pended
+    // unconditionally for time-slice rotation.
+    (void)wake_up_delayed_tasks_isr();
     v_port_trigger_pendsv();
   }
 }

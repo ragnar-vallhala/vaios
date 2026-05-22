@@ -100,6 +100,11 @@ void add_to_delayed_list(TCB *task);
 void remove_from_delayed_list(TCB *task);
 void task_delay(uint32_t ticks);
 void wake_up_delayed_tasks(void); // Decrement and wake as needed
+// ISR-context fast path: only inspects the head of the (sorted) delayed list.
+// Returns nonzero if any woken task has priority strictly greater than the
+// current task — lets SysTick pend PendSV to switch immediately. Safe to
+// call from SysTick_Handler.
+int wake_up_delayed_tasks_isr(void);
 
 //-----------------------------------------------------------------------------
 // Blocked Task Management
