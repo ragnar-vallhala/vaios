@@ -161,6 +161,9 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   task->next = NULL;
   task->prev = NULL;
   task->wait_next = NULL;
+  task->wait_sem = NULL;
+  task->wait_mutex = NULL;
+  task->held_mutexes = NULL;
   task->status = TASK_READY;
   task->magic = TCB_MAGIC;
   init_task_stack(task);

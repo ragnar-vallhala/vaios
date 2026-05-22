@@ -103,6 +103,7 @@ MutexHandle_t v_mutex_create(void) {
   sema_init(&mtx->base, 1, 1);
   mtx->owner = NULL;
   mtx->recursion_count = 0;
+  mtx->next_held = NULL;
   return (MutexHandle_t)mtx;
 }
 
@@ -113,6 +114,7 @@ MutexHandle_t v_mutex_create_static(StaticSemaphore_t *pxBuffer) {
   sema_init(&mtx->base, 1, 1);
   mtx->owner = NULL;
   mtx->recursion_count = 0;
+  mtx->next_held = NULL;
   return (MutexHandle_t)mtx;
 }
 
@@ -123,6 +125,7 @@ MutexHandle_t v_mutex_create_recursive(void) {
   sema_init(&mtx->base, 1, 1);
   mtx->owner = NULL;
   mtx->recursion_count = 0;
+  mtx->next_held = NULL;
   return (MutexHandle_t)mtx;
 }
 
@@ -133,6 +136,7 @@ MutexHandle_t v_mutex_create_recursive_static(StaticSemaphore_t *pxBuffer) {
   sema_init(&mtx->base, 1, 1);
   mtx->owner = NULL;
   mtx->recursion_count = 0;
+  mtx->next_held = NULL;
   return (MutexHandle_t)mtx;
 }
 
@@ -181,6 +185,12 @@ int v_semaphore_take(SemaphoreHandle_t sem, uint32_t ticks_to_wait) {
   return semaphore_take_common((sema_t *)sem, ticks_to_wait);
 }
 
+// Highest priority among the tasks queued on a mutex (0 if none). The wait
+// queue is priority-ordered, so the head is the most urgent waiter.
+static uint32_t mutex_top_waiter_prio(rmutex_t *rm) {
+  return rm->base.wait_q ? rm->base.wait_q->priority : 0;
+}
+
 int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   if (!mtx)
     return VA_FAIL;
@@ -188,20 +198,41 @@ int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   TCB *current = get_current_task();
 
   ENTER_CRITICAL();
-  // Priority Inheritance: Boost owner if current task has higher priority
-  if (rm->owner && rm->owner->priority < current->priority) {
-    task_change_priority(rm->owner, current->priority);
+  // Transitive priority inheritance: walk the ownership chain and boost
+  // every owner outranked by `current`. Each hop follows the boosted owner's
+  // own wait_mutex (the mutex it is itself blocked acquiring), so a chain
+  // low -> mid -> high resolves end to end. Capped at MAX_PI_DEPTH — a
+  // deeper chain is a dependency cycle and panics.
+  {
+    rmutex_t *m = rm;
+    int depth = 0;
+    while (m && m->owner && m->owner->priority < current->priority) {
+      if (++depth > MAX_PI_DEPTH)
+        v_panic(__FILE__, __LINE__,
+                "priority-inheritance chain exceeded MAX_PI_DEPTH (cycle?)");
+      TCB *o = m->owner;
+      task_change_priority(o, current->priority);
+      // Propagate only while the boosted owner is itself blocked on a mutex.
+      if (o->status != TASK_BLOCKED || !o->wait_mutex)
+        break;
+      m = (rmutex_t *)o->wait_mutex;
+    }
   }
+  current->wait_mutex = rm; // visible to other chain walks while we block
   EXIT_CRITICAL();
 
   int res = semaphore_take_common(&rm->base, ticks_to_wait);
 
+  ENTER_CRITICAL();
+  current->wait_mutex = NULL;
   if (res == VA_PASS) {
-    ENTER_CRITICAL();
     rm->owner = current;
     rm->recursion_count = 1;
-    EXIT_CRITICAL();
+    // Track on the owner's held list for the unlock-time priority recompute.
+    rm->next_held = (rmutex_t *)current->held_mutexes;
+    current->held_mutexes = rm;
   }
+  EXIT_CRITICAL();
   return res;
 }
 
@@ -261,10 +292,26 @@ int v_mutex_unlock(MutexHandle_t mtx) {
     return VA_FAIL; // Not the owner
   }
 
-  // Priority Inheritance: Restore priority if boosted
-  if (current->priority > current->base_priority) {
-    task_change_priority(current, current->base_priority);
+  // Unlink rm from the owner's held-mutex list.
+  rmutex_t **pp = (rmutex_t **)&current->held_mutexes;
+  while (*pp && *pp != rm)
+    pp = &(*pp)->next_held;
+  if (*pp)
+    *pp = rm->next_held;
+  rm->next_held = NULL;
+
+  // Recompute the owner's priority: its base, raised to the highest-priority
+  // waiter across the mutexes it STILL holds. Replaces the old unconditional
+  // drop-to-base, which was wrong whenever the owner held another mutex that
+  // still had a high-priority task waiting on it.
+  uint32_t newp = current->base_priority;
+  for (rmutex_t *m = (rmutex_t *)current->held_mutexes; m; m = m->next_held) {
+    uint32_t w = mutex_top_waiter_prio(m);
+    if (w > newp)
+      newp = w;
   }
+  if (newp != current->priority)
+    task_change_priority(current, newp);
 
   rm->owner = NULL;
   rm->recursion_count = 0;

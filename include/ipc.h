@@ -20,10 +20,14 @@ typedef struct {
   atomic_t limit;
 } sema_t;
 
-typedef struct {
+typedef struct rmutex {
   sema_t base;
   TCB *owner;
   uint32_t recursion_count;
+  // Intrusive link for the owner's held-mutex list (TCB.held_mutexes).
+  // Used by priority inheritance to recompute the owner's priority on
+  // unlock from the mutexes it still holds.
+  struct rmutex *next_held;
 } rmutex_t;
 typedef void *SemaphoreHandle_t; // Opaque handle for semaphore/mutex
 typedef void *MutexHandle_t;

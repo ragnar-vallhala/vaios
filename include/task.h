@@ -40,6 +40,10 @@ typedef struct Task_Control_Block {
   uint32_t base_priority; // Base priority for inheritance
   Task_Status status;     // Current status
   void *wait_sem;         // Semaphore this task is blocking on (NULL if none)
+  void *wait_mutex;       // rmutex_t this task is blocking to acquire (NULL if
+                          // none) — drives the transitive PI chain walk
+  void *held_mutexes;     // rmutex_t head of the intrusive list of mutexes
+                          // this task currently owns
   struct Task_Control_Block *next; // Next in list (ready/blocked/delayed)
   struct Task_Control_Block *prev; // Prev in list
   // Separate link for the semaphore/mutex wait queue. A task blocked on a

@@ -150,6 +150,13 @@
 #define STATIC_SEMAPHORE_SIZE 32
 #endif
 
+// Maximum depth the transitive priority-inheritance chain walk will follow
+// before panicking. A chain deeper than this is almost certainly a
+// dependency cycle (deadlock) rather than legitimate nesting.
+#ifndef MAX_PI_DEPTH
+#define MAX_PI_DEPTH 4
+#endif
+
 // Logging
 #ifndef COLOR_LOGGING
 #define COLOR_LOGGING 1
