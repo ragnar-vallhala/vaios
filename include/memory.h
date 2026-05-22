@@ -7,11 +7,14 @@ typedef enum { MEM_FREE, MEM_ALOC } Heap_Mem_Type;
 
 #define SANITY_MAGIC_NUMBER 0x14U
 
-typedef struct {
+typedef struct Heap_Mem_Block {
   uint32_t magic_number;
   uint32_t size; // in bytes
   uint32_t status;
-  uint32_t padding; // Ensure sizeof(Heap_Mem_Block) == 16 for 8-byte alignment
+  // Previous block in address order (NULL for the first block). Lets v_free
+  // coalesce backward in O(1) instead of walking the heap from the head.
+  // Occupies the former padding slot — sizeof stays 16 (8-byte aligned).
+  struct Heap_Mem_Block *prev;
 } Heap_Mem_Block;
 
 // Initialize heap memory

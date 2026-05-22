@@ -49,6 +49,7 @@ void *v_malloc(size_t size) {
   ENTER_CRITICAL();
 
   Heap_Mem_Block *head = heap_mem_head;
+  Heap_Mem_Block *prev_block = NULL; // block immediately before `head`
   while (in_heap(head)) {
     // If block has never been touched (magic == 0), treat remaining region as
     // fresh
@@ -62,6 +63,7 @@ void *v_malloc(size_t size) {
       head->magic_number = SANITY_MAGIC_NUMBER;
       head->status = MEM_ALOC;
       head->size = size;
+      head->prev = prev_block;
 
       allocation_count++;
       allocation_size += size;
@@ -98,6 +100,17 @@ void *v_malloc(size_t size) {
         newBlock->magic_number = SANITY_MAGIC_NUMBER;
         newBlock->status = MEM_FREE;
         newBlock->size = head->size - size - sizeof(Heap_Mem_Block);
+        newBlock->prev = head;
+
+        // The block that previously followed `head` now follows newBlock;
+        // repoint its prev. Skip if that slot is the fresh region or beyond
+        // the heap.
+        Heap_Mem_Block *after_new =
+            (Heap_Mem_Block *)((uint8_t *)newBlock + sizeof(Heap_Mem_Block) +
+                               newBlock->size);
+        if (in_heap(after_new) &&
+            after_new->magic_number == SANITY_MAGIC_NUMBER)
+          after_new->prev = newBlock;
 
         head->status = MEM_ALOC;
         head->size = size;
@@ -118,6 +131,7 @@ void *v_malloc(size_t size) {
     uint8_t *next_addr = (uint8_t *)head + sizeof(Heap_Mem_Block) + head->size;
     if (!in_heap(next_addr))
       break;
+    prev_block = head;
     head = (Heap_Mem_Block *)next_addr;
   }
 
@@ -169,42 +183,33 @@ void v_free(void *ptr) {
   allocation_count--;
   allocation_size -= block->size;
 
-  // Walk heap to find previous block (if any)
-  Heap_Mem_Block *prev = NULL;
-  Heap_Mem_Block *cur = heap_mem_head;
-  while (cur != block) {
-    if (cur->magic_number != SANITY_MAGIC_NUMBER) {
-      EXIT_CRITICAL();
-      V_KLOG(LOG_ERROR,
-            "[MEMORY] Heap corruption detected while walking during free");
-      return;
-    }
-    uint8_t *next_addr = (uint8_t *)cur + sizeof(Heap_Mem_Block) + cur->size;
-    if (!in_heap(next_addr)) {
-      EXIT_CRITICAL();
-      V_KLOG(LOG_ERROR, "[MEMORY] Reached end of heap unexpectedly while "
-                       "walking during free");
-      return;
-    }
-    prev = cur;
-    cur = (Heap_Mem_Block *)next_addr;
+  // Coalesce forward: absorb the immediately-following block if it is free.
+  Heap_Mem_Block *next =
+      (Heap_Mem_Block *)((uint8_t *)block + sizeof(Heap_Mem_Block) +
+                         block->size);
+  if (in_heap(next) && next->magic_number == SANITY_MAGIC_NUMBER &&
+      next->status == MEM_FREE) {
+    block->size += sizeof(Heap_Mem_Block) + next->size;
+    // The block that followed the absorbed `next` now follows `block`.
+    Heap_Mem_Block *after =
+        (Heap_Mem_Block *)((uint8_t *)block + sizeof(Heap_Mem_Block) +
+                           block->size);
+    if (in_heap(after) && after->magic_number == SANITY_MAGIC_NUMBER)
+      after->prev = block;
   }
 
-  // Try merge with next
-  uint8_t *maybe_next_addr =
-      (uint8_t *)block + sizeof(Heap_Mem_Block) + block->size;
-  if (in_heap(maybe_next_addr)) {
-    Heap_Mem_Block *next = (Heap_Mem_Block *)maybe_next_addr;
-    if (next->magic_number == SANITY_MAGIC_NUMBER && next->status == MEM_FREE) {
-      // merge block <- next
-      block->size += sizeof(Heap_Mem_Block) + next->size;
-    }
-  }
-
-  // Try merge with prev
-  if (prev && prev->status == MEM_FREE) {
-    // merge prev <- block
+  // Coalesce backward: let the previous block absorb `block` if it is free.
+  // block->prev makes this O(1) — no heap walk from the head.
+  Heap_Mem_Block *prev = block->prev;
+  if (prev && prev->magic_number == SANITY_MAGIC_NUMBER &&
+      prev->status == MEM_FREE) {
     prev->size += sizeof(Heap_Mem_Block) + block->size;
+    // Whatever now follows the enlarged `prev` must point its prev back to it.
+    Heap_Mem_Block *after =
+        (Heap_Mem_Block *)((uint8_t *)prev + sizeof(Heap_Mem_Block) +
+                           prev->size);
+    if (in_heap(after) && after->magic_number == SANITY_MAGIC_NUMBER)
+      after->prev = prev;
   }
 
   EXIT_CRITICAL();
