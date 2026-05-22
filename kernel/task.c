@@ -160,6 +160,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   task->delay_ticks = 0;
   task->next = NULL;
   task->prev = NULL;
+  task->wait_next = NULL;
   task->status = TASK_READY;
   task->magic = TCB_MAGIC;
   init_task_stack(task);
@@ -366,19 +367,18 @@ void wake_up_delayed_tasks(void) {
     TCB *next = task->next;
     if (task->wait_sem != NULL && task->delay_ticks != 0 &&
         task->delay_ticks < v_get_ticks()) {
-      // Remove from semaphore wait_q (singly-linked via next in the sema).
+      // Remove from semaphore wait_q (singly-linked via wait_next).
       sema_t *s = (sema_t *)task->wait_sem;
-      // Walk and remove from sema wait_q
       if (s->wait_q == task) {
-        s->wait_q = task->next; // task->next is next in wait_q
+        s->wait_q = task->wait_next;
         if (!s->wait_q)
           s->tail = NULL;
       } else {
         TCB *prev_node = s->wait_q;
-        while (prev_node && prev_node->next != task)
-          prev_node = prev_node->next;
+        while (prev_node && prev_node->wait_next != task)
+          prev_node = prev_node->wait_next;
         if (prev_node) {
-          prev_node->next = task->next;
+          prev_node->wait_next = task->wait_next;
           if (s->tail == task)
             s->tail = prev_node;
         }

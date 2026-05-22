@@ -40,9 +40,13 @@ typedef struct Task_Control_Block {
   uint32_t base_priority; // Base priority for inheritance
   Task_Status status;     // Current status
   void *wait_sem;         // Semaphore this task is blocking on (NULL if none)
-  struct Task_Control_Block *next; // Next in list (ready/blocked/etc.)
+  struct Task_Control_Block *next; // Next in list (ready/blocked/delayed)
   struct Task_Control_Block *prev; // Prev in list
-  uint32_t magic;                  // Sanity check (must be TCB_MAGIC)
+  // Separate link for the semaphore/mutex wait queue. A task blocked on a
+  // timed take is on both a sema wait queue AND blocked_list at once, so the
+  // wait queue must not share next/prev with the scheduler lists.
+  struct Task_Control_Block *wait_next;
+  uint32_t magic; // Sanity check (must be TCB_MAGIC)
 } TCB;
 
 #define TCB_MAGIC 0x54434221 // "TCB!"

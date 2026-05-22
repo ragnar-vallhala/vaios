@@ -13,26 +13,29 @@
 // low-priority waiter can no longer delay a high-priority control task
 // blocked on the same semaphore. O(n) in waiters on this one semaphore,
 // which is bounded and typically 1-3.
+// The wait queue threads through task->wait_next — never task->next — because
+// a task blocked on a timed take also sits on blocked_list (via next/prev) at
+// the same time.
 static void wait_q_enqueue(sema_t *sem, TCB *task) {
-  task->next = NULL;
+  task->wait_next = NULL;
 
   // Empty queue, or task outranks the current head -> new head.
   if (!sem->wait_q || sem->wait_q->priority < task->priority) {
-    task->next = sem->wait_q;
+    task->wait_next = sem->wait_q;
     sem->wait_q = task;
-    if (!task->next)
+    if (!task->wait_next)
       sem->tail = task;
     return;
   }
 
   // Walk past every waiter with priority >= task's (keeps ties FIFO).
   TCB *p = sem->wait_q;
-  while (p->next && p->next->priority >= task->priority)
-    p = p->next;
+  while (p->wait_next && p->wait_next->priority >= task->priority)
+    p = p->wait_next;
 
-  task->next = p->next;
-  p->next = task;
-  if (!task->next)
+  task->wait_next = p->wait_next;
+  p->wait_next = task;
+  if (!task->wait_next)
     sem->tail = task;
 }
 
@@ -41,11 +44,11 @@ static TCB *wait_q_dequeue(sema_t *sem) {
   if (!task)
     return NULL;
 
-  sem->wait_q = task->next;
+  sem->wait_q = task->wait_next;
   if (!sem->wait_q)
     sem->tail = NULL;
 
-  task->next = NULL;
+  task->wait_next = NULL;
   return task;
 }
 
@@ -300,6 +303,10 @@ int v_mutex_unlock_recursive(MutexHandle_t mtx) {
 
   rm->recursion_count--;
   if (rm->recursion_count == 0) {
+    // Balance this function's ENTER_CRITICAL before delegating — v_mutex_unlock
+    // runs its own critical section. Without this the nesting count never
+    // returns to 0, BASEPRI is never cleared, and the kernel freezes.
+    EXIT_CRITICAL();
     return v_mutex_unlock((MutexHandle_t)rm);
   }
   EXIT_CRITICAL();
