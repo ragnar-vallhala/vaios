@@ -110,8 +110,10 @@ static void test_task_create_in_ready_list(void) {
 static void test_task_create_oom(void) {
   full_reset();
   scheduler_init();
-  /* Exhaust heap with large allocations */
-  while (v_malloc(512))
+  /* Exhaust heap at finest granularity — segregated free lists may leave
+   * small fragments after large allocations, but 8-byte allocs drain all
+   * size classes including small ones. */
+  while (v_malloc(8))
     ;
   uint32_t id = task_create(dummy_task, NULL, 256, 1);
   TEST_ASSERT_EQ(id, 0u);
@@ -129,12 +131,12 @@ static void test_task_create_multi_priority(void) {
   TEST_ASSERT_NOT_NULL(ready_lists[5]);
 }
 
-/* wake_up_delayed_tasks moves tasks whose ticks have expired to ready list */
+/* wake_up_delayed_tasks_isr moves due sleepers from delayed_list to ready */
 static void test_wake_up_delayed_tasks(void) {
   full_reset();
   scheduler_init();
 
-  /* Manually create a TCB and add it to delayed list at tick=50 */
+  /* Manually park a TCB on the delayed list with deadline tick 50. */
   TCB t;
   memset(&t, 0, sizeof(t));
   t.task_id = 99;
@@ -144,14 +146,14 @@ static void test_wake_up_delayed_tasks(void) {
   enqueue_task(&delayed_list, &t);
   t.status = TASK_DELAYED;
 
-  /* Ticks haven't reached 50 yet – task stays delayed */
+  /* Below the deadline — stays delayed. */
   stub_set_ticks(30);
-  wake_up_delayed_tasks();
+  wake_up_delayed_tasks_isr();
   TEST_ASSERT_EQ(t.status, TASK_DELAYED);
 
-  /* Advance ticks past 50 → task should wake */
+  /* At/past the deadline — wakes (the ISR variant uses <=). */
   stub_set_ticks(51);
-  wake_up_delayed_tasks();
+  wake_up_delayed_tasks_isr();
   TEST_ASSERT_EQ(t.status, TASK_READY);
   TEST_ASSERT_NOT_NULL(ready_lists[2]);
 }

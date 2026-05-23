@@ -38,13 +38,18 @@ static TCB make_task(uint32_t id, uint32_t prio) {
   return t;
 }
 
-/* Reset all task module globals between tests */
+/* Reset all task module globals between tests. get_task_by_id (used by
+ * task_unblock) dereferences current_task, so point it at a sentinel TCB
+ * with an id that will never collide with a real test task. */
+static TCB _dummy_current = {0};
 static void reset_task_state(void) {
   for (int i = 0; i <= (int)MAX_PRIORITY; i++)
     ready_lists[i] = NULL;
   blocked_list = NULL;
   delayed_list = NULL;
   ready_bitmap = 0;
+  _dummy_current.task_id = UINT32_MAX;
+  current_task = &_dummy_current;
 }
 
 /* -------------------------------------------------------------------------
@@ -235,7 +240,7 @@ static void test_task_unblock(void) {
   add_to_blocked_list(&t);
   TEST_ASSERT_NULL(ready_lists[3]);
 
-  task_unblock(&t);
+  task_unblock(t.task_id);
   TEST_ASSERT_EQ(t.status, TASK_READY);
   TEST_ASSERT_NOT_NULL(ready_lists[3]);
   TEST_ASSERT_NULL(blocked_list);
@@ -246,7 +251,7 @@ static void test_task_unblock_noop(void) {
   reset_task_state();
   TCB t = make_task(1, 2);
   t.status = TASK_READY;
-  task_unblock(&t);                 /* should not crash */
+  task_unblock(t.task_id);          /* should not crash */
   TEST_ASSERT_NULL(ready_lists[2]); /* not added to ready list */
 }
 

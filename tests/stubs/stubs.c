@@ -49,28 +49,21 @@ void init_task_stack(TCB *task) {
 }
 
 /* -------------------------------------------------------------------------
- * _heap_start – provides the extern symbol that memory.c references.
- * stub_reset_heap() repoints heap_mem_head at the static buffer.
+ * _heap_start – backing storage for the kernel heap on the host.
+ *
+ * memory.c declares `extern uint32_t _heap_start;` and uses `&_heap_start`
+ * as the base of a HEAP_SIZE-byte region. Declare a real HEAP_SIZE buffer
+ * here, 8-byte aligned, so v_heap_memory_init()'s memset stays in-bounds
+ * and stub_reset_heap() can just invoke the real init (which sets up the
+ * one big free block AND the size-class free lists — both required by the
+ * segregated allocator).
  * ---------------------------------------------------------------------- */
-#define TEST_HEAP_SIZE 0x8000
-static uint8_t _heap_backing[TEST_HEAP_SIZE];
-
-/* Satisfy the "extern uint32_t _heap_start;" in memory.c.
- * (memory.c casts &_heap_start to Heap_Mem_Block*, so it just needs
- * to be a valid symbol.  We don't use its value directly.) */
-uint32_t _heap_start = 0;
-
 #include "memory.h"
-extern Heap_Mem_Block *heap_mem_head;
-extern uint32_t allocation_size;
-extern uint32_t allocation_count;
 
-void stub_reset_heap(void) {
-  memset(_heap_backing, 0, TEST_HEAP_SIZE);
-  heap_mem_head = (Heap_Mem_Block *)_heap_backing;
-  allocation_size = 0;
-  allocation_count = 0;
-}
+uint32_t _heap_start[HEAP_SIZE / sizeof(uint32_t)]
+    __attribute__((aligned(8)));
+
+void stub_reset_heap(void) { v_heap_memory_init(); }
 
 /* -------------------------------------------------------------------------
  * Logging stubs – silent; define STUB_VERBOSE to print
@@ -104,3 +97,24 @@ void *v_memset(void *s, int c, unsigned int n) { return memset(s, c, n); }
 uint32_t v_strlen(const char *s) { return (uint32_t)strlen(s); }
 
 int v_strcmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
+
+/* -------------------------------------------------------------------------
+ * v_panic stub — kernel code calls this on invariant violations
+ * (heap watermark, invalid task pointer, stack overflow, etc.). In a host
+ * test it means a real bug; print and abort so the test runner fails loudly.
+ * ---------------------------------------------------------------------- */
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+void v_panic(const char *file, int line, const char *fmt, ...) {
+  fprintf(stderr, "\n[STUB v_panic] %s:%d: ", file ? file : "?", line);
+  if (fmt) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+  }
+  fputc('\n', stderr);
+  abort();
+}

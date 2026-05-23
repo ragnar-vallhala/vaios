@@ -18,6 +18,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* Pull in the kernel config so test sources see MAX_TASK_PRIORITY /
+ * IDLE_TASK_PRIORITY / etc. — task.h's MAX_PRIORITY macro expands to them.
+ * Kernel sources get this transitively via utils.h; tests don't. */
+#include "vaios_config.h"
+
 /* -------------------------------------------------------------------------
  * Global counters (defined once via TEST_MAIN_IMPL in one .c file)
  * ---------------------------------------------------------------------- */

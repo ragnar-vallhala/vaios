@@ -60,7 +60,15 @@ add_executable(vaios_tests
 target_include_directories(vaios_tests PRIVATE ${TEST_INCLUDE_DIRS})
 
 target_compile_definitions(vaios_tests PRIVATE
-    CORTEX_M4          # required by task.h build guard
+    CORTEX_M4              # required by task.h build guard
+    HEAP_WATERMARK_ENABLE=0 # don't trip the heap-watermark v_panic when a
+                            # test deliberately exhausts the allocator
+    TASK_STACK_WATERMARK_ENABLE=0 # likewise for the stack-overflow check —
+                            # the host has no real task stack to overflow
+    STATIC_SEMAPHORE_SIZE=64 # rmutex_t on a 64-bit host has 8-byte pointers
+                             # (sema_t + owner + recursion_count + next_held),
+                             # which exceeds the 32-byte target-side default.
+                             # 64 is comfortably larger than both layouts.
 )
 
 target_compile_options(vaios_tests PRIVATE

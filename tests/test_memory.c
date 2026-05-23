@@ -27,7 +27,7 @@ static void reset(void) { stub_reset_heap(); }
 static void test_init_counters(void) {
   reset();
   TEST_ASSERT_EQ(v_get_heap_allocation_count(), 0u);
-  TEST_ASSERT_EQ(v_get_heap_size(), (uint32_t)0x8000);
+  TEST_ASSERT_EQ(v_get_heap_size(), (uint32_t)HEAP_SIZE);
 }
 
 /* Basic single allocation returns non-NULL */
