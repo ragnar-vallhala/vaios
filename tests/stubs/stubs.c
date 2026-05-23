@@ -121,6 +121,11 @@ int v_strcmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
 void set_systick_interrupt_priority(uint32_t prio) { (void)prio; }
 void set_pendsv_interrupt_priority(uint32_t prio) { (void)prio; }
 
+/* terminal.c's non-NAVHAL path reads characters via sh_readc (semihosting).
+ * The host build never drives the terminal's input loop, so a no-op
+ * returning 0 is fine. */
+char sh_readc(void) { return 0; }
+
 void v_panic(const char *file, int line, const char *fmt, ...) {
   fprintf(stderr, "\n[STUB v_panic] %s:%d: ", file ? file : "?", line);
   if (fmt) {

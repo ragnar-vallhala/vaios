@@ -31,6 +31,8 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/structure.c"
     "${VAIOS_ROOT}/kernel/vfs.c"
     "${VAIOS_ROOT}/kernel/vaios.c"
+    "${VAIOS_ROOT}/kernel/terminal.c"
+    "${VAIOS_ROOT}/kernel/qemu/qemu_irq.c"  # hal_interrupt_attach_callback shim
 )
 
 # -------------------------------------------------------------------------
@@ -53,6 +55,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_structure.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vaios.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.c"
 )
 
 # -------------------------------------------------------------------------

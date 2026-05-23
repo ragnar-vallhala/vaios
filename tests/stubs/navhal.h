@@ -10,4 +10,10 @@
  */
 #ifndef NAVHAL_H
 #define NAVHAL_H
+
+/* terminal.c references USART2_IRQn for hal_interrupt_attach_callback —
+ * matches the value in NavHAL's family/interrupt_reg.h, but any int will
+ * do (the host test build never actually invokes an ISR). */
+#define USART2_IRQn 38
+
 #endif /* NAVHAL_H */
