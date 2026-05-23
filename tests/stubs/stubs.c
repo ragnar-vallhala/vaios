@@ -94,6 +94,10 @@ void print_fmt(const char *fmt, ...) { (void)fmt; }
  * ---------------------------------------------------------------------- */
 void *v_memset(void *s, int c, unsigned int n) { return memset(s, c, n); }
 
+void *v_memcpy(void *dst, const void *src, unsigned int n) {
+  return memcpy(dst, src, n);
+}
+
 uint32_t v_strlen(const char *s) { return (uint32_t)strlen(s); }
 
 int v_strcmp(const char *s1, const char *s2) { return strcmp(s1, s2); }

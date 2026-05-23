@@ -28,6 +28,7 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/memory.c"
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"
+    "${VAIOS_ROOT}/kernel/structure.c"
 )
 
 # -------------------------------------------------------------------------
@@ -46,6 +47,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_task_list.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_ipc.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_structure.c"
 )
 
 # -------------------------------------------------------------------------
