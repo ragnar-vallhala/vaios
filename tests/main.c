@@ -14,6 +14,7 @@ void run_scheduler_tests(void);
 void run_ipc_tests(void);
 void run_structure_tests(void);
 void run_vfs_tests(void);
+void run_vaios_tests(void);
 
 int main(void) {
   run_memory_tests();
@@ -22,6 +23,7 @@ int main(void) {
   run_ipc_tests();
   run_structure_tests();
   run_vfs_tests();
+  run_vaios_tests();
 
   TEST_GLOBAL_REPORT();
 }

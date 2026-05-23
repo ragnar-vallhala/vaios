@@ -19,14 +19,16 @@
 #include "utils.h"
 
 /* -------------------------------------------------------------------------
- * Tick counter – tests can advance it by calling stub_set_ticks()
+ * Tick counter – tests can advance it by calling stub_set_ticks().
+ * Named `systick_count` (not the old _stub_ticks) so vaios.c's v_delay,
+ * which reads the global directly, resolves to this stub.
  * ---------------------------------------------------------------------- */
-static volatile uint32_t _stub_ticks = 0;
+volatile uint32_t systick_count = 0;
 
-void stub_set_ticks(uint32_t t) { _stub_ticks = t; }
-void stub_advance_ticks(uint32_t d) { _stub_ticks += d; }
+void stub_set_ticks(uint32_t t) { systick_count = t; }
+void stub_advance_ticks(uint32_t d) { systick_count += d; }
 
-uint32_t v_get_ticks(void) { return _stub_ticks; }
+uint32_t v_get_ticks(void) { return systick_count; }
 
 /* -------------------------------------------------------------------------
  * task_yield stub – counts calls so tests can inspect it
@@ -110,6 +112,14 @@ int v_strcmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+/* -------------------------------------------------------------------------
+ * Stubs for helpers vaios.c's non-NAVHAL branch normally pulls from
+ * semihosting.c. The host test build doesn't include semihosting.c.
+ * (_qemu_systick_init_ms is defined in vaios.c itself when NAVHAL is off.)
+ * ---------------------------------------------------------------------- */
+void set_systick_interrupt_priority(uint32_t prio) { (void)prio; }
+void set_pendsv_interrupt_priority(uint32_t prio) { (void)prio; }
 
 void v_panic(const char *file, int line, const char *fmt, ...) {
   fprintf(stderr, "\n[STUB v_panic] %s:%d: ", file ? file : "?", line);

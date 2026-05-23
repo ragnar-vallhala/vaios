@@ -127,7 +127,7 @@ void v_system_init(vaios_init_config_t *cfg) {
 #endif
   }
 #else
-  v_init();
+  v_init(cfg);
   v_heap_memory_init();
   scheduler_init();
 #endif
