@@ -29,6 +29,7 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/structure.c"
+    "${VAIOS_ROOT}/kernel/vfs.c"
 )
 
 # -------------------------------------------------------------------------
@@ -36,6 +37,7 @@ set(KERNEL_SOURCES
 # -------------------------------------------------------------------------
 set(STUB_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/v_fs_stub.c"
 )
 
 # -------------------------------------------------------------------------
@@ -48,6 +50,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_ipc.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_structure.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs.c"
 )
 
 # -------------------------------------------------------------------------
