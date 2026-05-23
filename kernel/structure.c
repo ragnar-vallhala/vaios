@@ -6,6 +6,21 @@
  * SPSC FIFO Implementation
  * -------------------------------------------------------------------------- */
 
+/* Defensive plausibility check against an spsc_fifo_t whose descriptor
+ * has been corrupted by an upstream writer (see vayu task #13).
+ * Returns true iff the descriptor's fields look like they could
+ * possibly belong to a real queue.
+ *
+ * 4096 is a heuristic upper bound covering all real queues in vayu —
+ * the biggest elem_size we ship is 76 (bmx160_all_reading_t) and the
+ * largest capacity is around 11. If you ever need a queue beyond
+ * those, bump these. NULL buffer also fails. */
+static int _spsc_descriptor_sane(const spsc_fifo_t *f) {
+  return f != 0 && f->buffer != 0 &&
+         f->capacity > 0 && f->capacity <= 4096 &&
+         f->elem_size > 0 && f->elem_size <= 4096;
+}
+
 void spsc_init(spsc_fifo_t *f, void *buffer, size_t capacity,
                size_t elem_size) {
   uintptr_t addr = (uintptr_t)buffer;
@@ -39,8 +54,12 @@ void spsc_set_policy(spsc_fifo_t *f, spsc_policy_t policy) {
 }
 
 size_t spsc_available(const spsc_fifo_t *f) {
+  if (!_spsc_descriptor_sane(f))
+    return 0;
   size_t head = f->head;
   size_t tail = f->tail;
+  if (head >= f->capacity) head = head % f->capacity;
+  if (tail >= f->capacity) tail = tail % f->capacity;
   if (head >= tail) {
     return head - tail;
   } else {
@@ -49,8 +68,12 @@ size_t spsc_available(const spsc_fifo_t *f) {
 }
 
 size_t spsc_space(const spsc_fifo_t *f) {
+  if (!_spsc_descriptor_sane(f))
+    return 0;
   size_t head = f->head;
   size_t tail = f->tail;
+  if (head >= f->capacity) head = head % f->capacity;
+  if (tail >= f->capacity) tail = tail % f->capacity;
   size_t free;
   if (head >= tail) {
     free = f->capacity - head + tail;
@@ -62,7 +85,7 @@ size_t spsc_space(const spsc_fifo_t *f) {
 }
 
 size_t spsc_write(spsc_fifo_t *f, const void *items, size_t count) {
-  if (count == 0 || f->capacity == 0)
+  if (count == 0 || !_spsc_descriptor_sane(f))
     return 0;
 
   size_t avail = spsc_space(f);
@@ -91,7 +114,17 @@ size_t spsc_write(spsc_fifo_t *f, const void *items, size_t count) {
     return 0;
 
   uint8_t *buf = (uint8_t *)f->buffer;
+  /* Clamp head into [0, capacity) before using it for offset math. If some
+   * upstream bug has corrupted f->head to a value >= capacity, the
+   * unsigned subtraction `capacity - head` below would underflow to
+   * SIZE_MAX and the next memcpy would write 30+ bytes at a wild
+   * address. We clamp here to contain the blast radius — the queue's
+   * own contents may still be wrong, but we won't trash unrelated RAM
+   * or peripheral space. TODO(vayu): find the upstream writer that
+   * corrupts head/tail in the first place; see vayu task #13. */
   size_t head = f->head;
+  if (head >= f->capacity)
+    head = head % f->capacity;
   size_t to_end = f->capacity - head;
 
   if (count <= to_end) {
@@ -105,15 +138,17 @@ size_t spsc_write(spsc_fifo_t *f, const void *items, size_t count) {
   /* Memory barrier to ensure data is written before head is updated */
   V_PORT_MB();
 
-  size_t new_head = head + count;
-  if (new_head >= f->capacity)
-    new_head -= f->capacity;
+  /* Use modulo (not single subtract) so we wrap correctly even if the
+   * starting head was already past capacity. */
+  size_t new_head = (head + count) % f->capacity;
   f->head = new_head;
 
   return count;
 }
 
 size_t spsc_read(spsc_fifo_t *f, void *out, size_t count) {
+  if (!_spsc_descriptor_sane(f))
+    return 0;
   size_t avail = spsc_available(f);
   if (count > avail)
     count = avail;
@@ -121,7 +156,10 @@ size_t spsc_read(spsc_fifo_t *f, void *out, size_t count) {
     return 0;
 
   uint8_t *buf = (uint8_t *)f->buffer;
+  /* Same defensive clamp as in spsc_write — see comment there. */
   size_t tail = f->tail;
+  if (tail >= f->capacity)
+    tail = tail % f->capacity;
   size_t to_end = f->capacity - tail;
 
   if (count <= to_end) {
@@ -135,15 +173,15 @@ size_t spsc_read(spsc_fifo_t *f, void *out, size_t count) {
   /* Memory barrier to ensure data is read before tail is updated */
   V_PORT_MB();
 
-  size_t new_tail = tail + count;
-  if (new_tail >= f->capacity)
-    new_tail -= f->capacity;
+  size_t new_tail = (tail + count) % f->capacity;
   f->tail = new_tail;
 
   return count;
 }
 
 size_t spsc_peek(const spsc_fifo_t *f, void *out, size_t count) {
+  if (!_spsc_descriptor_sane(f))
+    return 0;
   size_t avail = spsc_available(f);
   if (count > avail)
     count = avail;
@@ -151,7 +189,10 @@ size_t spsc_peek(const spsc_fifo_t *f, void *out, size_t count) {
     return 0;
 
   uint8_t *buf = (uint8_t *)f->buffer;
+  /* Same defensive clamp as in spsc_write — see comment there. */
   size_t tail = f->tail;
+  if (tail >= f->capacity)
+    tail = tail % f->capacity;
   size_t to_end = f->capacity - tail;
 
   if (count <= to_end) {
@@ -165,13 +206,15 @@ size_t spsc_peek(const spsc_fifo_t *f, void *out, size_t count) {
 }
 
 size_t spsc_skip(spsc_fifo_t *f, size_t count) {
+  if (!_spsc_descriptor_sane(f))
+    return 0;
   size_t avail = spsc_available(f);
   if (count > avail)
     count = avail;
 
-  size_t new_tail = f->tail + count;
-  if (new_tail >= f->capacity)
-    new_tail -= f->capacity;
+  /* Use modulo so we wrap correctly even if f->tail was already past
+   * capacity (see spsc_write comment about the upstream corruption). */
+  size_t new_tail = (f->tail + count) % f->capacity;
   f->tail = new_tail;
 
   return count;
