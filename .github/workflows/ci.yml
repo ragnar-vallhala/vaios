@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host-tests:
+    name: Host unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # Host tests stub navhal.h / utils/v_fs.h / utils/util.h, so the
+        # NavHAL submodule is not required to build them.
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              gcc cmake make
+
+      - name: Run host test suite
+        run: bash tools/run_tests.sh

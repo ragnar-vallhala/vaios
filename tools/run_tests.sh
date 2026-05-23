@@ -29,13 +29,15 @@ cmake --build "$BUILD_DIR" --parallel
 echo ""
 echo "=== Running tests ==="
 
-if [ "$VERBOSE" = "--verbose" ]; then
-    "$BUILD_DIR/vaios_tests"
-else
-    "$BUILD_DIR/vaios_tests"
-fi
+"$BUILD_DIR/vaios_tests"
+MAIN_EXIT=$?
 
-EXIT_CODE=$?
+echo ""
+echo "=== Running utils-only tests (separate binary) ==="
+"$BUILD_DIR/vaios_utils_tests"
+UTILS_EXIT=$?
+
+EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT ))
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     echo -e "\033[1;32m=== ALL TESTS PASSED ===\033[0m"
