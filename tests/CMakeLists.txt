@@ -93,3 +93,30 @@ add_test(NAME vaios_unit_tests COMMAND vaios_tests)
 set_tests_properties(vaios_unit_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
 )
+
+# -------------------------------------------------------------------------
+# vaios_utils_tests — second executable focused on kernel/utils.c.
+#
+# utils.c defines v_log / v_memset / v_memcpy / v_strlen / v_strcmp /
+# v_panic; the main vaios_tests binary stubs those out so the other suites
+# can compile cleanly. Linking utils.c into that binary would collide. Run
+# this isolated executable to exercise the real formatter (print_fmt_buf,
+# v_atof, and the static itoa/utoa it dispatches to).
+# -------------------------------------------------------------------------
+add_executable(vaios_utils_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/utils_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_utils.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/utils_stubs.c"
+    "${VAIOS_ROOT}/kernel/utils.c"
+)
+target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_utils_tests PRIVATE CORTEX_M4)
+target_compile_options(vaios_utils_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_utils_unit_tests COMMAND vaios_utils_tests)
+set_tests_properties(vaios_utils_unit_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+)
