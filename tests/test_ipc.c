@@ -228,6 +228,115 @@ static void test_mutex_static(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * Phase 2: regression tests for the two critical bug fixes
+ *   - wait_next separates the sema wait queue from blocked_list
+ *   - v_mutex_unlock_recursive used to leak a critical section on the
+ *     recursion-zero branch
+ * ---------------------------------------------------------------------- */
+
+/* Static TCBs the wait-queue tests construct manually. Static so they
+ * outlive the wake_up_delayed_tasks_isr call. */
+static TCB _phase2_t1, _phase2_t2;
+
+/* Park two tasks on `sem`'s wait queue (via wait_next) AND on blocked_list
+ * (via next/prev), both with the same timeout deadline. Wait-queue order:
+ * priority-ordered, head = highest priority. */
+static void phase2_setup_two_waiters(SemaphoreHandle_t sem, uint32_t deadline) {
+  sema_t *s = (sema_t *)sem;
+  memset(&_phase2_t1, 0, sizeof(_phase2_t1));
+  memset(&_phase2_t2, 0, sizeof(_phase2_t2));
+  _phase2_t1.task_id = 10;
+  _phase2_t1.priority = 2;
+  _phase2_t1.status = TASK_BLOCKED;
+  _phase2_t1.wait_sem = sem;
+  _phase2_t1.delay_ticks = deadline;
+  _phase2_t2.task_id = 11;
+  _phase2_t2.priority = 3;
+  _phase2_t2.status = TASK_BLOCKED;
+  _phase2_t2.wait_sem = sem;
+  _phase2_t2.delay_ticks = deadline;
+
+  s->wait_q = &_phase2_t2;
+  s->tail = &_phase2_t1;
+  _phase2_t2.wait_next = &_phase2_t1;
+  _phase2_t1.wait_next = NULL;
+
+  add_to_blocked_list(&_phase2_t1);
+  add_to_blocked_list(&_phase2_t2);
+}
+
+/* Wait queue (wait_next) and blocked_list (next/prev) carry the same tasks
+ * at once without corrupting each other. Pre-fix, add_to_blocked_list cleared
+ * task->next — which was the wait_q link — and lost waiters. */
+static void test_wait_queue_independent_of_blocked_list(void) {
+  full_reset();
+  SemaphoreHandle_t sem = v_semaphore_create_binary();
+  phase2_setup_two_waiters(sem, 1000);
+  sema_t *s = (sema_t *)sem;
+
+  /* Wait-queue walk via wait_next still works. */
+  TEST_ASSERT_EQ((TCB *)s->wait_q, &_phase2_t2);
+  TEST_ASSERT_EQ(_phase2_t2.wait_next, &_phase2_t1);
+  TEST_ASSERT_NULL(_phase2_t1.wait_next);
+
+  /* blocked_list walk via next contains both. */
+  int found_t1 = 0, found_t2 = 0;
+  for (TCB *p = blocked_list; p; p = p->next) {
+    if (p == &_phase2_t1)
+      found_t1 = 1;
+    if (p == &_phase2_t2)
+      found_t2 = 1;
+  }
+  TEST_ASSERT(found_t1);
+  TEST_ASSERT(found_t2);
+}
+
+/* SysTick's timeout-eject walks the wait queue via wait_next and removes
+ * both waiters from the sema and from blocked_list. Pre-fix, the eject walk
+ * via task->next wandered into blocked_list and lost a waiter. */
+static void test_sema_timeout_ejects_multiple_waiters(void) {
+  full_reset();
+  SemaphoreHandle_t sem = v_semaphore_create_binary();
+  phase2_setup_two_waiters(sem, 1000);
+  sema_t *s = (sema_t *)sem;
+
+  stub_set_ticks(2000); /* past deadline */
+  wake_up_delayed_tasks_isr();
+
+  TEST_ASSERT_EQ(_phase2_t1.status, TASK_READY);
+  TEST_ASSERT_EQ(_phase2_t2.status, TASK_READY);
+  TEST_ASSERT_NULL(s->wait_q);
+  TEST_ASSERT_NULL(blocked_list);
+}
+
+/* v_mutex_lock_recursive / v_mutex_unlock_recursive functional coverage —
+ * the recursion-zero branch must hand off cleanly to v_mutex_unlock and
+ * leave the mutex unowned. The BASEPRI critical-section leak the campaign
+ * fixed is target-only (host ENTER/EXIT_CRITICAL are no-ops); this verifies
+ * the end-to-end behaviour the leak prevented. */
+static void test_mutex_recursive_lock_unlock(void) {
+  full_reset();
+  MutexHandle_t mtx = v_mutex_create_recursive();
+  TEST_ASSERT_NOT_NULL(mtx);
+  rmutex_t *rm = (rmutex_t *)mtx;
+
+  TEST_ASSERT_EQ(v_mutex_lock_recursive(mtx, 0), VA_PASS);
+  TEST_ASSERT_EQ(rm->owner, current_task);
+  TEST_ASSERT_EQ(rm->recursion_count, 1u);
+
+  TEST_ASSERT_EQ(v_mutex_lock_recursive(mtx, 0), VA_PASS);
+  TEST_ASSERT_EQ(rm->recursion_count, 2u);
+
+  TEST_ASSERT_EQ(v_mutex_unlock_recursive(mtx), VA_PASS);
+  TEST_ASSERT_EQ(rm->recursion_count, 1u);
+  TEST_ASSERT_EQ(rm->owner, current_task);
+
+  TEST_ASSERT_EQ(v_mutex_unlock_recursive(mtx), VA_PASS);
+  TEST_ASSERT_EQ(rm->recursion_count, 0u);
+  TEST_ASSERT_NULL(rm->owner);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_ipc_tests(void) {
@@ -253,5 +362,9 @@ void run_ipc_tests(void) {
   TEST_RUN(test_mutex_unlock_relocks);
   TEST_RUN(test_mutex_null_handle);
   TEST_RUN(test_mutex_static);
+  /* Phase 2: campaign bug-fix regressions */
+  TEST_RUN(test_wait_queue_independent_of_blocked_list);
+  TEST_RUN(test_sema_timeout_ejects_multiple_waiters);
+  TEST_RUN(test_mutex_recursive_lock_unlock);
   TEST_SUITE_END();
 }
