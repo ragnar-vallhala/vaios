@@ -337,6 +337,137 @@ static void test_mutex_recursive_lock_unlock(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * Phase 3: tests for new IPC behaviour
+ *   - B2: priority-ordered semaphore wait queues
+ *   - B3: transitive priority inheritance + recompute-on-unlock
+ * ---------------------------------------------------------------------- */
+
+/* B2 — wait_q_enqueue inserts by priority. Two consecutive blocking takes
+ * by different-priority "tasks" leave the more urgent one at the head; the
+ * less urgent one follows via wait_next (ties remain FIFO). */
+static void test_wait_queue_priority_order(void) {
+  full_reset();
+  static TCB t_lo, t_hi;
+  memset(&t_lo, 0, sizeof(t_lo));
+  memset(&t_hi, 0, sizeof(t_hi));
+  t_lo.task_id = 50;
+  t_lo.priority = 2;
+  t_lo.status = TASK_RUNNING;
+  t_hi.task_id = 51;
+  t_hi.priority = 5;
+  t_hi.status = TASK_RUNNING;
+
+  SemaphoreHandle_t sem = v_semaphore_create_binary(); /* initial count 0 */
+  sema_t *s = (sema_t *)sem;
+
+  current_task = &t_lo;
+  v_semaphore_take(sem, 1000); /* blocks → t_lo on wait_q (sole) */
+  TEST_ASSERT_EQ((TCB *)s->wait_q, &t_lo);
+
+  current_task = &t_hi;
+  v_semaphore_take(sem, 1000); /* blocks → t_hi inserted before t_lo */
+  TEST_ASSERT_EQ((TCB *)s->wait_q, &t_hi);
+  TEST_ASSERT_EQ(t_hi.wait_next, &t_lo);
+  TEST_ASSERT_EQ((TCB *)s->tail, &t_lo);
+}
+
+/* B3 — transitive PI chain walk. H wants M1 (owner L1, mid-priority).
+ * L1 is itself blocked acquiring M2 (owner L2, low-priority). Boosting only
+ * L1 isn't enough — L2 must also be boosted, or L2 stays low-priority,
+ * gets preempted by mids, never finishes, never releases M2, and the chain
+ * never resolves. */
+static void test_pi_transitive_chain(void) {
+  full_reset();
+  static TCB l1, l2, h;
+  memset(&l1, 0, sizeof(l1));
+  memset(&l2, 0, sizeof(l2));
+  memset(&h, 0, sizeof(h));
+  l1.task_id = 60;
+  l1.priority = l1.base_priority = 2;
+  l1.status = TASK_RUNNING;
+  l2.task_id = 61;
+  l2.priority = l2.base_priority = 1;
+  l2.status = TASK_RUNNING;
+  h.task_id = 62;
+  h.priority = h.base_priority = 5;
+  h.status = TASK_RUNNING;
+
+  MutexHandle_t m1 = v_mutex_create();
+  MutexHandle_t m2 = v_mutex_create();
+  rmutex_t *rm2 = (rmutex_t *)m2;
+
+  current_task = &l2;
+  TEST_ASSERT_EQ(v_mutex_lock(m2, 0), VA_PASS);
+  current_task = &l1;
+  TEST_ASSERT_EQ(v_mutex_lock(m1, 0), VA_PASS);
+
+  /* Stand in for L1 being blocked acquiring M2 — the host stub can't really
+   * suspend a task, so we set the chain-walk hooks (status + wait_mutex)
+   * manually. */
+  l1.status = TASK_BLOCKED;
+  l1.wait_mutex = m2;
+  l1.wait_sem = &rm2->base;
+
+  /* H tries to lock M1. The take returns VA_FAIL immediately (count==0,
+   * ticks==0) but the chain walk runs inside its critical section first. */
+  current_task = &h;
+  v_mutex_lock(m1, 0);
+
+  TEST_ASSERT_EQ(l1.priority, 5u); /* boosted by H */
+  TEST_ASSERT_EQ(l2.priority, 5u); /* transitively boosted */
+}
+
+/* B3 — on unlock, the owner's priority is recomputed as
+ * max(base_priority, top waiter across all STILL-held mutexes). The old
+ * code unconditionally dropped to base, dropping below the priority of a
+ * waiter on a different held mutex — silent inversion. */
+static void test_pi_unlock_keeps_priority_floor(void) {
+  full_reset();
+  static TCB owner_t, mid, high;
+  memset(&owner_t, 0, sizeof(owner_t));
+  memset(&mid, 0, sizeof(mid));
+  memset(&high, 0, sizeof(high));
+  owner_t.task_id = 70;
+  owner_t.priority = owner_t.base_priority = 1;
+  owner_t.status = TASK_RUNNING;
+  mid.task_id = 71;
+  mid.priority = mid.base_priority = 3;
+  high.task_id = 72;
+  high.priority = high.base_priority = 5;
+
+  MutexHandle_t m1 = v_mutex_create();
+  MutexHandle_t m2 = v_mutex_create();
+  rmutex_t *rm1 = (rmutex_t *)m1;
+  rmutex_t *rm2 = (rmutex_t *)m2;
+
+  current_task = &owner_t;
+  TEST_ASSERT_EQ(v_mutex_lock(m1, 0), VA_PASS);
+  TEST_ASSERT_EQ(v_mutex_lock(m2, 0), VA_PASS);
+
+  /* Park `mid` on M1's wait queue and `high` on M2's. */
+  sema_t *s1 = &rm1->base;
+  sema_t *s2 = &rm2->base;
+  s1->wait_q = &mid;
+  s1->tail = &mid;
+  mid.wait_next = NULL;
+  s2->wait_q = &high;
+  s2->tail = &high;
+  high.wait_next = NULL;
+
+  /* Pretend the chain walk has already boosted owner to high's priority. */
+  owner_t.priority = 5;
+
+  /* Release M2. Recompute: max(base=1, top of M1 = mid=3) = 3. Must NOT
+   * collapse to base while M1 still has a higher-priority waiter. */
+  TEST_ASSERT_EQ(v_mutex_unlock(m2), VA_PASS);
+  TEST_ASSERT_EQ(owner_t.priority, 3u);
+
+  /* Release M1. No more held mutexes → drop to base. */
+  TEST_ASSERT_EQ(v_mutex_unlock(m1), VA_PASS);
+  TEST_ASSERT_EQ(owner_t.priority, 1u);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_ipc_tests(void) {
@@ -366,5 +497,9 @@ void run_ipc_tests(void) {
   TEST_RUN(test_wait_queue_independent_of_blocked_list);
   TEST_RUN(test_sema_timeout_ejects_multiple_waiters);
   TEST_RUN(test_mutex_recursive_lock_unlock);
+  /* Phase 3: new IPC behaviour */
+  TEST_RUN(test_wait_queue_priority_order);
+  TEST_RUN(test_pi_transitive_chain);
+  TEST_RUN(test_pi_unlock_keeps_priority_floor);
   TEST_SUITE_END();
 }
