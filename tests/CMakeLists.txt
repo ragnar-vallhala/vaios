@@ -57,6 +57,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vaios.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_perf.c"
 )
 
 # -------------------------------------------------------------------------
