@@ -16,6 +16,9 @@ uint8_t scheduler_running = 0;
 volatile uint32_t critical_nesting = 0;
 TCB *current_task = NULL;
 TCB *idle_task = NULL;
+/* kernel/perf.c reads memory.c's allocation_size to track heap peak.
+ * memory.c isn't linked into this binary, so stub the symbol. */
+uint32_t allocation_size = 0;
 
 /* Port helpers — utils.c's stack-overflow check reads PSP, v_panic disables
  * interrupts then halts. All trivialised here; the formatter tests never

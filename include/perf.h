@@ -45,6 +45,20 @@ typedef struct {
   uint32_t timeouts;      /* takes that returned VA_FAIL via timeout       */
 } v_perf_ipc_t;
 
+/* Heap allocator counters. per_class_allocs bins by the same size classes
+ * as kernel/memory.c (8/16/32/64/128/256/512/larger). */
+#define V_PERF_HEAP_NUM_CLASSES 8
+
+typedef struct {
+  uint32_t allocs;             /* successful v_malloc calls                */
+  uint32_t frees;              /* v_free calls (excludes NULL/error paths) */
+  uint32_t oom;                /* allocations that returned NULL           */
+  uint32_t splits;             /* malloc-time block splits                 */
+  uint32_t coalesces;          /* free-time merges (fwd + bwd combined)    */
+  uint32_t peak_bytes_in_use;  /* peak payload bytes outstanding           */
+  uint32_t per_class_allocs[V_PERF_HEAP_NUM_CLASSES];
+} v_perf_heap_t;
+
 #if VAIOS_MODULE_PERF
 
 /* Per-task perf counters. Embedded in TCB; sized so the on-target growth
@@ -74,6 +88,9 @@ void v_perf_isr_stats(v_perf_isr_t *out);
 /* IPC getter — atomic snapshot. */
 void v_perf_ipc_stats(v_perf_ipc_t *out);
 
+/* Heap getter — atomic snapshot. */
+void v_perf_heap_stats(v_perf_heap_t *out);
+
 #else  /* VAIOS_MODULE_PERF == 0 */
 
 static inline void     v_perf_init(void)              {}
@@ -85,6 +102,9 @@ static inline void v_perf_isr_stats(v_perf_isr_t *out) {
 }
 static inline void v_perf_ipc_stats(v_perf_ipc_t *out) {
   if (out) { v_perf_ipc_t z = {0}; *out = z; }
+}
+static inline void v_perf_heap_stats(v_perf_heap_t *out) {
+  if (out) { v_perf_heap_t z = {0}; *out = z; }
 }
 
 #endif /* VAIOS_MODULE_PERF */

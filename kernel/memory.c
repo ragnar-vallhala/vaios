@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "perf_hooks.h"
 #include "port.h"
 #include "utils.h"
 #include "vaios_config_default.h"
@@ -145,12 +146,14 @@ void *v_malloc(size_t size) {
     }
 #endif
     EXIT_CRITICAL();
+    PERF_HEAP_OOM();
     V_KLOG(LOG_ERROR, "[MEMORY] Dynamic allocation failed, memory exhausted.");
     return NULL;
   }
 
   fl_remove(blk); // claim it off its free list
 
+  int did_split = 0;
   // Split only if the residual can hold a header plus the minimum payload.
   if (blk->size >= size + sizeof(Heap_Mem_Block) + MIN_PAYLOAD) {
     Heap_Mem_Block *res =
@@ -168,11 +171,13 @@ void *v_malloc(size_t size) {
 
     blk->size = size;
     fl_insert(res);
+    did_split = 1;
   }
 
   blk->status = MEM_ALOC;
   allocation_count++;
   allocation_size += blk->size;
+  PERF_HEAP_ALLOC(blk->size, did_split);
 
   EXIT_CRITICAL();
   V_KLOG(LOG_DEBUG, "[MEMORY] Allocated 0x%x size %u",
@@ -212,6 +217,7 @@ void v_free(void *ptr) {
   allocation_count--;
   allocation_size -= block->size;
 
+  int coalesces = 0;
   // Coalesce forward: absorb the next block if it is free.
   Heap_Mem_Block *next =
       (Heap_Mem_Block *)((uint8_t *)block + sizeof(Heap_Mem_Block) +
@@ -225,6 +231,7 @@ void v_free(void *ptr) {
                            block->size);
     if (in_heap(after) && after->magic_number == SANITY_MAGIC_NUMBER)
       after->prev = block;
+    coalesces++;
   }
 
   // Coalesce backward: let the previous block absorb this one. O(1) via prev.
@@ -239,9 +246,11 @@ void v_free(void *ptr) {
     if (in_heap(after) && after->magic_number == SANITY_MAGIC_NUMBER)
       after->prev = prev;
     block = prev; // the merged block is `prev`
+    coalesces++;
   }
 
   fl_insert(block); // file the coalesced block on its size-class list
+  PERF_HEAP_FREE(coalesces);
 
   EXIT_CRITICAL();
   V_KLOG(LOG_DEBUG, "[MEMORY] Deallocated pointer at 0x%x", ptr);

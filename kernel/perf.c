@@ -176,6 +176,69 @@ void v_perf_ipc_stats(v_perf_ipc_t *out) {
 }
 
 /* --------------------------------------------------------------------------
+ * Heap accounting. Hooked from kernel/memory.c's v_malloc/v_free inside
+ * their critical sections, so the increment of allocation_size in memory.c
+ * is visible to the peak-tracking read here.
+ *
+ * The size-class binning here must match kernel/memory.c's size_class()
+ * — kept in sync by hand. V_PERF_HEAP_NUM_CLASSES is exposed in perf.h
+ * so the array dimension is the single source of truth on the public
+ * side; if memory.c ever changes its NUM_SIZE_CLASSES, both must move.
+ * -------------------------------------------------------------------------- */
+
+extern uint32_t allocation_size; /* kernel/memory.c */
+
+static uint32_t _perf_heap_allocs;
+static uint32_t _perf_heap_frees;
+static uint32_t _perf_heap_oom;
+static uint32_t _perf_heap_splits;
+static uint32_t _perf_heap_coalesces;
+static uint32_t _perf_heap_peak;
+static uint32_t _perf_heap_per_class[V_PERF_HEAP_NUM_CLASSES];
+
+static inline int _perf_heap_size_class(uint32_t size) {
+  if (size <= 8)   return 0;
+  if (size <= 16)  return 1;
+  if (size <= 32)  return 2;
+  if (size <= 64)  return 3;
+  if (size <= 128) return 4;
+  if (size <= 256) return 5;
+  if (size <= 512) return 6;
+  return 7;
+}
+
+void v_perf_on_heap_alloc(uint32_t size, int split) {
+  _perf_heap_allocs++;
+  if (split) _perf_heap_splits++;
+  _perf_heap_per_class[_perf_heap_size_class(size)]++;
+  if (allocation_size > _perf_heap_peak) {
+    _perf_heap_peak = allocation_size;
+  }
+}
+
+void v_perf_on_heap_free(int coalesces) {
+  _perf_heap_frees++;
+  _perf_heap_coalesces += (uint32_t)coalesces;
+}
+
+void v_perf_on_heap_oom(void) { _perf_heap_oom++; }
+
+void v_perf_heap_stats(v_perf_heap_t *out) {
+  if (!out) return;
+  ENTER_CRITICAL();
+  out->allocs            = _perf_heap_allocs;
+  out->frees             = _perf_heap_frees;
+  out->oom               = _perf_heap_oom;
+  out->splits            = _perf_heap_splits;
+  out->coalesces         = _perf_heap_coalesces;
+  out->peak_bytes_in_use = _perf_heap_peak;
+  for (int i = 0; i < V_PERF_HEAP_NUM_CLASSES; i++) {
+    out->per_class_allocs[i] = _perf_heap_per_class[i];
+  }
+  EXIT_CRITICAL();
+}
+
+/* --------------------------------------------------------------------------
  * Init. Brings up the cycle counter and zeros internal state. Safe to call
  * before scheduler_start.
  * -------------------------------------------------------------------------- */
@@ -199,6 +262,15 @@ void v_perf_init(void) {
   _perf_ipc_takes_blocked = 0;
   _perf_ipc_gives = 0;
   _perf_ipc_timeouts = 0;
+  _perf_heap_allocs = 0;
+  _perf_heap_frees = 0;
+  _perf_heap_oom = 0;
+  _perf_heap_splits = 0;
+  _perf_heap_coalesces = 0;
+  _perf_heap_peak = 0;
+  for (int i = 0; i < V_PERF_HEAP_NUM_CLASSES; i++) {
+    _perf_heap_per_class[i] = 0;
+  }
   /* scheduler_init() runs before v_perf_init() and points current_task at
    * the idle task. Prime its last_scheduled_cyc so the first real switch
    * accumulates a sensible delta instead of (now - 0). */
