@@ -59,16 +59,33 @@ typedef struct {
   uint32_t per_class_allocs[V_PERF_HEAP_NUM_CLASSES];
 } v_perf_heap_t;
 
-#if VAIOS_MODULE_PERF
-
-/* Per-task perf counters. Embedded in TCB; sized so the on-target growth
- * is well under one cache line. */
+/* Per-task perf counters. Embedded in TCB (only when VAIOS_MODULE_PERF=1)
+ * but the type is always defined so the v_perf_task_stats signature stays
+ * stable across ON/OFF builds. */
 typedef struct {
   uint64_t cycles_run;        /* total cycles this task held the CPU      */
   uint64_t last_scheduled_cyc;/* cycles@last switch-in (transient)        */
   uint32_t max_burst_cyc;     /* longest single uninterrupted run         */
   uint32_t switches_in;       /* times this task was switched ONTO CPU    */
 } v_perf_task_t;
+
+/* Composite snapshot returned by v_perf_snapshot. Bundles the system-wide
+ * scheduler stats with the per-subsystem sub-structs so callers can take
+ * a single coherent reading. The cycles+uptime pair stamps the snapshot. */
+typedef struct {
+  uint64_t cycles;              /* v_perf_cycles() at snapshot time       */
+  uint32_t uptime_ticks;        /* v_get_ticks() at snapshot time         */
+  uint32_t sched_switches;
+  uint64_t idle_cycles;
+  v_perf_isr_t  isr;
+  v_perf_ipc_t  ipc;
+  v_perf_heap_t heap;
+} v_perf_snapshot_t;
+
+/* Forward decl so v_perf_task_stats's signature doesn't drag in task.h. */
+struct Task_Control_Block;
+
+#if VAIOS_MODULE_PERF
 
 void     v_perf_init(void);
 
@@ -91,6 +108,24 @@ void v_perf_ipc_stats(v_perf_ipc_t *out);
 /* Heap getter — atomic snapshot. */
 void v_perf_heap_stats(v_perf_heap_t *out);
 
+/* Per-task getter — copies the in-TCB counters. */
+void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out);
+
+/* Composite snapshot — calls each *_stats getter and stamps cycles/uptime.
+ * Not strictly atomic across sub-domains (each sub-struct is internally
+ * consistent, but counters in domain A may advance while B is being read).
+ * Good enough for diagnostic display; not for cross-domain math. */
+void v_perf_snapshot(v_perf_snapshot_t *out);
+
+/* Pretty-print the snapshot via print_fmt — multi-line, UART-bound. Slow:
+ * use v_perf_dump_to_file (Phase 6b) for long-run capture to avoid
+ * stretching the serial console. */
+void v_perf_dump(void);
+
+/* Zero all counters. The cycle counter and per-task last_scheduled_cyc
+ * are re-primed to the current cycle so accounting resumes cleanly. */
+void v_perf_reset(void);
+
 #else  /* VAIOS_MODULE_PERF == 0 */
 
 static inline void     v_perf_init(void)              {}
@@ -106,6 +141,16 @@ static inline void v_perf_ipc_stats(v_perf_ipc_t *out) {
 static inline void v_perf_heap_stats(v_perf_heap_t *out) {
   if (out) { v_perf_heap_t z = {0}; *out = z; }
 }
+static inline void v_perf_task_stats(struct Task_Control_Block *t,
+                                     v_perf_task_t *out) {
+  (void)t;
+  if (out) { v_perf_task_t z = {0}; *out = z; }
+}
+static inline void v_perf_snapshot(v_perf_snapshot_t *out) {
+  if (out) { v_perf_snapshot_t z = {0}; *out = z; }
+}
+static inline void v_perf_dump(void) {}
+static inline void v_perf_reset(void) {}
 
 #endif /* VAIOS_MODULE_PERF */
 

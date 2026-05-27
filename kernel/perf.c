@@ -13,6 +13,7 @@
 
 #include "atomic.h" /* ENTER_CRITICAL / EXIT_CRITICAL via port.h */
 #include "task.h"
+#include "utils.h" /* print_fmt, v_get_ticks */
 
 #include <stdint.h>
 
@@ -239,16 +240,98 @@ void v_perf_heap_stats(v_perf_heap_t *out) {
 }
 
 /* --------------------------------------------------------------------------
- * Init. Brings up the cycle counter and zeros internal state. Safe to call
- * before scheduler_start.
+ * Per-task getter. v_perf_task_t is the same struct embedded in TCB; this
+ * copies under a critical section so readers see a consistent record even
+ * if a context switch races with the read.
+ * -------------------------------------------------------------------------- */
+
+void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out) {
+  if (!out) return;
+  if (!t) { v_perf_task_t z = {0}; *out = z; return; }
+  ENTER_CRITICAL();
+  *out = t->perf;
+  EXIT_CRITICAL();
+}
+
+/* --------------------------------------------------------------------------
+ * Composite snapshot. Each sub-getter is internally consistent (its own
+ * critical section); the cycle stamp and uptime tag the read for ordering
+ * but the sub-domains may advance independently between getters. Good
+ * enough for diagnostic display.
+ * -------------------------------------------------------------------------- */
+
+void v_perf_snapshot(v_perf_snapshot_t *out) {
+  if (!out) return;
+  ENTER_CRITICAL();
+  out->cycles         = v_perf_cycles();
+  out->uptime_ticks   = v_get_ticks();
+  out->sched_switches = _perf_sched_switches;
+  out->idle_cycles    = _perf_idle_cycles;
+  EXIT_CRITICAL();
+  v_perf_isr_stats(&out->isr);
+  v_perf_ipc_stats(&out->ipc);
+  v_perf_heap_stats(&out->heap);
+}
+
+/* --------------------------------------------------------------------------
+ * Dump. Pretty-prints the snapshot via print_fmt — one logical line per
+ * counter group. Caller pays the UART cost; use v_perf_dump_to_file
+ * (Phase 6b) for long-running capture to avoid baud-stretch.
+ * -------------------------------------------------------------------------- */
+
+void v_perf_dump(void) {
+  v_perf_snapshot_t s;
+  v_perf_snapshot(&s);
+
+  print_fmt("=== vaios perf snapshot ===\r\n");
+  print_fmt("uptime:     %u ticks\r\n", (unsigned)s.uptime_ticks);
+  /* 64-bit cycles printed as two %x halves — print_fmt is integer-only. */
+  print_fmt("cycles:     0x%x%x\r\n",
+            (unsigned)(s.cycles >> 32), (unsigned)(s.cycles & 0xFFFFFFFFu));
+
+  print_fmt("[sched]\r\n");
+  print_fmt("  switches:     %u\r\n", (unsigned)s.sched_switches);
+  print_fmt("  idle cycles:  0x%x%x\r\n",
+            (unsigned)(s.idle_cycles >> 32),
+            (unsigned)(s.idle_cycles & 0xFFFFFFFFu));
+
+  print_fmt("[isr/systick]\r\n");
+  print_fmt("  count:        %u\r\n", (unsigned)s.isr.systick_count);
+  print_fmt("  last:         %u cyc\r\n", (unsigned)s.isr.systick_last_cyc);
+  print_fmt("  min/max:      %u / %u cyc\r\n",
+            (unsigned)s.isr.systick_min_cyc, (unsigned)s.isr.systick_max_cyc);
+  print_fmt("  preemptions:  %u\r\n", (unsigned)s.isr.systick_preemptions);
+
+  print_fmt("[ipc]\r\n");
+  print_fmt("  takes:        %u (blocked=%u, timeout=%u)\r\n",
+            (unsigned)s.ipc.takes, (unsigned)s.ipc.takes_blocked,
+            (unsigned)s.ipc.timeouts);
+  print_fmt("  gives:        %u\r\n", (unsigned)s.ipc.gives);
+
+  print_fmt("[heap]\r\n");
+  print_fmt("  allocs/frees: %u / %u (oom=%u)\r\n",
+            (unsigned)s.heap.allocs, (unsigned)s.heap.frees,
+            (unsigned)s.heap.oom);
+  print_fmt("  splits:       %u\r\n", (unsigned)s.heap.splits);
+  print_fmt("  coalesces:    %u\r\n", (unsigned)s.heap.coalesces);
+  print_fmt("  peak bytes:   %u\r\n", (unsigned)s.heap.peak_bytes_in_use);
+  print_fmt("  by class:     ");
+  for (int i = 0; i < V_PERF_HEAP_NUM_CLASSES; i++) {
+    print_fmt("c%d=%u ", i, (unsigned)s.heap.per_class_allocs[i]);
+  }
+  print_fmt("\r\n=== end ===\r\n");
+}
+
+/* --------------------------------------------------------------------------
+ * Init / reset. v_perf_reset zeros every counter and re-primes the cycle
+ * counter shadow + current_task->perf.last_scheduled_cyc so accounting
+ * resumes from a clean baseline. v_perf_init also brings up the hardware
+ * cycle counter on the target — only needed once at boot.
  * -------------------------------------------------------------------------- */
 
 extern TCB *current_task; /* defined in kernel/task.c */
 
-void v_perf_init(void) {
-#ifdef NAVHAL
-  hal_cycle_counter_init();
-#endif
+static void _perf_zero_counters(void) {
   _perf_cyc_high = 0;
   _perf_cyc_last = 0;
   _perf_sched_switches = 0;
@@ -271,6 +354,26 @@ void v_perf_init(void) {
   for (int i = 0; i < V_PERF_HEAP_NUM_CLASSES; i++) {
     _perf_heap_per_class[i] = 0;
   }
+}
+
+void v_perf_reset(void) {
+  ENTER_CRITICAL();
+  _perf_zero_counters();
+  /* Re-prime the running task so its next switch-out delta is sane. */
+  if (current_task) {
+    current_task->perf.cycles_run = 0;
+    current_task->perf.max_burst_cyc = 0;
+    current_task->perf.switches_in = 0;
+    current_task->perf.last_scheduled_cyc = v_perf_cycles();
+  }
+  EXIT_CRITICAL();
+}
+
+void v_perf_init(void) {
+#ifdef NAVHAL
+  hal_cycle_counter_init();
+#endif
+  _perf_zero_counters();
   /* scheduler_init() runs before v_perf_init() and points current_task at
    * the idle task. Prime its last_scheduled_cyc so the first real switch
    * accumulates a sensible delta instead of (now - 0). */
