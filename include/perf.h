@@ -126,6 +126,15 @@ void v_perf_dump(void);
  * are re-primed to the current cycle so accounting resumes cleanly. */
 void v_perf_reset(void);
 
+#if VAIOS_MODULE_VFS
+/* CSV dump to a VFS-backed file. Returns 0 on success, -1 on open
+ * failure (path invalid, VFS not mounted, disk full, etc). Format is
+ * documented in docs/perf/IMPLEMENTATION_PLAN.md §9a — one section per
+ * subsystem, greppable, importable without a parser. Cycles are split
+ * into _high / _low uint32 fields because print_fmt is 32-bit only. */
+int v_perf_dump_to_file(const char *path);
+#endif
+
 #else  /* VAIOS_MODULE_PERF == 0 */
 
 static inline void     v_perf_init(void)              {}
@@ -151,6 +160,11 @@ static inline void v_perf_snapshot(v_perf_snapshot_t *out) {
 }
 static inline void v_perf_dump(void) {}
 static inline void v_perf_reset(void) {}
+#if VAIOS_MODULE_VFS
+static inline int v_perf_dump_to_file(const char *path) {
+  (void)path; return -1;
+}
+#endif
 
 #endif /* VAIOS_MODULE_PERF */
 

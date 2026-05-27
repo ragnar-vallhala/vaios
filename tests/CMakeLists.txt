@@ -115,7 +115,9 @@ add_executable(vaios_utils_tests
     "${VAIOS_ROOT}/kernel/perf.c"  # SysTick_Handler in utils.c hooks perf.
 )
 target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
-target_compile_definitions(vaios_utils_tests PRIVATE CORTEX_M4)
+# Force VFS off so kernel/perf.c's CSV writer doesn't drag vfs_open/etc into
+# this binary — vaios_utils_tests does not link vfs.c.
+target_compile_definitions(vaios_utils_tests PRIVATE CORTEX_M4 VAIOS_MODULE_VFS=0)
 target_compile_options(vaios_utils_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -g -O0

@@ -91,6 +91,21 @@ void print(const char *str) { (void)str; }
 
 void print_fmt(const char *fmt, ...) { (void)fmt; }
 
+/* kernel/perf.c v_perf_dump_to_file builds CSV lines via vaprint_fmt_buf.
+ * On host we route to vsnprintf so the test path can exercise the writer
+ * against a memory-backed VFS without pulling in the kernel's full formatter. */
+int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list ap) {
+  int n = vsnprintf(out, out_size, fmt, ap);
+  return n < 0 ? 0 : n;
+}
+int print_fmt_buf(char *out, uint32_t out_size, const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vaprint_fmt_buf(out, out_size, fmt, ap);
+  va_end(ap);
+  return n;
+}
+
 /* -------------------------------------------------------------------------
  * Utility function stubs – forward to libc equivalents
  * ---------------------------------------------------------------------- */
@@ -103,6 +118,9 @@ void *v_memcpy(void *dst, const void *src, unsigned int n) {
 uint32_t v_strlen(const char *s) { return (uint32_t)strlen(s); }
 
 int v_strcmp(const char *s1, const char *s2) { return strcmp(s1, s2); }
+int v_strncmp(const char *s1, const char *s2, int n) {
+  return strncmp(s1, s2, (size_t)n);
+}
 
 /* -------------------------------------------------------------------------
  * v_panic stub — kernel code calls this on invariant violations

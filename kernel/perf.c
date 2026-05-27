@@ -13,9 +13,14 @@
 
 #include "atomic.h" /* ENTER_CRITICAL / EXIT_CRITICAL via port.h */
 #include "task.h"
-#include "utils.h" /* print_fmt, v_get_ticks */
+#include "utils.h" /* print_fmt, print_fmt_buf, v_get_ticks */
 
+#include <stddef.h>
 #include <stdint.h>
+
+#if VAIOS_MODULE_VFS
+#include "vfs.h"
+#endif
 
 #ifdef NAVHAL
 #include "common/hal_dwt.h"
@@ -381,5 +386,95 @@ void v_perf_init(void) {
     current_task->perf.last_scheduled_cyc = v_perf_cycles();
   }
 }
+
+/* --------------------------------------------------------------------------
+ * VFS-backed CSV dump (Phase 6b).
+ *
+ * The terminal `perf show` path stretches the UART (a full snapshot is a
+ * few KB at 115200 baud ≈ 11 KB/s — measurable seconds of console wait
+ * during which other output competes). Saving to SD via the VFS layer
+ * drops the dump to a single buffered write at FatFs throughput.
+ *
+ * Format per docs/perf/IMPLEMENTATION_PLAN.md §9a — one section per
+ * subsystem, one key/value pair per line, blank line between sections.
+ * 64-bit cycle counters are split into _high / _low uint32 fields because
+ * print_fmt_buf is 32-bit-only.
+ *
+ * No runtime mount probe: vfs_open is the probe. If FatFs isn't mounted
+ * (or the path is invalid) the open fails and we return -1 — the terminal
+ * surfaces a clear error.
+ * -------------------------------------------------------------------------- */
+
+#if VAIOS_MODULE_VFS
+
+static int _perf_write_line(vfs_fd_t fd, const char *fmt, ...) {
+  char buf[160];
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vaprint_fmt_buf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  if (n <= 0) return 0;
+  return vfs_write(fd, buf, (size_t)n);
+}
+
+int v_perf_dump_to_file(const char *path) {
+  if (!path) return -1;
+
+  vfs_fd_t fd = vfs_open(path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC);
+  if (fd < 0) return -1;
+
+  v_perf_snapshot_t s;
+  v_perf_snapshot(&s);
+
+  _perf_write_line(fd, "# vaios perf snapshot\n");
+  _perf_write_line(fd, "uptime_ticks,%u\n", (unsigned)s.uptime_ticks);
+  _perf_write_line(fd, "cycles_high,%u\n", (unsigned)(s.cycles >> 32));
+  _perf_write_line(fd, "cycles_low,%u\n",
+                   (unsigned)(s.cycles & 0xFFFFFFFFu));
+
+  _perf_write_line(fd, "\n# sched\n");
+  _perf_write_line(fd, "total_switches,%u\n", (unsigned)s.sched_switches);
+  _perf_write_line(fd, "idle_cycles_high,%u\n",
+                   (unsigned)(s.idle_cycles >> 32));
+  _perf_write_line(fd, "idle_cycles_low,%u\n",
+                   (unsigned)(s.idle_cycles & 0xFFFFFFFFu));
+
+  _perf_write_line(fd, "\n# isr\n");
+  _perf_write_line(fd, "systick_count,%u\n", (unsigned)s.isr.systick_count);
+  _perf_write_line(fd, "systick_last_cyc,%u\n",
+                   (unsigned)s.isr.systick_last_cyc);
+  _perf_write_line(fd, "systick_min_cyc,%u\n",
+                   (unsigned)s.isr.systick_min_cyc);
+  _perf_write_line(fd, "systick_max_cyc,%u\n",
+                   (unsigned)s.isr.systick_max_cyc);
+  _perf_write_line(fd, "systick_preemptions,%u\n",
+                   (unsigned)s.isr.systick_preemptions);
+
+  _perf_write_line(fd, "\n# ipc\n");
+  _perf_write_line(fd, "takes,%u\n", (unsigned)s.ipc.takes);
+  _perf_write_line(fd, "takes_blocked,%u\n", (unsigned)s.ipc.takes_blocked);
+  _perf_write_line(fd, "gives,%u\n", (unsigned)s.ipc.gives);
+  _perf_write_line(fd, "timeouts,%u\n", (unsigned)s.ipc.timeouts);
+
+  _perf_write_line(fd, "\n# heap\n");
+  _perf_write_line(fd, "allocs,%u\n", (unsigned)s.heap.allocs);
+  _perf_write_line(fd, "frees,%u\n", (unsigned)s.heap.frees);
+  _perf_write_line(fd, "oom,%u\n", (unsigned)s.heap.oom);
+  _perf_write_line(fd, "splits,%u\n", (unsigned)s.heap.splits);
+  _perf_write_line(fd, "coalesces,%u\n", (unsigned)s.heap.coalesces);
+  _perf_write_line(fd, "peak_bytes_in_use,%u\n",
+                   (unsigned)s.heap.peak_bytes_in_use);
+
+  _perf_write_line(fd, "\n# heap_by_class\n");
+  _perf_write_line(fd, "class,allocs\n");
+  for (int i = 0; i < V_PERF_HEAP_NUM_CLASSES; i++) {
+    _perf_write_line(fd, "%d,%u\n", i, (unsigned)s.heap.per_class_allocs[i]);
+  }
+
+  vfs_close(fd);
+  return 0;
+}
+
+#endif /* VAIOS_MODULE_VFS */
 
 #endif /* VAIOS_MODULE_PERF */

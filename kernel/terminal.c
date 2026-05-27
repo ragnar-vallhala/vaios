@@ -106,7 +106,27 @@ static void perf_command(void *args) {
     print_fmt("perf: counters reset\r\n");
     return;
   }
+#if VAIOS_MODULE_VFS
+  /* `perf save <path>` — write a CSV snapshot to the VFS. */
+  if (v_strncmp(sub, "save", 4) == 0 && (sub[4] == ' ' || sub[4] == '\0')) {
+    const char *path = sub + 4;
+    while (*path == ' ') path++;
+    if (*path == '\0') {
+      print_fmt("usage: perf save <path>\r\n");
+      return;
+    }
+    int rc = v_perf_dump_to_file(path);
+    if (rc == 0) {
+      print_fmt("perf: saved to %s\r\n", path);
+    } else {
+      print_fmt("perf: save failed (is VFS mounted?)\r\n");
+    }
+    return;
+  }
+  print_fmt("usage: perf [show|reset|save <path>]\r\n");
+#else
   print_fmt("usage: perf [show|reset]\r\n");
+#endif
 }
 #endif /* VAIOS_MODULE_PERF */
 
