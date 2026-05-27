@@ -1,6 +1,7 @@
 #include "task.h"
 #include "ipc.h"
 #include "memory.h"
+#include "perf_hooks.h"
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
@@ -200,6 +201,12 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   task->wait_mutex = NULL;
   task->held_mutexes = NULL;
   task->status = TASK_READY;
+#if VAIOS_MODULE_PERF
+  task->perf.cycles_run = 0;
+  task->perf.last_scheduled_cyc = 0;
+  task->perf.max_burst_cyc = 0;
+  task->perf.switches_in = 0;
+#endif
   task->magic = TCB_MAGIC;
   init_task_stack(task);
 
@@ -217,6 +224,9 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------
 TCB *get_next_task(void) {
+#if VAIOS_MODULE_PERF
+  TCB *_perf_prev = current_task;
+#endif
   uint32_t now = v_get_ticks();
   current_task->ticks_run += now - last_context_switch_tick;
   last_context_switch_tick = now;
@@ -245,6 +255,7 @@ TCB *get_next_task(void) {
   }
   current_task->status = TASK_RUNNING;
   context_switch_count++;
+  PERF_SCHED_SWITCH(_perf_prev, current_task);
 #if TASK_STACK_WATERMARK_ENABLE == 1
   if ((uint32_t)(current_task->sp) <
       ((uint32_t)current_task->mem_block + TASK_STACK_OVERFLOW_THRESHOLD)) {

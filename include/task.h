@@ -4,6 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "vaios_config.h"
+#include "perf.h"
+
 //-----------------------------------------------------------------------------
 // Architecture Validation
 // Require CORTEX_M to be defined by the build system/port.
@@ -50,6 +53,9 @@ typedef struct Task_Control_Block {
   // timed take is on both a sema wait queue AND blocked_list at once, so the
   // wait queue must not share next/prev with the scheduler lists.
   struct Task_Control_Block *wait_next;
+#if VAIOS_MODULE_PERF
+  v_perf_task_t perf; // Per-task perf counters (see perf.h)
+#endif
   uint32_t magic; // Sanity check (must be TCB_MAGIC)
 } TCB;
 
