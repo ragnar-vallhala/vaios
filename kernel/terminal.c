@@ -10,6 +10,7 @@
 #endif
 #include "navhal.h"
 #endif
+#include "perf.h"
 #include "task.h"
 #include "terminal.h"
 #include "utils.h"
@@ -77,6 +78,38 @@ static void list_commands(void *args) {
   }
 }
 
+#if VAIOS_MODULE_PERF
+/* `perf [show|reset]` — display or zero kernel perf counters.
+ *
+ * No-arg `perf` is treated as `perf show`. Unknown sub-commands fall
+ * through to a usage hint. Phase 6b adds `perf save <path>` gated on
+ * VAIOS_MODULE_VFS and a runtime mount check. */
+static const char *_perf_cmd_subarg(const char *cmd_str) {
+  if (!cmd_str) return NULL;
+  /* Skip leading whitespace (terminal already trims, but be defensive). */
+  while (*cmd_str == ' ') cmd_str++;
+  /* Skip the command name itself. */
+  while (*cmd_str && *cmd_str != ' ') cmd_str++;
+  /* Skip space(s) before the sub-command. */
+  while (*cmd_str == ' ') cmd_str++;
+  return cmd_str;
+}
+
+static void perf_command(void *args) {
+  const char *sub = _perf_cmd_subarg((const char *)args);
+  if (!sub || *sub == '\0' || v_strcmp(sub, "show") == 0) {
+    v_perf_dump();
+    return;
+  }
+  if (v_strcmp(sub, "reset") == 0) {
+    v_perf_reset();
+    print_fmt("perf: counters reset\r\n");
+    return;
+  }
+  print_fmt("usage: perf [show|reset]\r\n");
+}
+#endif /* VAIOS_MODULE_PERF */
+
 static void _onRecieve(void) {
   if (_initialized_terminal) {
     char c = 'a';
@@ -137,6 +170,9 @@ void terminal_init(void) {
   register_command(vaios_self_check, "vaios");
   register_command(clear_shell, "clear");
   register_command(list_commands, "ls");
+#if VAIOS_MODULE_PERF
+  register_command(perf_command, "perf");
+#endif
 #if defined(NAVHAL)
   hal_interrupt_attach_callback(USART2_IRQn, _onRecieve);
   hal_enable_interrupt(USART2_IRQn);
