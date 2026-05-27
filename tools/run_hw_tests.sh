@@ -29,6 +29,12 @@ PORT="${PORT:-/dev/ttyACM0}"
 CAPTURE_SECS="${CAPTURE_SECS:-15}"
 BUILD_DIR="build_hw_tests"
 
+# Tee per-example output into a log so the cross-suite summary table at
+# the end can re-parse the same suite/test lines that the host test
+# runner uses (tools/run_tests.sh). mktemp'd and rm'd on exit.
+SUMMARY_LOG="$(mktemp)"
+trap 'rm -f "$SUMMARY_LOG"' EXIT
+
 c_red()   { printf '\033[1;31m%s\033[0m' "$1"; }
 c_green() { printf '\033[1;32m%s\033[0m' "$1"; }
 c_blue()  { printf '\033[1;34m%s\033[0m' "$1"; }
@@ -52,17 +58,44 @@ if [ ! -e "$PORT" ]; then
 fi
 
 # ----- per-example runner -----------------------------------------------------
+# Output mirrors the host-test runner (tools/run_tests.sh) so the same
+# summary-table parser can chew through both. Each example becomes a
+# Suite; each required UART pattern is one "test" whose assertion count
+# is 1. Build / flash failures emit a synthetic single FAIL test so the
+# suite still shows up in the summary.
 PASSES=0
 FAILS=0
 FAIL_NAMES=()
 
+# Print one host-format test line (PASS or FAIL) and mirror to SUMMARY_LOG.
+#   $1 = name shown on the left  (truncated to 50 chars)
+#   $2 = "PASS" or "FAIL"
+#   $3 = passed-asserts count    (for PASS: total; for FAIL: passed/total)
+#   $4 = total-asserts count
+emit_test_line() {
+  local label="$1" verdict="$2" got="$3" tot="$4"
+  local short="${label:0:50}"
+  if [ "$verdict" = "PASS" ]; then
+    printf '  %-52s\033[32mPASS\033[0m (%d)\n' "$short" "$tot" | tee -a "$SUMMARY_LOG"
+  else
+    printf '  %-52s\033[31mFAIL\033[0m (%d/%d)\n' "$short" "$got" "$tot" | tee -a "$SUMMARY_LOG"
+  fi
+}
+
+emit_suite_header() {
+  printf '\n\033[1;34m=== Suite: %s ===\033[0m\n' "$1" | tee -a "$SUMMARY_LOG"
+}
+emit_suite_footer() {
+  local name="$1" pass="$2" fail="$3"
+  printf '\n\033[1m[%s] Results: \033[32m%d passed\033[0m, \033[31m%d failed\033[0m\n' \
+    "$name" "$pass" "$fail" | tee -a "$SUMMARY_LOG"
+}
+
 run_example() {
   local name="$1"; shift
-  # remaining args = required regex patterns
+  local patterns=("$@")
 
-  c_blue "════════════════════════════════════════"; echo
-  c_blue "  $name"; echo
-  c_blue "════════════════════════════════════════"; echo
+  emit_suite_header "$name"
 
   rm -rf "$BUILD_DIR"
   mkdir "$BUILD_DIR"
@@ -73,12 +106,16 @@ run_example() {
 
   if ! ( cd "$BUILD_DIR" && cmake -DNAVHAL=ON -DEXAMPLES=ON \
              -DVAIOS_EXAMPLE="$name" .. > "$cmake_log" 2>&1 ); then
-    c_red "  CMAKE FAILED"; echo " — see $cmake_log"
+    emit_test_line "build (cmake configure)" FAIL 0 1
+    echo "    cmake log: $cmake_log"
+    emit_suite_footer "$name" 0 1
     FAILS=$((FAILS+1)); FAIL_NAMES+=("$name(cmake)")
     return
   fi
   if ! cmake --build "$BUILD_DIR" --parallel > "$build_log" 2>&1; then
-    c_red "  BUILD FAILED"; echo " — see $build_log"
+    emit_test_line "build (compile)" FAIL 0 1
+    echo "    build log: $build_log"
+    emit_suite_footer "$name" 0 1
     FAILS=$((FAILS+1)); FAIL_NAMES+=("$name(build)")
     return
   fi
@@ -103,13 +140,14 @@ run_example() {
     sleep 1
   done
   if [ "$flashed" -ne 1 ]; then
-    c_red "  FLASH FAILED"; echo " — log: $flash_log"
-    echo "  ── last 5 lines ──"
-    tail -n 5 "$flash_log" | sed 's/^/  /'
-    echo "  ──────────────────"
-    echo "  Recovery: hold the Nucleo's BLACK reset button, re-run the"
-    echo "            script, release reset when st-flash starts writing."
-    echo "            Or simply unplug/replug the board's USB cable."
+    emit_test_line "flash" FAIL 0 1
+    echo "    flash log: $flash_log"
+    echo "    ── last 5 lines ──"
+    tail -n 5 "$flash_log" | sed 's/^/    /'
+    echo "    Recovery: hold the Nucleo's BLACK reset button, re-run the"
+    echo "              script, release reset when st-flash starts writing."
+    echo "              Or simply unplug/replug the board's USB cable."
+    emit_suite_footer "$name" 0 1
     FAILS=$((FAILS+1)); FAIL_NAMES+=("$name(flash)")
     return
   fi
@@ -124,19 +162,25 @@ run_example() {
   st-flash reset >/dev/null 2>&1 || true
   wait "$cap_pid" || true
 
-  local missing=0
-  for pat in "$@"; do
-    if ! grep -qE -- "$pat" "$uart_log"; then
-      echo "  MISSING: $pat"
-      missing=1
+  local p_pass=0 p_fail=0
+  for pat in "${patterns[@]}"; do
+    # Strip backslash escapes for display so the user sees the human form
+    # of the pattern instead of its regex source.
+    local display="${pat//\\/}"
+    if grep -qE -- "$pat" "$uart_log"; then
+      emit_test_line "$display" PASS 1 1
+      p_pass=$((p_pass+1))
+    else
+      emit_test_line "$display" FAIL 0 1
+      p_fail=$((p_fail+1))
     fi
   done
+  emit_suite_footer "$name" "$p_pass" "$p_fail"
 
-  if [ "$missing" -eq 0 ]; then
-    c_green "  PASS"; echo
+  if [ "$p_fail" -eq 0 ]; then
     PASSES=$((PASSES+1))
   else
-    c_red "  FAIL"; echo " — UART log: $uart_log"
+    echo "    UART log: $uart_log"
     FAILS=$((FAILS+1)); FAIL_NAMES+=("$name")
   fi
 }
@@ -165,15 +209,84 @@ run_example IPC_TEST \
   "Task 2: Timeout waiting for binary semaphore"
 
 # ----- summary ---------------------------------------------------------------
+# Cross-suite table identical in shape to tools/run_tests.sh — same awk
+# parser walks the same suite/test line format. Columns: tests, pass,
+# fail, asserts. See run_tests.sh for the gotcha notes (gawk \( quoting,
+# uninitialised-variable indexing).
 echo
-c_blue "════════════════════════════════════════"; echo
+sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$SUMMARY_LOG" \
+  | awk '
+      BEGIN {
+        ns = 0; maxlen = 0
+        tot_pass = 0; tot_fail = 0; tot_tests = 0; tot_asserts = 0
+        suite = ""; pass = 0; fail = 0; asserts = 0
+      }
+      function flush() {
+        if (suite != "") {
+          s_name[ns]    = suite
+          s_pass[ns]    = pass
+          s_fail[ns]    = fail
+          s_total[ns]   = pass + fail
+          s_asserts[ns] = asserts
+          ns++
+          tot_pass    += pass
+          tot_fail    += fail
+          tot_tests   += pass + fail
+          tot_asserts += asserts
+          if (length(suite) > maxlen) maxlen = length(suite)
+        }
+      }
+      function asserts_in(line) {
+        if (match(line, /[(][0-9]+\/[0-9]+[)]/)) {
+          s = substr(line, RSTART + 1, RLENGTH - 2)
+          sub(/.*\//, "", s)
+          return s + 0
+        }
+        if (match(line, /[(][0-9]+[)]/)) {
+          s = substr(line, RSTART + 1, RLENGTH - 2)
+          return s + 0
+        }
+        return 0
+      }
+      /^=== Suite:/ {
+        flush()
+        suite = $0
+        sub(/^=== Suite: /, "", suite)
+        sub(/ ===$/, "", suite)
+        pass = 0; fail = 0; asserts = 0
+      }
+      /^[[:space:]]+.*PASS [(]/ { pass++; asserts += asserts_in($0) }
+      /^[[:space:]]+.*FAIL [(]/ { fail++; asserts += asserts_in($0) }
+      END {
+        flush()
+        GREEN = "\033[32m"; RED = "\033[31m"; BOLD = "\033[1m"; RST = "\033[0m"
+        if (maxlen < 20) maxlen = 20
+        fmt = sprintf("  %%-%ds  %%5s   %%5s   %%5s   %%7s\n", maxlen)
+        printf BOLD "========== HW TEST SUMMARY ==========" RST "\n"
+        printf BOLD fmt RST, "Suite", "Tests", "Pass", "Fail", "Asserts"
+        sep = ""
+        for (i = 0; i < maxlen + 32; i++) sep = sep "-"
+        printf "  %s\n", sep
+        for (i = 0; i < ns; i++) {
+          fcol = (s_fail[i] > 0) ? RED : GREEN
+          printf "  %-*s  %5d   " fcol "%5d" RST "   " fcol "%5d" RST "   %7d\n", \
+                 maxlen, s_name[i], s_total[i], s_pass[i], s_fail[i], s_asserts[i]
+        }
+        printf "  %s\n", sep
+        gcol = (tot_fail > 0) ? RED : GREEN
+        printf "  " BOLD "%-*s" RST "  " BOLD "%5d" RST "   " \
+               gcol BOLD "%5d" RST "   " gcol BOLD "%5d" RST "   " \
+               BOLD "%7d" RST "\n", \
+               maxlen, "GRAND TOTAL", tot_tests, tot_pass, tot_fail, tot_asserts
+        printf BOLD "=====================================" RST "\n"
+      }
+  '
+
+echo
 if [ "$FAILS" -eq 0 ]; then
-  c_green "  Hardware regression: $PASSES pass, 0 fail"
+  c_green "=== HARDWARE TESTS PASSED ==="; echo
 else
-  c_red "  Hardware regression: $PASSES pass, $FAILS fail"
-  echo
+  c_red "=== HARDWARE TESTS FAILED ==="; echo
   echo "  Failed examples: ${FAIL_NAMES[*]}"
 fi
-echo
-c_blue "════════════════════════════════════════"; echo
 exit "$FAILS"
