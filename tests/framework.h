@@ -96,16 +96,24 @@ extern const char *_current_suite;
     printf("\n\033[1;34m=== Suite: %s ===\033[0m\n", _current_suite);          \
   } while (0)
 
+/* PASS/FAIL trailed by the assertion delta this test produced — e.g.
+ *   test_alloc_basic               PASS (3)
+ * When a test fails the form is (passed/total) so the failure is visible
+ * without scrolling back to the individual FAIL log lines. */
 #define TEST_RUN(fn)                                                           \
   do {                                                                         \
+    int _before_pass = _test_pass;                                             \
     int _before_fail = _test_fail;                                             \
     printf("  %-52s", #fn);                                                    \
     fflush(stdout);                                                            \
     fn();                                                                      \
-    if (_test_fail == _before_fail)                                            \
-      printf("\033[32mPASS\033[0m\n");                                         \
+    int _dpass = _test_pass - _before_pass;                                    \
+    int _dfail = _test_fail - _before_fail;                                    \
+    int _dtotal = _dpass + _dfail;                                             \
+    if (_dfail == 0)                                                           \
+      printf("\033[32mPASS\033[0m (%d)\n", _dtotal);                           \
     else                                                                       \
-      printf("\033[31mFAIL\033[0m\n");                                         \
+      printf("\033[31mFAIL\033[0m (%d/%d)\n", _dpass, _dtotal);                \
   } while (0)
 
 #define TEST_SUITE_END()                                                       \
