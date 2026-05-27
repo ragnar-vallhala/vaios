@@ -34,6 +34,17 @@ typedef struct {
   uint32_t systick_preemptions; /* SysTicks that woke a higher-prio task  */
 } v_perf_isr_t;
 
+/* System-wide IPC counters. Per-primitive stats would require either
+ * registering each handle (runtime cost) or growing sema_t past the
+ * STATIC_SEMAPHORE_SIZE budget — deferred. The aggregate counters here
+ * are enough to spot contention, timeout storms, and give/take imbalance. */
+typedef struct {
+  uint32_t takes;         /* successful + blocking + non-blocking attempts */
+  uint32_t takes_blocked; /* subset of `takes` that had to wait            */
+  uint32_t gives;         /* total v_semaphore_give / give_from_isr calls  */
+  uint32_t timeouts;      /* takes that returned VA_FAIL via timeout       */
+} v_perf_ipc_t;
+
 #if VAIOS_MODULE_PERF
 
 /* Per-task perf counters. Embedded in TCB; sized so the on-target growth
@@ -60,6 +71,9 @@ uint64_t v_perf_idle_cycles(void);
 /* ISR getter — atomic snapshot. */
 void v_perf_isr_stats(v_perf_isr_t *out);
 
+/* IPC getter — atomic snapshot. */
+void v_perf_ipc_stats(v_perf_ipc_t *out);
+
 #else  /* VAIOS_MODULE_PERF == 0 */
 
 static inline void     v_perf_init(void)              {}
@@ -68,6 +82,9 @@ static inline uint32_t v_perf_sched_switches(void)    { return 0; }
 static inline uint64_t v_perf_idle_cycles(void)       { return 0; }
 static inline void v_perf_isr_stats(v_perf_isr_t *out) {
   if (out) { v_perf_isr_t z = {0}; *out = z; }
+}
+static inline void v_perf_ipc_stats(v_perf_ipc_t *out) {
+  if (out) { v_perf_ipc_t z = {0}; *out = z; }
 }
 
 #endif /* VAIOS_MODULE_PERF */

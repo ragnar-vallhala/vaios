@@ -1,6 +1,7 @@
 #include "ipc.h"
 #include "atomic.h"
 #include "memory.h"
+#include "perf_hooks.h"
 #include "task.h"
 #include "utils.h"
 
@@ -145,6 +146,7 @@ MutexHandle_t v_mutex_create_recursive_static(StaticSemaphore_t *pxBuffer) {
 //-----------------------------------------------------------------------------
 static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   TCB *current = get_current_task();
+  PERF_IPC_TAKE_ATTEMPT();
   ENTER_CRITICAL();
 
   if (atomic_get(&s->count) > 0) {
@@ -166,6 +168,7 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   add_to_blocked_list(
       current); // so wake_up_delayed_tasks can find us on timeout
 
+  PERF_IPC_TAKE_BLOCKED();
   EXIT_CRITICAL();
   task_yield();
 
@@ -174,6 +177,7 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   //            VA_FAIL (timeout)
   if (current->wait_sem != NULL) {
     current->wait_sem = NULL;
+    PERF_IPC_TIMEOUT();
     return VA_FAIL;
   }
   return VA_PASS;
@@ -237,6 +241,7 @@ int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
 }
 
 static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
+  PERF_IPC_GIVE();
   ENTER_CRITICAL();
 
   // Unblock first waiting task if any — hand off the slot directly

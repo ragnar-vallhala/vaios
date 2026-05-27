@@ -146,6 +146,36 @@ void v_perf_isr_stats(v_perf_isr_t *out) {
 }
 
 /* --------------------------------------------------------------------------
+ * IPC accounting. Hooked from kernel/ipc.c's semaphore_take_common,
+ * semaphore_give_common, and the timeout branch.
+ *
+ * Counters are plain uint32_t — give_from_isr races with task-context
+ * giver/taker hooks, but a missed increment on a perf counter beats the
+ * cost of atomic ops on the IPC hot path. v_perf_ipc_stats copies the
+ * snapshot under a critical section so callers don't see torn fields.
+ * -------------------------------------------------------------------------- */
+
+static uint32_t _perf_ipc_takes;
+static uint32_t _perf_ipc_takes_blocked;
+static uint32_t _perf_ipc_gives;
+static uint32_t _perf_ipc_timeouts;
+
+void v_perf_on_ipc_take_attempt(void) { _perf_ipc_takes++; }
+void v_perf_on_ipc_take_blocked(void) { _perf_ipc_takes_blocked++; }
+void v_perf_on_ipc_give(void)         { _perf_ipc_gives++; }
+void v_perf_on_ipc_timeout(void)      { _perf_ipc_timeouts++; }
+
+void v_perf_ipc_stats(v_perf_ipc_t *out) {
+  if (!out) return;
+  ENTER_CRITICAL();
+  out->takes         = _perf_ipc_takes;
+  out->takes_blocked = _perf_ipc_takes_blocked;
+  out->gives         = _perf_ipc_gives;
+  out->timeouts      = _perf_ipc_timeouts;
+  EXIT_CRITICAL();
+}
+
+/* --------------------------------------------------------------------------
  * Init. Brings up the cycle counter and zeros internal state. Safe to call
  * before scheduler_start.
  * -------------------------------------------------------------------------- */
@@ -165,6 +195,10 @@ void v_perf_init(void) {
   _perf_isr_systick_min_cyc = 0;
   _perf_isr_systick_max_cyc = 0;
   _perf_isr_systick_preemptions = 0;
+  _perf_ipc_takes = 0;
+  _perf_ipc_takes_blocked = 0;
+  _perf_ipc_gives = 0;
+  _perf_ipc_timeouts = 0;
   /* scheduler_init() runs before v_perf_init() and points current_task at
    * the idle task. Prime its last_scheduled_cyc so the first real switch
    * accumulates a sensible delta instead of (now - 0). */

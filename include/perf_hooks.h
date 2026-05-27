@@ -25,6 +25,11 @@ void v_perf_on_sched_switch(struct Task_Control_Block *prev,
 
 void v_perf_on_isr_systick_exit(uint32_t duration_cyc, int preempted);
 
+void v_perf_on_ipc_take_attempt(void);
+void v_perf_on_ipc_take_blocked(void);
+void v_perf_on_ipc_give(void);
+void v_perf_on_ipc_timeout(void);
+
 #define PERF_SCHED_SWITCH(prev, next) v_perf_on_sched_switch((prev), (next))
 
 /* SysTick wrappers: BEGIN declares a local timestamp; END reads the cycle
@@ -38,6 +43,15 @@ void v_perf_on_isr_systick_exit(uint32_t duration_cyc, int preempted);
   v_perf_on_isr_systick_exit(                                                  \
       (uint32_t)v_perf_cycles() - _perf_isr_systick_start, (preempted))
 
+/* IPC sites — semaphore/mutex give/take. Counters are plain uint32_t and
+ * may miss the rare update racing an ISR-context give; the cost of doing
+ * proper atomics on the take/give hot paths isn't worth a precise
+ * diagnostic counter. */
+#define PERF_IPC_TAKE_ATTEMPT() v_perf_on_ipc_take_attempt()
+#define PERF_IPC_TAKE_BLOCKED() v_perf_on_ipc_take_blocked()
+#define PERF_IPC_GIVE()         v_perf_on_ipc_give()
+#define PERF_IPC_TIMEOUT()      v_perf_on_ipc_timeout()
+
 #else  /* VAIOS_MODULE_PERF == 0 */
 
 #define PERF_SCHED_SWITCH(prev, next)   ((void)0)
@@ -45,6 +59,10 @@ void v_perf_on_isr_systick_exit(uint32_t duration_cyc, int preempted);
 /* Consume `preempted` so callers that capture wake_up_delayed_tasks_isr's
  * return value don't trip -Wunused-but-set-variable on perf-off builds. */
 #define PERF_ISR_SYSTICK_END(preempted) ((void)(preempted))
+#define PERF_IPC_TAKE_ATTEMPT()         ((void)0)
+#define PERF_IPC_TAKE_BLOCKED()         ((void)0)
+#define PERF_IPC_GIVE()                 ((void)0)
+#define PERF_IPC_TIMEOUT()              ((void)0)
 
 #endif /* VAIOS_MODULE_PERF */
 
