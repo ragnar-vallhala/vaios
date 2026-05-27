@@ -288,6 +288,13 @@ void v_perf_dump(void) {
   v_perf_snapshot_t s;
   v_perf_snapshot(&s);
 
+  /* Drain any pending v_log entries first. v_log is buffered (see
+   * BUFFERED_LOGGING in vaios_config_default.h) and we write straight
+   * to UART via print_fmt below — without this, any v_log("snapshot
+   * incoming...") line a caller issued just before us would arrive
+   * AFTER the snapshot on the wire. */
+  v_log_flush();
+
   print_fmt("=== vaios perf snapshot ===\r\n");
   print_fmt("uptime:     %u ticks\r\n", (unsigned)s.uptime_ticks);
   /* 64-bit cycles printed as two %x halves — print_fmt is integer-only. */
