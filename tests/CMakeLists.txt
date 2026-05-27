@@ -112,6 +112,7 @@ add_executable(vaios_utils_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/test_utils.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/utils_stubs.c"
     "${VAIOS_ROOT}/kernel/utils.c"
+    "${VAIOS_ROOT}/kernel/perf.c"  # SysTick_Handler in utils.c hooks perf.
 )
 target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(vaios_utils_tests PRIVATE CORTEX_M4)

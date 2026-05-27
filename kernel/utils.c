@@ -1,6 +1,7 @@
 #include "utils.h"
 #include "atomic.h"
 #include "memory.h"
+#include "perf_hooks.h"
 #include "port.h"
 #include "task.h"
 #include "utils/util.h"
@@ -908,15 +909,18 @@ volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
 void SysTick_Handler(void) {
+  PERF_ISR_SYSTICK_BEGIN();
   systick_count++;
+  int preempted = 0;
   if (scheduler_running) {
     // Drain any tasks whose absolute wakeup tick is now due. This runs
     // before PendSV is pended so the next get_next_task() pick already
     // sees the freshly-ready high-priority task. PendSV is still pended
     // unconditionally for time-slice rotation.
-    (void)wake_up_delayed_tasks_isr();
+    preempted = wake_up_delayed_tasks_isr();
     v_port_trigger_pendsv();
   }
+  PERF_ISR_SYSTICK_END(preempted);
 }
 
 uint32_t v_get_ticks(void) { return systick_count; }

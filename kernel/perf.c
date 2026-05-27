@@ -11,6 +11,7 @@
 
 #if VAIOS_MODULE_PERF
 
+#include "atomic.h" /* ENTER_CRITICAL / EXIT_CRITICAL via port.h */
 #include "task.h"
 
 #include <stdint.h>
@@ -103,6 +104,48 @@ uint32_t v_perf_sched_switches(void) { return _perf_sched_switches; }
 uint64_t v_perf_idle_cycles(void)    { return _perf_idle_cycles; }
 
 /* --------------------------------------------------------------------------
+ * ISR accounting. Hooked from SysTick_Handler via PERF_ISR_SYSTICK_BEGIN /
+ * PERF_ISR_SYSTICK_END (see perf_hooks.h).
+ *
+ * Stats are bare 32-bit globals; the single writer is SysTick itself,
+ * which runs at the lowest exception priority (15) and cannot preempt
+ * itself. A reader from task context can race but at worst sees stale
+ * counts — that's why v_perf_isr_stats copies under a brief critical
+ * section instead of returning fields piecewise.
+ * -------------------------------------------------------------------------- */
+
+static uint32_t _perf_isr_systick_count;
+static uint32_t _perf_isr_systick_last_cyc;
+static uint32_t _perf_isr_systick_min_cyc;
+static uint32_t _perf_isr_systick_max_cyc;
+static uint32_t _perf_isr_systick_preemptions;
+
+void v_perf_on_isr_systick_exit(uint32_t duration_cyc, int preempted) {
+  _perf_isr_systick_count++;
+  _perf_isr_systick_last_cyc = duration_cyc;
+  if (_perf_isr_systick_min_cyc == 0 || duration_cyc < _perf_isr_systick_min_cyc) {
+    _perf_isr_systick_min_cyc = duration_cyc;
+  }
+  if (duration_cyc > _perf_isr_systick_max_cyc) {
+    _perf_isr_systick_max_cyc = duration_cyc;
+  }
+  if (preempted) {
+    _perf_isr_systick_preemptions++;
+  }
+}
+
+void v_perf_isr_stats(v_perf_isr_t *out) {
+  if (!out) return;
+  ENTER_CRITICAL();
+  out->systick_count       = _perf_isr_systick_count;
+  out->systick_last_cyc    = _perf_isr_systick_last_cyc;
+  out->systick_min_cyc     = _perf_isr_systick_min_cyc;
+  out->systick_max_cyc     = _perf_isr_systick_max_cyc;
+  out->systick_preemptions = _perf_isr_systick_preemptions;
+  EXIT_CRITICAL();
+}
+
+/* --------------------------------------------------------------------------
  * Init. Brings up the cycle counter and zeros internal state. Safe to call
  * before scheduler_start.
  * -------------------------------------------------------------------------- */
@@ -117,6 +160,11 @@ void v_perf_init(void) {
   _perf_cyc_last = 0;
   _perf_sched_switches = 0;
   _perf_idle_cycles = 0;
+  _perf_isr_systick_count = 0;
+  _perf_isr_systick_last_cyc = 0;
+  _perf_isr_systick_min_cyc = 0;
+  _perf_isr_systick_max_cyc = 0;
+  _perf_isr_systick_preemptions = 0;
   /* scheduler_init() runs before v_perf_init() and points current_task at
    * the idle task. Prime its last_scheduled_cyc so the first real switch
    * accumulates a sensible delta instead of (now - 0). */
