@@ -87,9 +87,29 @@ run_example() {
       "$BUILD_DIR/examples/main" \
       "$BUILD_DIR/examples/main.bin"
 
-  if ! st-flash --connect-under-reset write \
-         "$BUILD_DIR/examples/main.bin" 0x8000000 >/dev/null 2>&1; then
-    c_red "  FLASH FAILED"; echo
+  # st-flash occasionally fails the first SWD handshake when the previously-
+  # flashed firmware has put the MCU into WFI / reconfigured the debug pins.
+  # Retry once before giving up; on persistent failure dump the st-flash log
+  # so the user can see the actual reason (AIRCR write failure, SWD enter
+  # failure, NRST not connected, etc.) instead of an opaque "FLASH FAILED".
+  local flash_log="/tmp/hw_${name}_flash.log"
+  local flashed=0
+  for attempt in 1 2; do
+    if st-flash --connect-under-reset write \
+         "$BUILD_DIR/examples/main.bin" 0x8000000 \
+         > "$flash_log" 2>&1; then
+      flashed=1; break
+    fi
+    sleep 1
+  done
+  if [ "$flashed" -ne 1 ]; then
+    c_red "  FLASH FAILED"; echo " — log: $flash_log"
+    echo "  ── last 5 lines ──"
+    tail -n 5 "$flash_log" | sed 's/^/  /'
+    echo "  ──────────────────"
+    echo "  Recovery: hold the Nucleo's BLACK reset button, re-run the"
+    echo "            script, release reset when st-flash starts writing."
+    echo "            Or simply unplug/replug the board's USB cable."
     FAILS=$((FAILS+1)); FAIL_NAMES+=("$name(flash)")
     return
   fi
