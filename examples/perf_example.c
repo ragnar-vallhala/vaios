@@ -90,25 +90,26 @@ static void reporter_task(void *arg) {
   /* Let the workers actually do some work first. */
   v_delay(150);
 
-  v_log(LOG_INFO, "");
-  v_log(LOG_INFO, "===== perf snapshot after warm-up =====");
+  /* Announcement lines go through print_fmt (direct-UART), NOT v_log
+   * (buffered, may DMA-flush on its own timer). v_perf_dump is also
+   * print_fmt-based — mixing the two on the same UART corrupts both
+   * streams byte-by-byte, so any "snapshot incoming" line that should
+   * land just before the snapshot must ride the same channel. */
+  print_fmt("\r\n===== perf snapshot after warm-up =====\r\n");
   v_perf_dump();
   dump_per_task_stats();
 
-  v_log(LOG_INFO, "");
-  v_log(LOG_INFO, "===== v_perf_reset() — counters zeroed =====");
+  print_fmt("\r\n===== v_perf_reset() - counters zeroed =====\r\n");
   v_perf_reset();
 
   /* Sit idle for a bit so the post-reset snapshot has a meaningful
    * idle-cycles entry but few sched switches. */
   v_delay(50);
 
-  v_log(LOG_INFO, "");
-  v_log(LOG_INFO, "===== perf snapshot after reset =====");
+  print_fmt("\r\n===== perf snapshot after reset =====\r\n");
   v_perf_dump();
 
-  v_log(LOG_INFO, "");
-  v_log(LOG_INFO, "[perf_example] done");
+  print_fmt("\r\n[perf_example] done\r\n");
 }
 
 /* ------------------------------------------------------------------------ */

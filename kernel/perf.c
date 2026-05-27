@@ -284,16 +284,17 @@ void v_perf_snapshot(v_perf_snapshot_t *out) {
  * (Phase 6b) for long-running capture to avoid baud-stretch.
  * -------------------------------------------------------------------------- */
 
+/*
+ * v_perf_dump writes its output through print_fmt (direct-UART). v_log
+ * is buffered and may flush via DMA on an independent timer, so mixing
+ * the two on the same UART corrupts both streams byte-by-byte. Callers
+ * that want an "announcement" line immediately before the snapshot
+ * should use print_fmt for that line too — not v_log. See
+ * examples/perf_example.c for the pattern.
+ */
 void v_perf_dump(void) {
   v_perf_snapshot_t s;
   v_perf_snapshot(&s);
-
-  /* Drain any pending v_log entries first. v_log is buffered (see
-   * BUFFERED_LOGGING in vaios_config_default.h) and we write straight
-   * to UART via print_fmt below — without this, any v_log("snapshot
-   * incoming...") line a caller issued just before us would arrive
-   * AFTER the snapshot on the wire. */
-  v_log_flush();
 
   print_fmt("=== vaios perf snapshot ===\r\n");
   print_fmt("uptime:     %u ticks\r\n", (unsigned)s.uptime_ticks);
