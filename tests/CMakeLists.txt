@@ -32,6 +32,7 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/vfs.c"
     "${VAIOS_ROOT}/kernel/vaios.c"
     "${VAIOS_ROOT}/kernel/terminal.c"
+    "${VAIOS_ROOT}/kernel/perf.c"
     "${VAIOS_ROOT}/kernel/qemu/qemu_irq.c"  # hal_interrupt_attach_callback shim
 )
 

@@ -6,6 +6,7 @@
 #if VAIOS_MODULE_VFS
 #include "vfs.h"
 #endif
+#include "perf.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -100,6 +101,7 @@ void v_system_init(vaios_init_config_t *cfg) {
   /* 2. Memory & Scheduler Init */
   v_heap_memory_init();
   scheduler_init();
+  v_perf_init();
   if (cfg->internal_sd_card_setup) {
 
     /* 3. SDIO Init: clock_div is auto-calculated from the system clock */
@@ -130,6 +132,7 @@ void v_system_init(vaios_init_config_t *cfg) {
   v_init(cfg);
   v_heap_memory_init();
   scheduler_init();
+  v_perf_init();
 #endif
 }
 

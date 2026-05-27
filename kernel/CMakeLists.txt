@@ -19,6 +19,9 @@ endif()
 if(NOT VAIOS_MODULE_FIFO)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "structure\\.c$")
 endif()
+if(NOT VAIOS_MODULE_PERF)
+  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "perf\\.c$")
+endif()
 
 add_library(vaios STATIC ${VAIOS_SOURCES})
 
@@ -29,6 +32,7 @@ target_compile_definitions(vaios PUBLIC
   VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>
   VAIOS_MODULE_SEMIHOSTING=$<BOOL:${VAIOS_MODULE_SEMIHOSTING}>
   VAIOS_MODULE_FIFO=$<BOOL:${VAIOS_MODULE_FIFO}>
+  VAIOS_MODULE_PERF=$<BOOL:${VAIOS_MODULE_PERF}>
 )
 if(NAVHAL)
 target_link_libraries(vaios PUBLIC -Wl,--start-group hal common -Wl,--end-group -lc -lgcc portable)

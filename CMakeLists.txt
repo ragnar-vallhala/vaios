@@ -59,6 +59,7 @@ option(VAIOS_MODULE_TERMINAL    "Build the interactive command terminal"   ON)
 option(VAIOS_MODULE_VFS         "Build the virtual file system (FatFs)"    ON)
 option(VAIOS_MODULE_SEMIHOSTING "Build the semihosting debug I/O module"   ON)
 option(VAIOS_MODULE_FIFO        "Build the SPSC/MPMC FIFO data structures" ON)
+option(VAIOS_MODULE_PERF        "Build the kernel performance counters"    ON)
 
 # Dependency resolution (Kconfig-style 'select').
 if(VAIOS_MODULE_TERMINAL AND NOT VAIOS_MODULE_SEMIHOSTING)
@@ -71,7 +72,8 @@ if(NOT NAVHAL AND NOT VAIOS_MODULE_SEMIHOSTING)
 endif()
 
 message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
-               "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO}")
+               "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
+               "perf=${VAIOS_MODULE_PERF}")
 
 if(VAIOS_CONFIG_FILE)
     add_compile_definitions(VAIOS_CONFIG_FILE="${VAIOS_CONFIG_FILE}")

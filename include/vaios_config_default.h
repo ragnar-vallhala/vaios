@@ -89,6 +89,9 @@
 #ifndef VAIOS_MODULE_FIFO
 #define VAIOS_MODULE_FIFO 1
 #endif
+#ifndef VAIOS_MODULE_PERF
+#define VAIOS_MODULE_PERF 1
+#endif
 
 #ifndef DMA_MIN_THRESHOLD
 #define DMA_MIN_THRESHOLD 16
