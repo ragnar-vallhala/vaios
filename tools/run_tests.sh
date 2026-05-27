@@ -61,51 +61,71 @@ cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" \
         # losing the first suite (Memory Allocator) and producing a stray
         # empty row at the top of the table.
         ns = 0; maxlen = 0
-        tot_pass = 0; tot_fail = 0; tot_tests = 0
-        suite = ""; pass = 0; fail = 0
+        tot_pass = 0; tot_fail = 0; tot_tests = 0; tot_asserts = 0
+        suite = ""; pass = 0; fail = 0; asserts = 0
       }
       function flush() {
         if (suite != "") {
-          s_name[ns]  = suite
-          s_pass[ns]  = pass
-          s_fail[ns]  = fail
-          s_total[ns] = pass + fail
+          s_name[ns]    = suite
+          s_pass[ns]    = pass
+          s_fail[ns]    = fail
+          s_total[ns]   = pass + fail
+          s_asserts[ns] = asserts
           ns++
-          tot_pass  += pass
-          tot_fail  += fail
-          tot_tests += pass + fail
+          tot_pass    += pass
+          tot_fail    += fail
+          tot_tests   += pass + fail
+          tot_asserts += asserts
           if (length(suite) > maxlen) maxlen = length(suite)
         }
+      }
+      # Extract the assertion count from a PASS/FAIL line.
+      #   PASS (3)      → 3   (the single number)
+      #   FAIL (1/4)    → 4   (the TOTAL, second number)
+      # Uses POSIX match()+RSTART/RLENGTH so we do not depend on the
+      # gawk-only match(line, regex, arr) extension.
+      function asserts_in(line) {
+        if (match(line, /[(][0-9]+\/[0-9]+[)]/)) {
+          s = substr(line, RSTART + 1, RLENGTH - 2)  # "1/4"
+          sub(/.*\//, "", s)                         # "4"
+          return s + 0
+        }
+        if (match(line, /[(][0-9]+[)]/)) {
+          s = substr(line, RSTART + 1, RLENGTH - 2)  # "3"
+          return s + 0
+        }
+        return 0
       }
       /^=== Suite:/ {
         flush()
         suite = $0
         sub(/^=== Suite: /, "", suite)
         sub(/ ===$/, "", suite)
-        pass = 0; fail = 0
+        pass = 0; fail = 0; asserts = 0
       }
-      /^[[:space:]]+.*PASS [(]/ { pass++ }
-      /^[[:space:]]+.*FAIL [(]/ { fail++ }
+      /^[[:space:]]+.*PASS [(]/ { pass++; asserts += asserts_in($0) }
+      /^[[:space:]]+.*FAIL [(]/ { fail++; asserts += asserts_in($0) }
       END {
         flush()
         GREEN = "\033[32m"; RED = "\033[31m"; BOLD = "\033[1m"; RST = "\033[0m"
         if (maxlen < 20) maxlen = 20
-        fmt = sprintf("  %%-%ds  %%5s   %%5s   %%5s\n", maxlen)
+        fmt = sprintf("  %%-%ds  %%5s   %%5s   %%5s   %%7s\n", maxlen)
         printf BOLD "========== TEST SUMMARY ==========" RST "\n"
-        printf BOLD fmt RST, "Suite", "Tests", "Pass", "Fail"
+        printf BOLD fmt RST, "Suite", "Tests", "Pass", "Fail", "Asserts"
         sep = ""
-        for (i = 0; i < maxlen + 24; i++) sep = sep "-"
+        for (i = 0; i < maxlen + 32; i++) sep = sep "-"
         printf "  %s\n", sep
         for (i = 0; i < ns; i++) {
           fcol = (s_fail[i] > 0) ? RED : GREEN
-          printf "  %-*s  %5d   " fcol "%5d" RST "   " fcol "%5d" RST "\n", \
-                 maxlen, s_name[i], s_total[i], s_pass[i], s_fail[i]
+          printf "  %-*s  %5d   " fcol "%5d" RST "   " fcol "%5d" RST "   %7d\n", \
+                 maxlen, s_name[i], s_total[i], s_pass[i], s_fail[i], s_asserts[i]
         }
         printf "  %s\n", sep
         gcol = (tot_fail > 0) ? RED : GREEN
         printf "  " BOLD "%-*s" RST "  " BOLD "%5d" RST "   " \
-               gcol BOLD "%5d" RST "   " gcol BOLD "%5d" RST "\n", \
-               maxlen, "GRAND TOTAL", tot_tests, tot_pass, tot_fail
+               gcol BOLD "%5d" RST "   " gcol BOLD "%5d" RST "   " \
+               BOLD "%7d" RST "\n", \
+               maxlen, "GRAND TOTAL", tot_tests, tot_pass, tot_fail, tot_asserts
         printf BOLD "==================================" RST "\n"
       }
   '
