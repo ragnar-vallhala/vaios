@@ -31,13 +31,16 @@
 # =============================================================================
 
 BEGIN {
-    # Column widths — wide enough to leave breathing room.
-    COL_SUITE_MIN = 44
-    COL_TESTS    = 9
-    COL_PASS     = 9
-    COL_FAIL     = 9
-    COL_ASSERTS  = 11
-    GUTTER       = "    "   # 4 spaces between columns
+    # Column widths — sized to fit comfortably in an 80-column terminal.
+    # The longest suite name in the current tree is "Structure (SPSC FIFO
+    # & MPMC Queue)" at 36 chars, so a row tops out around 68 chars wide:
+    #   2 (left pad) + 36 (suite) + 4*(2 gutter + 5..7 numeric) ≈ 68
+    COL_SUITE_MIN = 26
+    COL_TESTS    = 5
+    COL_PASS     = 5
+    COL_FAIL     = 5
+    COL_ASSERTS  = 7
+    GUTTER       = "  "     # 2 spaces between columns
 
     # State accumulators.
     ns = 0; maxlen = 0
