@@ -22,7 +22,8 @@
 # =============================================================================
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
 
 PORT="${PORT:-/dev/ttyACM0}"
@@ -209,78 +210,11 @@ run_example IPC_TEST \
   "Task 2: Timeout waiting for binary semaphore"
 
 # ----- summary ---------------------------------------------------------------
-# Cross-suite table identical in shape to tools/run_tests.sh — same awk
-# parser walks the same suite/test line format. Columns: tests, pass,
-# fail, asserts. See run_tests.sh for the gotcha notes (gawk \( quoting,
-# uninitialised-variable indexing).
+# Cross-suite table. Renderer is shared with tools/run_tests.sh —
+# tools/lib/test_summary.awk owns the layout.
 echo
 sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$SUMMARY_LOG" \
-  | awk '
-      BEGIN {
-        ns = 0; maxlen = 0
-        tot_pass = 0; tot_fail = 0; tot_tests = 0; tot_asserts = 0
-        suite = ""; pass = 0; fail = 0; asserts = 0
-      }
-      function flush() {
-        if (suite != "") {
-          s_name[ns]    = suite
-          s_pass[ns]    = pass
-          s_fail[ns]    = fail
-          s_total[ns]   = pass + fail
-          s_asserts[ns] = asserts
-          ns++
-          tot_pass    += pass
-          tot_fail    += fail
-          tot_tests   += pass + fail
-          tot_asserts += asserts
-          if (length(suite) > maxlen) maxlen = length(suite)
-        }
-      }
-      function asserts_in(line) {
-        if (match(line, /[(][0-9]+\/[0-9]+[)]/)) {
-          s = substr(line, RSTART + 1, RLENGTH - 2)
-          sub(/.*\//, "", s)
-          return s + 0
-        }
-        if (match(line, /[(][0-9]+[)]/)) {
-          s = substr(line, RSTART + 1, RLENGTH - 2)
-          return s + 0
-        }
-        return 0
-      }
-      /^=== Suite:/ {
-        flush()
-        suite = $0
-        sub(/^=== Suite: /, "", suite)
-        sub(/ ===$/, "", suite)
-        pass = 0; fail = 0; asserts = 0
-      }
-      /^[[:space:]]+.*PASS [(]/ { pass++; asserts += asserts_in($0) }
-      /^[[:space:]]+.*FAIL [(]/ { fail++; asserts += asserts_in($0) }
-      END {
-        flush()
-        GREEN = "\033[32m"; RED = "\033[31m"; BOLD = "\033[1m"; RST = "\033[0m"
-        if (maxlen < 20) maxlen = 20
-        fmt = sprintf("  %%-%ds  %%5s   %%5s   %%5s   %%7s\n", maxlen)
-        printf BOLD "========== HW TEST SUMMARY ==========" RST "\n"
-        printf BOLD fmt RST, "Suite", "Tests", "Pass", "Fail", "Asserts"
-        sep = ""
-        for (i = 0; i < maxlen + 32; i++) sep = sep "-"
-        printf "  %s\n", sep
-        for (i = 0; i < ns; i++) {
-          fcol = (s_fail[i] > 0) ? RED : GREEN
-          printf "  %-*s  %5d   " fcol "%5d" RST "   " fcol "%5d" RST "   %7d\n", \
-                 maxlen, s_name[i], s_total[i], s_pass[i], s_fail[i], s_asserts[i]
-        }
-        printf "  %s\n", sep
-        gcol = (tot_fail > 0) ? RED : GREEN
-        printf "  " BOLD "%-*s" RST "  " BOLD "%5d" RST "   " \
-               gcol BOLD "%5d" RST "   " gcol BOLD "%5d" RST "   " \
-               BOLD "%7d" RST "\n", \
-               maxlen, "GRAND TOTAL", tot_tests, tot_pass, tot_fail, tot_asserts
-        printf BOLD "=====================================" RST "\n"
-      }
-  '
+  | awk -v title="HARDWARE TEST SUMMARY" -f "$SCRIPT_DIR/lib/test_summary.awk"
 
 echo
 if [ "$FAILS" -eq 0 ]; then
