@@ -45,6 +45,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "PRIORITY_INVERSION")
   add_executable(main priority_inversion.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "FIFO_TEST")
   add_executable(main fifo_test.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "PERF")
+  add_executable(main perf_example.c ${STARTUP_FILE})
 endif()
 
 if(TARGET main)
