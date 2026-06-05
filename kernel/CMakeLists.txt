@@ -1,9 +1,8 @@
 FILE(GLOB_RECURSE VAIOS_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/*.c)
 
-if(NAVHAL)
-# Remove QEMU interrupt stubs when building with real HAL
-list(FILTER VAIOS_SOURCES EXCLUDE REGEX "qemu/.*" )
-endif()
+# Arch/hardware backends (semihosting, the QEMU interrupt shim) now live in
+# portable/cortex-m4/ behind the port facade — the kernel proper is
+# architecture-independent. Their build gating moved to portable/CMakeLists.
 
 # Drop optional module sources when their CMake option is OFF (see top-level
 # CMakeLists.txt). Excluding the .c keeps it out of flash entirely.
@@ -12,9 +11,6 @@ if(NOT VAIOS_MODULE_TERMINAL)
 endif()
 if(NOT VAIOS_MODULE_VFS)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "vfs\\.c$")
-endif()
-if(NOT VAIOS_MODULE_SEMIHOSTING)
-  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "semihosting\\.c$")
 endif()
 if(NOT VAIOS_MODULE_FIFO)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "structure\\.c$")

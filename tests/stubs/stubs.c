@@ -132,17 +132,14 @@ int v_strncmp(const char *s1, const char *s2, int n) {
 #include <stdlib.h>
 
 /* -------------------------------------------------------------------------
- * Stubs for helpers vaios.c's non-NAVHAL branch normally pulls from
- * semihosting.c. The host test build doesn't include semihosting.c.
- * (_qemu_systick_init_ms is defined in vaios.c itself when NAVHAL is off.)
+ * Hardware bring-up and console I/O now live behind the port facade
+ * (v_port_hw_*), stubbed for the host in tests/stubs/port_hw_stub.c. The
+ * only kernel hardware symbol left for stubs.c is the DMA-completion
+ * callback: vaios.c hands its address to v_port_hw_console_init(), so the
+ * symbol must resolve even though utils.c (its real home) isn't linked into
+ * vaios_tests. The host build never fires a DMA IRQ, so a no-op suffices.
  * ---------------------------------------------------------------------- */
-void set_systick_interrupt_priority(uint32_t prio) { (void)prio; }
-void set_pendsv_interrupt_priority(uint32_t prio) { (void)prio; }
-
-/* terminal.c's non-NAVHAL path reads characters via sh_readc (semihosting).
- * The host build never drives the terminal's input loop, so a no-op
- * returning 0 is fine. */
-char sh_readc(void) { return 0; }
+void dma_tx_complete_callback(void) {}
 
 void v_panic(const char *file, int line, const char *fmt, ...) {
   fprintf(stderr, "\n[STUB v_panic] %s:%d: ", file ? file : "?", line);

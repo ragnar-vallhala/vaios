@@ -47,6 +47,44 @@ void v_port_disable_interrupts(void);
 void v_port_halt(void);
 void v_port_trigger_pendsv(void);
 
+// CPU hint for a short busy-wait spin (keeps the arch `nop` out of the kernel).
+__attribute__((always_inline)) static inline void v_port_cpu_relax(void) {
+  __asm volatile("nop" ::: "memory");
+}
+
+// ---------------------------------------------------------------------------
+// Port hardware facade.
+//
+// The kernel reaches hardware ONLY through these wrappers; the backend (real
+// STM32 HAL vs. the QEMU semihosting model) is selected inside port_hw.c. No
+// kernel source may name a hal_* symbol, a uartN_* shim, an IRQn enum, or a
+// peripheral register directly. Host unit-test builds supply equivalents from
+// tests/stubs/stubs.c (declared in the stub tests/stubs/port.h).
+// ---------------------------------------------------------------------------
+
+// Clock / FPU bring-up.
+void v_port_hw_clock_init(uint8_t internal_clock_setup);
+void v_port_hw_fpu_enable(void);
+
+// System tick timer + scheduler interrupt priorities (SysTick=14, PendSV=15).
+void v_port_hw_systick_init(uint32_t period_us);
+void v_port_hw_sched_irq_init(void);
+
+// Console: log/terminal UART on hardware, semihosting under QEMU.
+void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
+void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
+void v_port_hw_console_write_string(const char *str);
+char v_port_hw_console_read_char(void);
+void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
+
+// SD/MMC over SDIO (VFS backend). Return 0 on success, non-zero on failure.
+int v_port_hw_sdio_init(void);
+int v_port_hw_sdio_card_init(void);
+
+// Cycle counter (DWT CYCCNT) backing the perf module.
+void v_port_hw_cycle_counter_init(void);
+uint32_t v_port_hw_cycle_counter_read(void);
+
 // Atomic operations (LL/SC)
 static inline uint32_t v_port_ldrex(volatile uint32_t *addr) {
   uint32_t result;

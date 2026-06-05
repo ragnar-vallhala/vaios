@@ -33,7 +33,6 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/vaios.c"
     "${VAIOS_ROOT}/kernel/terminal.c"
     "${VAIOS_ROOT}/kernel/perf.c"
-    "${VAIOS_ROOT}/kernel/qemu/qemu_irq.c"  # hal_interrupt_attach_callback shim
 )
 
 # -------------------------------------------------------------------------
@@ -42,6 +41,7 @@ set(KERNEL_SOURCES
 set(STUB_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/v_fs_stub.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # v_port_hw_* facade
 )
 
 # -------------------------------------------------------------------------
@@ -112,6 +112,7 @@ add_executable(vaios_utils_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/utils_main.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_utils.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/utils_stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # v_port_hw_* facade
     "${VAIOS_ROOT}/kernel/utils.c"
     "${VAIOS_ROOT}/kernel/perf.c"  # SysTick_Handler in utils.c hooks perf.
 )

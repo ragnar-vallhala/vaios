@@ -22,8 +22,12 @@
 #define AUTHOR "ASHUTOSH VISHWAKARMA"
 #endif
 
-// Pull in NAVHAL configs
+// Pull in NAVHAL configs (only when building against the HAL — a no-HAL /
+// host build has no navhal.h on the include path, and the kernel reaches
+// hardware solely through the port facade now, so it needs nothing from it).
+#ifdef NAVHAL
 #include "navhal.h"
+#endif
 
 // Init settings
 #ifndef CORTEX_M4

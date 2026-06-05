@@ -1,15 +1,5 @@
 #include <stdint.h>
-#ifndef NAVHAL
-#warning "NAVHAL not found building for QEMU"
-#define QEMU_BACKEND
-#include "qemu_irq.h"
-#include "semihosting.h" // [TODO] QEMU impl missing for terminal
-#else
-#ifndef CORTEX_M4
-#define CORTEX_M4
-#endif
-#include "navhal.h"
-#endif
+#include "port.h" // v_port_hw_console_* — all hardware access goes through here
 #include "perf.h"
 #include "task.h"
 #include "terminal.h"
@@ -132,12 +122,7 @@ static void perf_command(void *args) {
 
 static void _onRecieve(void) {
   if (_initialized_terminal) {
-    char c = 'a';
-#ifdef NAVHAL
-    c = uart2_read_char();
-#elif defined(QEMU_BACKEND)
-    c = sh_readc();
-#endif
+    char c = v_port_hw_console_read_char();
 
     _term_history[_current_command_count_idx][_current_command_buffer_idx++] =
         c;
@@ -171,11 +156,8 @@ static void _onRecieve(void) {
       _current_command_buffer_idx = 0;
     }
   } else {
-#ifdef NAVHAL
-    uart2_read_char();
-#elif defined(QEMU_BACKEND)
-    sh_readc();
-#endif
+    /* Drain the incoming character even when the terminal isn't ready. */
+    (void)v_port_hw_console_read_char();
   }
 }
 
@@ -193,14 +175,7 @@ void terminal_init(void) {
 #if VAIOS_MODULE_PERF
   register_command(perf_command, "perf");
 #endif
-#if defined(NAVHAL)
-  hal_interrupt_attach_callback(USART2_IRQn, _onRecieve);
-  hal_enable_interrupt(USART2_IRQn);
-#elif defined(QEMU_BACKEND)
-// [TODO] Implement for QEMU
-// hal_interrupt_attach_callback(USART2_IRQn, _onRecieve);
-// hal_enable_interrupt(USART2_IRQn);
-#endif
+  v_port_hw_console_rx_irq_init(_onRecieve);
   _initialized_terminal = 1;
 }
 

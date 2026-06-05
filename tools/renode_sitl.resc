@@ -1,0 +1,36 @@
+:name: vaios SITL (STM32F4 / Renode)
+:description: Boot the NAVHAL vaios image on a generic STM32F4 and probe liveness.
+
+using sysbus
+mach create "vaios"
+machine LoadPlatformDescription @/opt/renode/platforms/cpus/stm32f4.repl
+
+# Drive SysTick: Renode's Cortex-M derives the tick from the core frequency.
+cpu PerformanceInMips 84
+
+# Route USART2 TX into the Renode log (works headless, no GUI).
+showAnalyzer sysbus.usart2 Antmicro.Renode.Analyzers.LoggingUartAnalyzer
+
+sysbus LoadELF @/home/ragnar/Documents/Drone/vaios/build_renode/examples/main
+
+echo "=== boot ==="
+emulation RunFor "0.5"
+echo "PC @0.5s:"
+cpu PC
+echo "systick_count @0.5s:"
+sysbus ReadDoubleWord 0x20000340
+echo "scheduler_running @0.5s:"
+sysbus ReadDoubleWord 0x20000134
+echo "current_task @0.5s:"
+sysbus ReadDoubleWord 0x200000d4
+
+emulation RunFor "1.0"
+echo "=== after +1.0s ==="
+echo "PC @1.5s:"
+cpu PC
+echo "systick_count @1.5s (must have advanced if SysTick path is live):"
+sysbus ReadDoubleWord 0x20000340
+echo "current_task @1.5s:"
+sysbus ReadDoubleWord 0x200000d4
+
+quit

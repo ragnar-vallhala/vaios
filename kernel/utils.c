@@ -4,13 +4,10 @@
 #include "perf_hooks.h"
 #include "port.h"
 #include "task.h"
-#include "utils/util.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#ifdef NAVHAL
-#endif
 
 //---------------
 // This is the shitiest code of the whole project.
@@ -89,9 +86,7 @@ float v_atof(const char *s) {
 }
 // Use safely only if DMA is enabled and you know what you are doing
 void direct_dma_print(const uint8_t *bytes, uint32_t len) {
-#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
-  uart2_write_dma(bytes, len);
-#endif
+  v_port_hw_console_write_dma(bytes, len);
 }
 
 // Callback for DMA completion to release the read lock
@@ -101,14 +96,8 @@ void dma_tx_complete_callback(void) {
 #endif
 }
 
-// Basic print function (to UART or semihosting)
-void v_print(const char *str) {
-#ifdef NAVHAL
-  uart2_write_string(str);
-#else
-  sh_write0(str);
-#endif
-}
+// Basic print function (routed to the console by the port facade)
+void v_print(const char *str) { v_port_hw_console_write_string(str); }
 
 // Basic print function (to UART or semihosting)
 void print(const char *str) { v_print(str); }

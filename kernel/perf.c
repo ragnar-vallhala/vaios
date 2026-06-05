@@ -22,37 +22,22 @@
 #include "vfs.h"
 #endif
 
-#ifdef NAVHAL
-#include "common/hal_dwt.h"
-#endif
-
 /* --------------------------------------------------------------------------
  * Cycle-counter backend.
  *
- * On the Cortex-M4 target the source is the DWT CYCCNT register (32-bit at
- * SYSCLK, 84 MHz → wraps every ~51 s). Wrap is extended in software inside
- * v_perf_cycles: every call samples the hardware, detects wrap via the
+ * The raw 32-bit cycle source lives behind the port facade
+ * (v_port_hw_cycle_counter_read). On the Cortex-M4 target that is the DWT
+ * CYCCNT register (32-bit at SYSCLK, 84 MHz → wraps every ~51 s); on host/
+ * QEMU it is a monotonic stub. Wrap is extended in software inside
+ * v_perf_cycles: every call samples the source, detects wrap via the
  * unsigned-subtraction trick, and accumulates into a 64-bit shadow.
- *
- * On host builds we have no DWT. A simple monotonic stub keeps the rest
- * of the module testable: each read returns the previous value + 1. That
- * is enough for the unit tests (monotonicity, snapshot atomicity) — real
- * wall-clock cycles are not the point of the host suite.
  * -------------------------------------------------------------------------- */
 
 static volatile uint64_t _perf_cyc_high;  /* upper bits of extended counter */
 static volatile uint32_t _perf_cyc_last;  /* last raw 32-bit sample         */
 
 static inline uint32_t _perf_cyc_raw(void) {
-#ifdef NAVHAL
-  return hal_cycle_counter_get();
-#else
-  /* Host stub: monotonic uint32 counter. Strictly increasing — perfect for
-   * the host tests, useless for measuring real time. */
-  static uint32_t fake;
-  fake += 100; /* stride > 0 so deltas show up in per-task accounting */
-  return fake;
-#endif
+  return v_port_hw_cycle_counter_read();
 }
 
 /* Single-writer convention: v_perf_cycles is called from kernel paths
@@ -383,9 +368,7 @@ void v_perf_reset(void) {
 }
 
 void v_perf_init(void) {
-#ifdef NAVHAL
-  hal_cycle_counter_init();
-#endif
+  v_port_hw_cycle_counter_init();
   _perf_zero_counters();
   /* scheduler_init() runs before v_perf_init() and points current_task at
    * the idle task. Prime its last_scheduled_cyc so the first real switch
