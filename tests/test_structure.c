@@ -212,6 +212,98 @@ static void test_mpmc_full_try_push_fails(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * Blocking mpmc_push/mpmc_pop on a non-full / non-empty queue return
+ * immediately (they never reach the scheduler), so the happy path is
+ * host-testable.
+ * ---------------------------------------------------------------------- */
+static void test_mpmc_blocking_push_pop_immediate(void) {
+  mpmc_setup();
+  uint32_t in = 0xABCDu, out = 0;
+  TEST_ASSERT(mpmc_push(&_mpmc, &in)); /* space available -> immediate */
+  TEST_ASSERT_EQ(mpmc_size(&_mpmc), 1u);
+  TEST_ASSERT(mpmc_pop(&_mpmc, &out)); /* data available -> immediate */
+  TEST_ASSERT_EQ(out, 0xABCDu);
+  TEST_ASSERT(mpmc_is_empty(&_mpmc));
+}
+
+/* mpmc_peek returns the oldest element without consuming it. */
+static void test_mpmc_peek_does_not_consume(void) {
+  mpmc_setup();
+  uint32_t a = 11u, b = 22u, seen = 0;
+  mpmc_try_push(&_mpmc, &a);
+  mpmc_try_push(&_mpmc, &b);
+  TEST_ASSERT(mpmc_peek(&_mpmc, &seen));
+  TEST_ASSERT_EQ(seen, 11u);             /* oldest (FIFO) */
+  TEST_ASSERT_EQ(mpmc_size(&_mpmc), 2u); /* still all there */
+}
+
+/* mpmc_peek on an empty queue reports failure. */
+static void test_mpmc_peek_empty_fails(void) {
+  mpmc_setup();
+  uint32_t seen = 0;
+  TEST_ASSERT(!mpmc_peek(&_mpmc, &seen));
+}
+
+/* mpmc_reset empties the queue and restores capacity. */
+static void test_mpmc_reset_empties(void) {
+  mpmc_setup();
+  uint32_t v = 7u;
+  for (int i = 0; i < 3; i++)
+    mpmc_try_push(&_mpmc, &v);
+  TEST_ASSERT_EQ(mpmc_size(&_mpmc), 3u);
+  mpmc_reset(&_mpmc);
+  TEST_ASSERT(mpmc_is_empty(&_mpmc));
+  TEST_ASSERT_EQ(mpmc_size(&_mpmc), 0u);
+  /* not_full was restored to capacity, so a full re-fill still works. */
+  for (uint32_t i = 0; i < 8u; i++)
+    TEST_ASSERT(mpmc_try_push(&_mpmc, &i));
+  TEST_ASSERT(mpmc_is_full(&_mpmc));
+}
+
+/* Under MPMC_POLICY_OVERWRITE a push into a full queue overwrites the oldest
+ * item instead of failing (the overwrite path is non-blocking). */
+static void test_mpmc_overwrite_policy(void) {
+  mpmc_setup();
+  mpmc_set_policy(&_mpmc, MPMC_POLICY_OVERWRITE);
+  for (uint32_t i = 0; i < 8u; i++) /* fill 0..7 */
+    TEST_ASSERT(mpmc_try_push(&_mpmc, &i));
+  TEST_ASSERT(mpmc_is_full(&_mpmc));
+
+  uint32_t extra = 99u;
+  TEST_ASSERT(mpmc_try_push(&_mpmc, &extra)); /* overwrites oldest (0) */
+  TEST_ASSERT(mpmc_is_full(&_mpmc));          /* stays full */
+
+  uint32_t out = 0;
+  mpmc_try_pop(&_mpmc, &out);
+  TEST_ASSERT_EQ(out, 1u); /* 0 was overwritten; head is now 1 */
+}
+
+/* -------------------------------------------------------------------------
+ * SPSC zero-copy (in-place) API: write_ptr/commit_write, read_ptr/commit_read.
+ * ---------------------------------------------------------------------- */
+static void test_spsc_zero_copy_write_read(void) {
+  spsc_setup();
+  size_t wmax = 0;
+  uint32_t *wp = (uint32_t *)spsc_write_ptr(&_spsc, &wmax);
+  TEST_ASSERT_NOT_NULL(wp);
+  TEST_ASSERT(wmax >= 3u);
+  wp[0] = 100u;
+  wp[1] = 200u;
+  wp[2] = 300u;
+  spsc_commit_write(&_spsc, 3);
+  TEST_ASSERT_EQ(spsc_available(&_spsc), 3u);
+
+  size_t rmax = 0;
+  uint32_t *rp = (uint32_t *)spsc_read_ptr(&_spsc, &rmax);
+  TEST_ASSERT_NOT_NULL(rp);
+  TEST_ASSERT(rmax >= 3u);
+  TEST_ASSERT_EQ(rp[0], 100u);
+  TEST_ASSERT_EQ(rp[2], 300u);
+  spsc_commit_read(&_spsc, 3);
+  TEST_ASSERT_EQ(spsc_available(&_spsc), 0u);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_structure_tests(void) {
@@ -226,11 +318,17 @@ void run_structure_tests(void) {
   TEST_RUN(test_spsc_peek_does_not_consume);
   TEST_RUN(test_spsc_skip_consumes_without_copying);
   TEST_RUN(test_spsc_reset);
+  TEST_RUN(test_spsc_zero_copy_write_read);
   /* MPMC */
   TEST_RUN(test_mpmc_init_empty);
   TEST_RUN(test_mpmc_try_push_pop_single);
   TEST_RUN(test_mpmc_try_pop_empty);
   TEST_RUN(test_mpmc_bulk);
   TEST_RUN(test_mpmc_full_try_push_fails);
+  TEST_RUN(test_mpmc_blocking_push_pop_immediate);
+  TEST_RUN(test_mpmc_peek_does_not_consume);
+  TEST_RUN(test_mpmc_peek_empty_fails);
+  TEST_RUN(test_mpmc_reset_empties);
+  TEST_RUN(test_mpmc_overwrite_policy);
   TEST_SUITE_END();
 }

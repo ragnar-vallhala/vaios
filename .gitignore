@@ -5,3 +5,5 @@ logs
 build_tests
 build_bench
 build_hw_tests
+build_coverage
+build_pil

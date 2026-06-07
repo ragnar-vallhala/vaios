@@ -243,10 +243,19 @@ TCB *get_next_task(void) {
   int p = highest_ready_prio();
   if (p >= 0) {
     TCB *t = rl_pop_head((uint32_t)p);
+#if defined(VAIOS_HOST_TEST)
+    /* Host TCBs come from the host heap, not target SRAM, so the address
+     * range check below is meaningless (and (uint32_t)-truncating a 64-bit
+     * host pointer is undefined). Keep the priority sanity check only. */
+    if (t->priority > MAX_PRIORITY) {
+      v_panic(__FILE__, __LINE__, "invalid task priority: %u", t->priority);
+    }
+#else
     if ((uint32_t)t < 0x20000000 || (uint32_t)t > 0x20020000 ||
         t->priority > MAX_PRIORITY) {
       v_panic(__FILE__, __LINE__, "invalid task pointer: 0x%x", (uint32_t)t);
     }
+#endif
     current_task = t;
   } else {
     if (current_task->status != TASK_RUNNING) {

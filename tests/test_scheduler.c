@@ -181,6 +181,73 @@ static void test_context_switch_count_zero(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * Scheduler pick: get_next_task / set_next_task (the O(1) ready-list core).
+ *
+ * Priority convention: higher number = higher priority (highest_ready_prio is
+ * 31 - clz(ready_bitmap)); FIFO round-robin within a level. The host-test
+ * build drops get_next_task's target-SRAM pointer assertion (VAIOS_HOST_TEST).
+ * ---------------------------------------------------------------------- */
+
+/* The highest-priority ready task is selected over lower ones. */
+static void test_get_next_task_picks_highest_priority(void) {
+  full_reset();
+  scheduler_init(); /* idle @ prio 0, current_task = idle (READY) */
+  task_create(dummy_task, NULL, 256, 3);
+  task_create(dummy_task, NULL, 256, 7);
+  TCB *hi = ready_lists[7];
+  TEST_ASSERT_NOT_NULL(hi);
+
+  TCB *next = get_next_task();
+  TEST_ASSERT(next == hi); /* prio 7 beats prio 3 and idle */
+  TEST_ASSERT_EQ(next->priority, 7u);
+  TEST_ASSERT(current_task == hi);
+}
+
+/* Two tasks at the same priority are served round-robin (FIFO). */
+static void test_get_next_task_round_robin_same_priority(void) {
+  full_reset();
+  scheduler_init();
+  task_create(dummy_task, NULL, 256, 4);
+  task_create(dummy_task, NULL, 256, 4);
+  TCB *t1 = ready_lists[4];
+  TCB *t2 = ready_lists[4]->next;
+  TEST_ASSERT(t1 != NULL && t2 != NULL && t1 != t2);
+
+  TEST_ASSERT(get_next_task() == t1); /* head first */
+  TEST_ASSERT(get_next_task() == t2); /* t1 re-queued at tail, t2 now head */
+  TEST_ASSERT(get_next_task() == t1); /* back to t1 — round robin */
+}
+
+/* With no user tasks, the scheduler falls back to the idle task. */
+static void test_get_next_task_returns_idle_when_no_tasks(void) {
+  full_reset();
+  scheduler_init();
+  TEST_ASSERT(get_next_task() == idle_task);
+  TEST_ASSERT(current_task == idle_task);
+}
+
+/* Each pick advances the context-switch counter. */
+static void test_get_next_task_bumps_switch_count(void) {
+  full_reset();
+  scheduler_init();
+  task_create(dummy_task, NULL, 256, 5);
+  uint32_t before = get_context_switch_count();
+  get_next_task();
+  get_next_task();
+  TEST_ASSERT_EQ(get_context_switch_count(), before + 2u);
+}
+
+/* set_next_task is a thin wrapper that updates current_task via get_next_task. */
+static void test_set_next_task_updates_current(void) {
+  full_reset();
+  scheduler_init();
+  task_create(dummy_task, NULL, 256, 6);
+  TCB *hi = ready_lists[6];
+  set_next_task();
+  TEST_ASSERT(current_task == hi);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_scheduler_tests(void) {
@@ -196,5 +263,10 @@ void run_scheduler_tests(void) {
   TEST_RUN(test_wake_up_delayed_tasks);
   TEST_RUN(test_delayed_add_remove);
   TEST_RUN(test_context_switch_count_zero);
+  TEST_RUN(test_get_next_task_picks_highest_priority);
+  TEST_RUN(test_get_next_task_round_robin_same_priority);
+  TEST_RUN(test_get_next_task_returns_idle_when_no_tasks);
+  TEST_RUN(test_get_next_task_bumps_switch_count);
+  TEST_RUN(test_set_next_task_updates_current);
   TEST_SUITE_END();
 }
