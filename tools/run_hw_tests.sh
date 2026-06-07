@@ -209,6 +209,14 @@ run_example IPC_TEST \
   "Task 1: Timeout waiting for binary semaphore" \
   "Task 2: Timeout waiting for binary semaphore"
 
+# On-target (PIL) unit tests: the host suites run against the real kernel +
+# port (real heap / IPC / formatter). See examples/unit_tests.c.
+run_example UNIT_TESTS \
+  "=== Suite: Memory Allocator ===" \
+  "=== Suite: Structure" \
+  "=== Suite: utils" \
+  "ON-TARGET RESULT: ALL PASS"
+
 # ----- summary ---------------------------------------------------------------
 # Cross-suite table. Renderer is shared with tools/run_tests.sh —
 # tools/lib/test_summary.awk owns the layout.

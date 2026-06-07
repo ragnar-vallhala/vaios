@@ -146,6 +146,14 @@ endif()
 message("LINKER_FILE for VAIOS: ${LINKER_FILE}")
 message("STARTUP_FILE for VAIOS: ${STARTUP_FILE}")
 
+# The on-target unit-test runner (VAIOS_EXAMPLE=UNIT_TESTS) runs the host
+# suites against the real kernel. Some allocator/stack tests deliberately
+# exhaust the heap / shrink stacks; disable the watermark panics for that
+# build only, exactly as tests/CMakeLists.txt does for the host suite.
+if(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
+  add_compile_definitions(HEAP_WATERMARK_ENABLE=0 TASK_STACK_WATERMARK_ENABLE=0)
+endif()
+
 add_subdirectory(portable) # implementations for specific architectures (context switching, interrupt handling)
 add_subdirectory(kernel) # The heart of your RTOS (scheduling, tasks, synchronization, etc.) — totally architecture independent
 if(EXAMPLES)
