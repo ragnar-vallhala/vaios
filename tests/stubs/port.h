@@ -20,6 +20,11 @@
 #define EXIT_CRITICAL()                                                        \
   do {                                                                         \
   } while (0)
+#define ENTER_CRITICAL_FROM_ISR() ((uint32_t)0)
+#define EXIT_CRITICAL_FROM_ISR(saved)                                          \
+  do {                                                                         \
+    (void)(saved);                                                             \
+  } while (0)
 #define V_PORT_MB()                                                            \
   do {                                                                         \
   } while (0)

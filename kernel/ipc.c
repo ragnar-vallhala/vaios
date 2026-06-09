@@ -2,6 +2,7 @@
 #include "atomic.h"
 #include "memory.h"
 #include "perf_hooks.h"
+#include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL[_FROM_ISR]
 #include "task.h"
 #include "utils.h"
 
@@ -169,8 +170,12 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
       current); // so wake_up_delayed_tasks can find us on timeout
 
   PERF_IPC_TAKE_BLOCKED();
-  EXIT_CRITICAL();
+  // Pend the context switch while still inside the critical section: PendSV is
+  // masked by BASEPRI here, so the BLOCKED-mark + enqueue cannot be interleaved
+  // by an ISR before the switch is taken. EXIT_CRITICAL then lowers BASEPRI and
+  // PendSV fires immediately — an atomic block-and-yield.
   task_yield();
+  EXIT_CRITICAL();
 
   // On resume: semaphore_give clears wait_sem → VA_PASS (slot granted)
   //            wake_up_delayed_tasks() ejects us with wait_sem still set →
@@ -242,7 +247,13 @@ int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
 
 static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
   PERF_IPC_GIVE();
-  ENTER_CRITICAL();
+  // FromISR-safe critical section: this function is shared by v_semaphore_give
+  // (task context) and v_semaphore_give_from_isr (ISR context). Saving/
+  // restoring BASEPRI in a local — instead of bumping the global
+  // critical_nesting — keeps the ISR path from corrupting a preempted task's
+  // critical-section accounting. The atomic_* below are lock-free, so they take
+  // no critical section of their own.
+  uint32_t isr_state = ENTER_CRITICAL_FROM_ISR();
 
   // Unblock first waiting task if any — hand off the slot directly
   TCB *to_unblock = wait_q_dequeue(s);
@@ -258,17 +269,17 @@ static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
         to_unblock->priority > get_current_task()->priority)
       *pxHigherPriorityTaskWoken = 1;
 
-    EXIT_CRITICAL();
+    EXIT_CRITICAL_FROM_ISR(isr_state);
     return VA_PASS;
   }
 
   if (atomic_get(&s->count) >= atomic_get(&s->limit)) {
-    EXIT_CRITICAL();
+    EXIT_CRITICAL_FROM_ISR(isr_state);
     return VA_FAIL; // full
   }
 
   atomic_inc(&s->count);
-  EXIT_CRITICAL();
+  EXIT_CRITICAL_FROM_ISR(isr_state);
   return VA_PASS;
 }
 
