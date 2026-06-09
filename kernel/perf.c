@@ -11,7 +11,8 @@
 
 #if VAIOS_MODULE_PERF
 
-#include "atomic.h" /* ENTER_CRITICAL / EXIT_CRITICAL via port.h */
+#include "atomic.h"
+#include "port.h" /* ENTER_CRITICAL / EXIT_CRITICAL */
 #include "task.h"
 #include "utils.h" /* print_fmt, print_fmt_buf, v_get_ticks */
 
