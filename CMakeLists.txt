@@ -56,7 +56,7 @@ set(VAIOS_CONFIG_FILE "" CACHE STRING "Path to the user-provided vaios_config.h 
 # vaios_config_default.h. Override with -DVAIOS_MODULE_X=OFF.
 # ---------------------------------------------------------------------------
 option(VAIOS_MODULE_TERMINAL    "Build the interactive command terminal"   ON)
-option(VAIOS_MODULE_VFS         "Build the virtual file system (FatFs)"    ON)
+option(VAIOS_MODULE_VFS         "Build the virtual file system (FatFs)"    OFF)
 option(VAIOS_MODULE_SEMIHOSTING "Build the semihosting debug I/O module"   ON)
 option(VAIOS_MODULE_FIFO        "Build the SPSC/MPMC FIFO data structures" ON)
 option(VAIOS_MODULE_PERF        "Build the kernel performance counters"    ON)
