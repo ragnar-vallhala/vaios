@@ -34,8 +34,39 @@ __attribute__((always_inline)) static inline void v_exit_critical(void) {
   }
 }
 
+// FromISR-safe critical section. Saves/restores the interrupt mask in a LOCAL
+// variable instead of the global `critical_nesting`, so it is safe to use from
+// an ISR — an ISR must never touch a preempted task's nesting count — and from
+// task context alike (a save/restore of the current BASEPRI nests correctly).
+// Use this, not ENTER/EXIT_CRITICAL, in any code reachable from a *_from_isr
+// path.
+__attribute__((always_inline)) static inline uint32_t
+v_enter_critical_from_isr(void) {
+  uint32_t saved;
+#if VAIOS_USE_BASEPRI
+  uint32_t pri = MAX_SYSCALL_INTERRUPT_PRIORITY;
+  __asm volatile("mrs %0, basepri" : "=r"(saved)::"memory");
+  __asm volatile("msr basepri, %0" : : "r"(pri) : "memory");
+#else
+  __asm volatile("mrs %0, primask" : "=r"(saved)::"memory");
+  __asm volatile("cpsid i" ::: "memory");
+#endif
+  return saved;
+}
+
+__attribute__((always_inline)) static inline void
+v_exit_critical_from_isr(uint32_t saved) {
+#if VAIOS_USE_BASEPRI
+  __asm volatile("msr basepri, %0" : : "r"(saved) : "memory");
+#else
+  __asm volatile("msr primask, %0" : : "r"(saved) : "memory");
+#endif
+}
+
 #define ENTER_CRITICAL() v_enter_critical()
 #define EXIT_CRITICAL() v_exit_critical()
+#define ENTER_CRITICAL_FROM_ISR() v_enter_critical_from_isr()
+#define EXIT_CRITICAL_FROM_ISR(saved) v_exit_critical_from_isr(saved)
 #define V_PORT_MB() __asm__ volatile("dmb" : : : "memory")
 
 // Stack setup for new task

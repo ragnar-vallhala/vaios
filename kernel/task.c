@@ -2,6 +2,7 @@
 #include "ipc.h"
 #include "memory.h"
 #include "perf_hooks.h"
+#include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>

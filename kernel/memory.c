@@ -2,7 +2,11 @@
 #include "perf_hooks.h"
 #include "port.h"
 #include "utils.h"
-#include "vaios_config_default.h"
+// Use the aggregator (not vaios_config_default.h directly) so an app's
+// vaios_app_config.h HEAP_SIZE override actually reaches the heap sizing below;
+// the default header is #ifndef-guarded and the aggregator includes the app
+// config before it. Every other kernel TU already goes through the aggregator.
+#include "vaios_config.h"
 #include <stdint.h>
 
 extern uint32_t _heap_start;
