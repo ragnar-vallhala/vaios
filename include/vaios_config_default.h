@@ -85,7 +85,10 @@
 #define VAIOS_MODULE_TERMINAL 1
 #endif
 #ifndef VAIOS_MODULE_VFS
-#define VAIOS_MODULE_VFS 1
+// Off by default: VFS (kernel/vfs.c) wraps NavHAL's FatFs/SDIO v_fs API
+// (utils/v_fs.h), so enabling it couples the build to NavHAL's filesystem
+// layer. Builds that want it opt in with -DVAIOS_MODULE_VFS=ON.
+#define VAIOS_MODULE_VFS 0
 #endif
 #ifndef VAIOS_MODULE_SEMIHOSTING
 #define VAIOS_MODULE_SEMIHOSTING 1

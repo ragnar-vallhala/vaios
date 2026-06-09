@@ -73,6 +73,9 @@ target_include_directories(vaios_tests PRIVATE ${TEST_INCLUDE_DIRS})
 
 target_compile_definitions(vaios_tests PRIVATE
     CORTEX_M4              # required by task.h build guard
+    VAIOS_MODULE_VFS=1     # VFS is off by default now; this binary links
+                           # kernel/vfs.c + test_vfs.c and exercises perf.c's
+                           # VFS-gated CSV path, so opt it in explicitly.
     VAIOS_HOST_TEST        # drops target-SRAM pointer assertions so the
                            # scheduler core (get_next_task) is host-testable
     HEAP_WATERMARK_ENABLE=0 # don't trip the heap-watermark v_panic when a
