@@ -572,10 +572,13 @@ uint32_t get_context_switch_count(void) { return context_switch_count; }
 uint32_t get_idle_tick_count(void) { return idle_task->ticks_run; }
 
 // Snapshot the set of live tasks into out[] (running + ready + blocked +
-// delayed; the running task is off the scheduler lists, so no duplicates).
-// Copies POINTERS under a brief critical section — bounded and fast — so the
-// caller can read each task's stats/stack outside the lock (racy but
-// tolerable for diagnostics). Returns the count written (<= max).
+// delayed). The running task is normally off the scheduler lists, but at
+// scheduler_init (before the first switch) the idle task is both current_task
+// AND on a ready list, so current_task is recorded first and then skipped in
+// the list walks to guarantee no duplicates. Copies POINTERS under a brief
+// critical section — bounded and fast — so the caller can read each task's
+// stats/stack outside the lock (racy but tolerable for diagnostics). Returns
+// the count written (<= max).
 int task_snapshot_list(TCB **out, int max) {
   if (!out || max <= 0)
     return 0;
@@ -585,11 +588,14 @@ int task_snapshot_list(TCB **out, int max) {
     out[n++] = current_task;
   for (uint32_t p = 0; p <= MAX_PRIORITY && n < max; p++)
     for (TCB *t = ready_lists[p]; t && n < max; t = t->next)
-      out[n++] = t;
+      if (t != current_task)
+        out[n++] = t;
   for (TCB *t = blocked_list; t && n < max; t = t->next)
-    out[n++] = t;
+    if (t != current_task)
+      out[n++] = t;
   for (TCB *t = delayed_list; t && n < max; t = t->next)
-    out[n++] = t;
+    if (t != current_task)
+      out[n++] = t;
   EXIT_CRITICAL();
   return n;
 }

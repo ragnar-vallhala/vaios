@@ -286,6 +286,31 @@ static void test_task_stack_highwater(void) {
   TEST_ASSERT_EQ(out.stack_peak, 224u); /* 256 - 8*4 */
 }
 
+/* Stack high-water edges: a fully-used stack (no sentinel survives) reports
+ * peak == size; a NULL mem_block degrades to peak == size without scanning. */
+static void test_task_stack_highwater_edges(void) {
+  reset();
+  uint32_t stack[16];
+  for (int i = 0; i < 16; i++)
+    stack[i] = 0x11111111u; /* no V_PERF_STACK_FILL anywhere -> fully used */
+  TCB t = {0};
+  t.magic = TCB_MAGIC;
+  t.mem_block = stack;
+  t.stack_size = (uint32_t)sizeof(stack); /* 64 B */
+  v_perf_task_t out = {0};
+  v_perf_task_stats(&t, &out);
+  TEST_ASSERT_EQ(out.stack_peak, 64u); /* nothing free -> all 64 B used */
+
+  /* NULL mem_block: no scan, peak defaults to the full size, no crash. */
+  TCB tn = {0};
+  tn.magic = TCB_MAGIC;
+  tn.mem_block = NULL;
+  tn.stack_size = 100u;
+  v_perf_task_stats(&tn, &out);
+  TEST_ASSERT_EQ(out.stack_size, 100u);
+  TEST_ASSERT_EQ(out.stack_peak, 100u);
+}
+
 static void test_task_stats_null_task_returns_zero(void) {
   v_perf_task_t out;
   out.cycles_run = 999;
@@ -364,6 +389,7 @@ void run_perf_tests(void) {
   TEST_RUN(test_snapshot_bundles_all_subsystems);
   TEST_RUN(test_task_stats_copies_from_tcb);
   TEST_RUN(test_task_stack_highwater);
+  TEST_RUN(test_task_stack_highwater_edges);
   TEST_RUN(test_task_stats_null_task_returns_zero);
   TEST_RUN(test_dump_to_file_open_failure_returns_minus_one);
   TEST_RUN(test_dump_to_file_null_path_returns_minus_one);
