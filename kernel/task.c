@@ -207,6 +207,13 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   task->perf.last_scheduled_cyc = 0;
   task->perf.max_burst_cyc = 0;
   task->perf.switches_in = 0;
+  task->perf.stack_size = 0; /* computed on demand by v_perf_task_stats */
+  task->perf.stack_peak = 0;
+  /* Paint the whole stack so the high-water mark is measurable from the
+   * untouched sentinel run. Done before init_task_stack lays the initial
+   * frame at the top (that region then reads as "used"). */
+  for (uint32_t i = 0; i < stack_size / sizeof(uint32_t); i++)
+    task->mem_block[i] = V_PERF_STACK_FILL;
 #endif
   task->magic = TCB_MAGIC;
   init_task_stack(task);
@@ -563,6 +570,29 @@ TCB *get_current_task(void) { return current_task; }
 uint32_t get_context_switch_count(void) { return context_switch_count; }
 
 uint32_t get_idle_tick_count(void) { return idle_task->ticks_run; }
+
+// Snapshot the set of live tasks into out[] (running + ready + blocked +
+// delayed; the running task is off the scheduler lists, so no duplicates).
+// Copies POINTERS under a brief critical section — bounded and fast — so the
+// caller can read each task's stats/stack outside the lock (racy but
+// tolerable for diagnostics). Returns the count written (<= max).
+int task_snapshot_list(TCB **out, int max) {
+  if (!out || max <= 0)
+    return 0;
+  int n = 0;
+  ENTER_CRITICAL();
+  if (current_task && n < max)
+    out[n++] = current_task;
+  for (uint32_t p = 0; p <= MAX_PRIORITY && n < max; p++)
+    for (TCB *t = ready_lists[p]; t && n < max; t = t->next)
+      out[n++] = t;
+  for (TCB *t = blocked_list; t && n < max; t = t->next)
+    out[n++] = t;
+  for (TCB *t = delayed_list; t && n < max; t = t->next)
+    out[n++] = t;
+  EXIT_CRITICAL();
+  return n;
+}
 TCB *get_task_by_id(uint32_t task_id) {
   ENTER_CRITICAL();
   if (current_task->task_id == task_id) {

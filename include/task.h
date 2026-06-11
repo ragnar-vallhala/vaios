@@ -139,6 +139,10 @@ void scheduler_start(void);
 TCB *get_current_task(void);
 uint32_t get_context_switch_count(void);
 uint32_t get_idle_tick_count(void);
+// Snapshot live task pointers (running + ready + blocked + delayed) into
+// out[] under a brief critical section; returns count (<= max). Used by the
+// perf module's per-task dump.
+int task_snapshot_list(TCB **out, int max);
 
 extern TCB *current_task;
 
