@@ -170,12 +170,17 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
       current); // so wake_up_delayed_tasks can find us on timeout
 
   PERF_IPC_TAKE_BLOCKED();
-  // Pend the context switch while still inside the critical section: PendSV is
-  // masked by BASEPRI here, so the BLOCKED-mark + enqueue cannot be interleaved
-  // by an ISR before the switch is taken. EXIT_CRITICAL then lowers BASEPRI and
-  // PendSV fires immediately — an atomic block-and-yield.
-  task_yield();
+  // Leave the critical section BEFORE pending the switch. Commit 5b3df99 had
+  // reordered these (task_yield while still BASEPRI-masked, EXIT_CRITICAL after)
+  // to make block-and-yield atomic. On real STM32F401 that opened a give<->take
+  // race: a DMA-completion v_semaphore_give_from_isr landing between the
+  // BLOCKED-mark and the taken switch left the waiting task's wake lost, so it
+  // always fell through to its timeout — the IMU DMA reader got stuck in 20 Hz
+  // recovery (task_count frozen) and the estimator diverged to a bank-angle
+  // failsafe. Confirmed on-target; the NavHAL maskable-IRQ-priority fix is the
+  // real orphan-bug cure, so dropping the reorder is safe.
   EXIT_CRITICAL();
+  task_yield();
 
   // On resume: semaphore_give clears wait_sem → VA_PASS (slot granted)
   //            wake_up_delayed_tasks() ejects us with wait_sem still set →
