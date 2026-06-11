@@ -23,6 +23,11 @@ int task_snapshot_list(TCB **out, int max) {
   (void)max;
   return 0;
 }
+/* kernel/perf.c's [tasks] dump labels each task via task_get_name (task.c is
+ * not linked into this binary). */
+const char *task_get_name(const TCB *task) {
+  return (task && task->name) ? task->name : "";
+}
 /* kernel/perf.c reads memory.c's allocation_size to track heap peak.
  * memory.c isn't linked into this binary, so stub the symbol. */
 uint32_t allocation_size = 0;
