@@ -26,6 +26,14 @@ typedef struct {
   volatile size_t head;
   volatile size_t tail;
   spsc_policy_t policy;
+#if VAIOS_MODULE_PERF
+  /* Observability (VAIOS_MODULE_PERF): high-water fill and lost-item count.
+   * `peak` is the max elements ever queued (size a buffer from this);
+   * `drops` counts items lost to a full DROP fifo or overwritten under
+   * OVERWRITE policy (backpressure signal). Read via spsc_peak/spsc_drops. */
+  size_t peak;
+  uint32_t drops;
+#endif
 } spsc_fifo_t;
 
 /**
@@ -44,6 +52,9 @@ size_t spsc_space(const spsc_fifo_t *f);     /* free slots available to write */
 size_t spsc_peek(const spsc_fifo_t *f, void *out, size_t count);
 size_t spsc_skip(spsc_fifo_t *f, size_t count);
 void spsc_reset(spsc_fifo_t *f);
+/* Observability getters — return 0 when VAIOS_MODULE_PERF is off. */
+size_t spsc_peak(const spsc_fifo_t *f);   /* high-water fill (elements)     */
+uint32_t spsc_drops(const spsc_fifo_t *f);/* items dropped/overwritten      */
 
 /* Zero-copy support */
 void *spsc_write_ptr(spsc_fifo_t *f, size_t *max_count);
