@@ -47,6 +47,10 @@ void spsc_init(spsc_fifo_t *f, void *buffer, size_t capacity,
   f->head = 0;
   f->tail = 0;
   f->policy = SPSC_POLICY_DROP;
+#if VAIOS_MODULE_PERF
+  f->peak = 0;
+  f->drops = 0;
+#endif
 }
 
 void spsc_set_policy(spsc_fifo_t *f, spsc_policy_t policy) {
@@ -92,6 +96,9 @@ size_t spsc_write(spsc_fifo_t *f, const void *items, size_t count) {
 
   if (count > avail) {
     if (f->policy == SPSC_POLICY_DROP) {
+#if VAIOS_MODULE_PERF
+      f->drops += (uint32_t)(count - avail); /* items the full fifo rejects */
+#endif
       count = avail;
     } else {
       /* Overwrite policy: skip the number of items we are about to overwrite */
@@ -101,6 +108,9 @@ size_t spsc_write(spsc_fifo_t *f, const void *items, size_t count) {
       if (to_overwrite >= f->capacity) {
         to_overwrite = f->capacity - 1;
       }
+#if VAIOS_MODULE_PERF
+      f->drops += (uint32_t)to_overwrite; /* old items lost to the consumer */
+#endif
       spsc_skip(f, to_overwrite);
       /* After skip, avail should be exactly equal to 'count' (capped at
        * capacity-1) */
@@ -143,6 +153,13 @@ size_t spsc_write(spsc_fifo_t *f, const void *items, size_t count) {
   size_t new_head = (head + count) % f->capacity;
   f->head = new_head;
 
+#if VAIOS_MODULE_PERF
+  {
+    size_t fill = spsc_available(f);
+    if (fill > f->peak)
+      f->peak = fill;
+  }
+#endif
   return count;
 }
 
@@ -255,6 +272,32 @@ void spsc_commit_write(spsc_fifo_t *f, size_t count) {
   if (new_head >= f->capacity)
     new_head -= f->capacity;
   f->head = new_head;
+#if VAIOS_MODULE_PERF
+  {
+    size_t fill = spsc_available(f);
+    if (fill > f->peak)
+      f->peak = fill;
+  }
+#endif
+}
+
+/* Observability getters (0 when VAIOS_MODULE_PERF is compiled out). */
+size_t spsc_peak(const spsc_fifo_t *f) {
+#if VAIOS_MODULE_PERF
+  return f ? f->peak : 0;
+#else
+  (void)f;
+  return 0;
+#endif
+}
+
+uint32_t spsc_drops(const spsc_fifo_t *f) {
+#if VAIOS_MODULE_PERF
+  return f ? f->drops : 0;
+#else
+  (void)f;
+  return 0;
+#endif
 }
 
 void *spsc_read_ptr(spsc_fifo_t *f, size_t *max_count) {

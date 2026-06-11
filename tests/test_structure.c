@@ -91,6 +91,39 @@ static void test_spsc_full_drop_policy(void) {
   TEST_ASSERT_EQ(spsc_space(&_spsc), 0u);
 }
 
+/* Observability: spsc_peak tracks the high-water fill and spsc_drops counts
+ * items the full fifo rejected. Both no-ops returning 0 when perf is off. */
+static void test_spsc_perf_peak_and_drops(void) {
+  spsc_setup();
+  TEST_ASSERT_EQ(spsc_peak(&_spsc), 0u);
+  TEST_ASSERT_EQ(spsc_drops(&_spsc), 0u);
+
+  spsc_set_policy(&_spsc, SPSC_POLICY_DROP);
+  size_t space = spsc_space(&_spsc);
+  for (size_t i = 0; i < space; i++) {
+    uint32_t v = (uint32_t)i;
+    TEST_ASSERT_EQ(spsc_write(&_spsc, &v, 1), 1u);
+  }
+  /* Full: high-water == usable capacity, nothing dropped yet. */
+  TEST_ASSERT_EQ(spsc_peak(&_spsc), space);
+  TEST_ASSERT_EQ(spsc_drops(&_spsc), 0u);
+
+  /* Two writes onto a full DROP fifo -> 2 drops; peak unchanged. */
+  uint32_t extra = 99;
+  TEST_ASSERT_EQ(spsc_write(&_spsc, &extra, 1), 0u);
+  TEST_ASSERT_EQ(spsc_write(&_spsc, &extra, 1), 0u);
+  TEST_ASSERT_EQ(spsc_drops(&_spsc), 2u);
+  TEST_ASSERT_EQ(spsc_peak(&_spsc), space);
+
+  /* Drain to 5 then refill below the mark — high-water is sticky. */
+  uint32_t out[16];
+  spsc_read(&_spsc, out, space - 5);
+  TEST_ASSERT_EQ(spsc_available(&_spsc), 5u);
+  uint32_t more[4] = {1, 2, 3, 4};
+  TEST_ASSERT_EQ(spsc_write(&_spsc, more, 4), 4u);
+  TEST_ASSERT_EQ(spsc_peak(&_spsc), space);
+}
+
 static void test_spsc_full_overwrite_policy(void) {
   spsc_setup();
   size_t space = spsc_space(&_spsc);
@@ -313,6 +346,7 @@ void run_structure_tests(void) {
   TEST_RUN(test_spsc_write_read_single);
   TEST_RUN(test_spsc_write_read_multi);
   TEST_RUN(test_spsc_full_drop_policy);
+  TEST_RUN(test_spsc_perf_peak_and_drops);
   TEST_RUN(test_spsc_full_overwrite_policy);
   TEST_RUN(test_spsc_wrap_around);
   TEST_RUN(test_spsc_peek_does_not_consume);
