@@ -1,6 +1,7 @@
 #ifndef TASK_H
 #define TASK_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,6 +38,8 @@ typedef struct Task_Control_Block {
   void (*entry)(void *);  // Task entry function
   uint32_t stack_size;    // Stack size in bytes
   uint32_t task_id;       // Unique task identifier
+  const char *name;       // Optional human-readable name (flash literal, not
+                          // owned/copied; "" when unset). See task_get_name.
   uint32_t delay_ticks;   // Absolute wakeup tick (deadline)
   uint32_t ticks_run;     // Total ticks executed (stats)
   uint32_t priority;      // Current priority (0..MAX_PRIORITY)
@@ -91,6 +94,23 @@ void init_task_stack(TCB *task); // Implemented in port.c
 //-----------------------------------------------------------------------------
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
                      uint32_t priority);
+// As task_create, but also tags the task with a human-readable name for
+// diagnostics (perf dumps, telemetry). `name` must point at storage that
+// outlives the task — typically a string literal in flash; the TCB keeps the
+// pointer, not a copy. Pass NULL or "" for an unnamed task. task_create() is a
+// thin wrapper over this with name = "".
+uint32_t task_create_named(void (*entry)(void *), void *arg,
+                           uint32_t stack_size, uint32_t priority,
+                           const char *name);
+// Tag an existing task by id (e.g. after task_create). `name` storage must
+// outlive the task (string literal in flash). No-op if the id is unknown.
+void task_set_name(uint32_t task_id, const char *name);
+// Human-readable task name, or "" if unset. Never returns NULL.
+const char *task_get_name(const TCB *task);
+// Look up a task's name by id, or "" if the id is unknown/unset. Never returns
+// NULL. Lets callers (e.g. a telemetry request handler) resolve names on demand
+// without holding a TCB pointer.
+const char *task_get_name_by_id(uint32_t task_id);
 void task_exit_request(uint32_t task_id);
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
@@ -113,6 +133,14 @@ void idle_task_function(void *arg);
 void add_to_delayed_list(TCB *task);
 void remove_from_delayed_list(TCB *task);
 void task_delay(uint32_t ticks);
+// Drift-free periodic delay (cf. FreeRTOS vTaskDelayUntil). Blocks until the
+// ABSOLUTE tick *last_wake + period, then advances *last_wake by period — so a
+// loop runs at a fixed rate independent of its own execution time. Seed
+// *last_wake with v_get_ticks() once before the loop. If the deadline has
+// already passed (the iteration overran a period), it returns immediately
+// without blocking so the loop catches up. Returns true if it actually
+// blocked, false on overrun (or invalid args / idle task).
+bool task_delay_until(uint32_t *last_wake, uint32_t period);
 // SysTick wake path: drains due sleepers from the sorted delayed list and
 // ejects timed-out semaphore waiters. The only place delayed/timeout wakeups
 // happen — get_next_task does not scan. Returns nonzero if a woken task

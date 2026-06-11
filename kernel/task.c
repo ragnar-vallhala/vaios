@@ -174,6 +174,12 @@ TCB *get_highest_priority_task(void) {
 //-----------------------------------------------------------------------------
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
                      uint32_t priority) {
+  return task_create_named(entry, arg, stack_size, priority, "");
+}
+
+uint32_t task_create_named(void (*entry)(void *), void *arg,
+                           uint32_t stack_size, uint32_t priority,
+                           const char *name) {
   if (stack_size < 128)
     stack_size = 128;
   stack_size &= ~(3); // Align to 4 bytes
@@ -182,6 +188,7 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
   if (!task)
     return 0;
   task->task_id = ++task_count;
+  task->name = name ? name : "";
   task->stack_size = stack_size;
   task->mem_block = (uint32_t *)v_malloc(stack_size);
   if (!task->mem_block) {
@@ -226,6 +233,20 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
         "size: 0x%x",
         task->task_id, priority, task->mem_block, stack_size);
   return task->task_id;
+}
+
+void task_set_name(uint32_t task_id, const char *name) {
+  TCB *task = get_task_by_id(task_id);
+  if (task)
+    task->name = name ? name : "";
+}
+
+const char *task_get_name(const TCB *task) {
+  return (task && task->name) ? task->name : "";
+}
+
+const char *task_get_name_by_id(uint32_t task_id) {
+  return task_get_name(get_task_by_id(task_id));
 }
 
 //-----------------------------------------------------------------------------
@@ -412,6 +433,30 @@ void task_delay(uint32_t ticks) {
   EXIT_CRITICAL();
 
   task_yield();
+}
+
+bool task_delay_until(uint32_t *last_wake, uint32_t period) {
+  if (current_task == NULL)
+    v_panic(__FILE__, __LINE__, "current_task is NULL");
+  if (current_task == idle_task || last_wake == NULL || period == 0)
+    return false;
+
+  ENTER_CRITICAL();
+  uint32_t wake = *last_wake + period;
+  *last_wake = wake;
+  /* Signed delta so the comparison is wrap-safe: if the deadline already
+   * passed (the loop body overran a period), don't block — let it catch up. */
+  if ((int32_t)(wake - v_get_ticks()) <= 0) {
+    EXIT_CRITICAL();
+    return false;
+  }
+  current_task->delay_ticks = wake; /* absolute deadline */
+  current_task->status = TASK_DELAYED;
+  add_to_delayed_list(current_task);
+  EXIT_CRITICAL();
+
+  task_yield();
+  return true;
 }
 
 // SysTick wake path — runs once per tick, and is the ONLY place delayed-task
