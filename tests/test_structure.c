@@ -124,6 +124,27 @@ static void test_spsc_perf_peak_and_drops(void) {
   TEST_ASSERT_EQ(spsc_peak(&_spsc), space);
 }
 
+/* OVERWRITE policy: items the full fifo overwrites are counted as drops — the
+ * branch the DROP-policy test doesn't exercise. */
+static void test_spsc_overwrite_counts_drops(void) {
+  spsc_setup();
+  spsc_set_policy(&_spsc, SPSC_POLICY_OVERWRITE);
+  size_t space = spsc_space(&_spsc);
+  for (uint32_t i = 1; i <= space; i++)
+    spsc_write(&_spsc, &i, 1);
+  TEST_ASSERT_EQ(spsc_drops(&_spsc), 0u); /* exactly full -> none overwritten */
+  TEST_ASSERT_EQ(spsc_peak(&_spsc), space);
+
+  uint32_t more[3] = {100, 101, 102}; /* 3 onto a full fifo -> 3 overwritten */
+  spsc_write(&_spsc, more, 3);
+  TEST_ASSERT_EQ(spsc_drops(&_spsc), 3u);
+  TEST_ASSERT_EQ(spsc_peak(&_spsc), space);
+
+  uint32_t more2[2] = {200, 201}; /* accumulates -> 5 */
+  spsc_write(&_spsc, more2, 2);
+  TEST_ASSERT_EQ(spsc_drops(&_spsc), 5u);
+}
+
 static void test_spsc_full_overwrite_policy(void) {
   spsc_setup();
   size_t space = spsc_space(&_spsc);
@@ -347,6 +368,7 @@ void run_structure_tests(void) {
   TEST_RUN(test_spsc_write_read_multi);
   TEST_RUN(test_spsc_full_drop_policy);
   TEST_RUN(test_spsc_perf_peak_and_drops);
+  TEST_RUN(test_spsc_overwrite_counts_drops);
   TEST_RUN(test_spsc_full_overwrite_policy);
   TEST_RUN(test_spsc_wrap_around);
   TEST_RUN(test_spsc_peek_does_not_consume);

@@ -247,11 +247,58 @@ static void test_set_next_task_updates_current(void) {
   TEST_ASSERT(current_task == hi);
 }
 
+/* task_snapshot_list returns every live task exactly once (covers the
+ * scheduler_init case where the idle task is both current_task and on a ready
+ * list — must be deduplicated), spanning ready + delayed, and honours `max`. */
+static void test_task_snapshot_list_covers_all_once(void) {
+  full_reset();
+  scheduler_init(); /* idle_task: current_task AND in the ready list */
+  uint32_t a = task_create(dummy_task, NULL, 256, 1);
+  uint32_t b = task_create(dummy_task, NULL, 256, 2);
+  uint32_t c = task_create(dummy_task, NULL, 256, 3);
+
+  TCB *out[8];
+  int n = task_snapshot_list(out, 8);
+  TEST_ASSERT_EQ(n, 4); /* idle + a + b + c, idle NOT double-counted */
+
+  int idle = 0, sa = 0, sb = 0, sc = 0;
+  for (int i = 0; i < n; i++) {
+    if (out[i] == idle_task)
+      idle++;
+    if (out[i]->task_id == a)
+      sa++;
+    if (out[i]->task_id == b)
+      sb++;
+    if (out[i]->task_id == c)
+      sc++;
+  }
+  TEST_ASSERT_EQ(idle, 1); /* exactly once despite being current + ready */
+  TEST_ASSERT_EQ(sa, 1);
+  TEST_ASSERT_EQ(sb, 1);
+  TEST_ASSERT_EQ(sc, 1);
+
+  /* `max` is honoured. */
+  TEST_ASSERT_EQ(task_snapshot_list(out, 2), 2);
+
+  /* A task on the delayed list is still covered. Move `a` ready->delayed. */
+  TCB *ta = ready_lists[1];
+  remove_from_ready_list(ta);
+  add_to_delayed_list(ta);
+  n = task_snapshot_list(out, 8);
+  TEST_ASSERT_EQ(n, 4); /* same four, a now found via delayed_list */
+  int found_a = 0;
+  for (int i = 0; i < n; i++)
+    if (out[i] == ta)
+      found_a++;
+  TEST_ASSERT_EQ(found_a, 1);
+}
+
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_scheduler_tests(void) {
   TEST_SUITE_BEGIN("Scheduler");
+  TEST_RUN(test_task_snapshot_list_covers_all_once);
   TEST_RUN(test_scheduler_init_creates_idle);
   TEST_RUN(test_scheduler_init_current_is_idle);
   TEST_RUN(test_scheduler_init_bitmap);
