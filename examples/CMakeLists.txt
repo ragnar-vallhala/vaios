@@ -47,6 +47,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "FIFO_TEST")
   add_executable(main fifo_test.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "PERF")
   add_executable(main perf_example.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "PERF_DEMO")
+  add_executable(main perf_demo.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
   # On-target (PIL) runner: link the host unit-test suites against the real
   # kernel + port. Curated to suites that need no scheduler / SD / DWT.
