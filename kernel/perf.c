@@ -242,6 +242,20 @@ void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out) {
   ENTER_CRITICAL();
   *out = t->perf;
   EXIT_CRITICAL();
+  /* Stack high-water: unused stack still holds the V_PERF_STACK_FILL sentinel
+   * painted at create. The untouched run at the bottom (the deepest the stack
+   * can grow) is free headroom; the rest is the peak ever used. Read racily
+   * w.r.t. a running task, but the high-water only grows so a stale read is
+   * safe. Scanned outside the critical section to keep it short. */
+  out->stack_size = t->stack_size;
+  out->stack_peak = t->stack_size;
+  if (t->mem_block && t->stack_size) {
+    uint32_t total = t->stack_size / sizeof(uint32_t);
+    uint32_t freew = 0;
+    while (freew < total && t->mem_block[freew] == V_PERF_STACK_FILL)
+      freew++;
+    out->stack_peak = t->stack_size - freew * (uint32_t)sizeof(uint32_t);
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -318,7 +332,30 @@ void v_perf_dump(void) {
   for (int i = 0; i < V_PERF_HEAP_NUM_CLASSES; i++) {
     print_fmt("c%d=%u ", i, (unsigned)s.heap.per_class_allocs[i]);
   }
-  print_fmt("\r\n=== end ===\r\n");
+  print_fmt("\r\n");
+
+  /* Per-task: id, priority, state, CPU cycles, switch-ins, and stack
+   * high-water (peak/size). The stack column is the headroom signal —
+   * peak well under size means the stack is over-allocated. */
+  print_fmt("[tasks]\r\n");
+  {
+    struct Task_Control_Block *tasks[16];
+    int nt = task_snapshot_list(tasks, 16);
+    static const char *const stname[] = {"rdy", "run", "blk", "dly", "term"};
+    for (int i = 0; i < nt; i++) {
+      v_perf_task_t ts;
+      v_perf_task_stats(tasks[i], &ts);
+      unsigned st = (unsigned)tasks[i]->status;
+      print_fmt("  t%u p%u %s cyc=0x%x%x sw=%u stack=%u/%u\r\n",
+                (unsigned)tasks[i]->task_id, (unsigned)tasks[i]->priority,
+                stname[st <= 4u ? st : 0u],
+                (unsigned)(ts.cycles_run >> 32),
+                (unsigned)(ts.cycles_run & 0xFFFFFFFFu),
+                (unsigned)ts.switches_in, (unsigned)ts.stack_peak,
+                (unsigned)ts.stack_size);
+    }
+  }
+  print_fmt("=== end ===\r\n");
 }
 
 /* --------------------------------------------------------------------------

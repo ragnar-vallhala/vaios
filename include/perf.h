@@ -67,7 +67,18 @@ typedef struct {
   uint64_t last_scheduled_cyc;/* cycles@last switch-in (transient)        */
   uint32_t max_burst_cyc;     /* longest single uninterrupted run         */
   uint32_t switches_in;       /* times this task was switched ONTO CPU    */
+  /* Stack high-water. Filled on demand by v_perf_task_stats: the unused
+   * stack still holds the V_PERF_STACK_FILL sentinel painted at create, so
+   * the deepest the stack ever grew is derivable. Lets you right-size
+   * over-allocated stacks and reclaim SRAM. 0 in the in-TCB instance. */
+  uint32_t stack_size;        /* total stack bytes allocated for the task */
+  uint32_t stack_peak;        /* peak bytes ever used (high-water)        */
 } v_perf_task_t;
+
+/* Sentinel painted over a task's whole stack at create time. Unused words
+ * retain it; the lowest untouched run measures free headroom. 0xC5 pattern
+ * is unlikely to occur naturally in a frame and is non-zero/non-0xFF. */
+#define V_PERF_STACK_FILL 0xC5C5C5C5u
 
 /* Composite snapshot returned by v_perf_snapshot. Bundles the system-wide
  * scheduler stats with the per-subsystem sub-structs so callers can take
