@@ -346,8 +346,10 @@ void v_perf_dump(void) {
       v_perf_task_t ts;
       v_perf_task_stats(tasks[i], &ts);
       unsigned st = (unsigned)tasks[i]->status;
-      print_fmt("  t%u p%u %s cyc=0x%x%x sw=%u stack=%u/%u\r\n",
-                (unsigned)tasks[i]->task_id, (unsigned)tasks[i]->priority,
+      const char *nm = task_get_name(tasks[i]);
+      print_fmt("  t%u %s%s%sp%u %s cyc=0x%x%x sw=%u stack=%u/%u\r\n",
+                (unsigned)tasks[i]->task_id, nm[0] ? "\"" : "", nm,
+                nm[0] ? "\" " : "", (unsigned)tasks[i]->priority,
                 stname[st <= 4u ? st : 0u],
                 (unsigned)(ts.cycles_run >> 32),
                 (unsigned)(ts.cycles_run & 0xFFFFFFFFu),

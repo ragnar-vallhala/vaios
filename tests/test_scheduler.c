@@ -293,11 +293,100 @@ static void test_task_snapshot_list_covers_all_once(void) {
   TEST_ASSERT_EQ(found_a, 1);
 }
 
+/* task naming: task_create defaults to "", task_create_named tags at creation,
+ * task_set_name updates by id, task_get_name never returns NULL. Names are
+ * borrowed pointers (no copy), so the TCB must hold the same address. */
+static void test_task_naming(void) {
+  full_reset();
+  scheduler_init();
+
+  /* Unnamed create -> "" (never NULL). (get_task_by_id is static in task.c,
+   * so fetch the TCB via its ready list as the other tests do.) */
+  uint32_t a = task_create(dummy_task, NULL, 256, 1);
+  TCB *ta = ready_lists[1];
+  TEST_ASSERT_NOT_NULL(ta);
+  TEST_ASSERT_EQ(ta->task_id, a);
+  TEST_ASSERT_NOT_NULL((void *)task_get_name(ta));
+  TEST_ASSERT_EQ(strcmp(task_get_name(ta), ""), 0);
+
+  /* Named create -> exact pointer retained (borrowed, not copied). */
+  static const char *const kName = "imu_telemetry";
+  task_create_named(dummy_task, NULL, 256, 2, kName);
+  TCB *tb = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(tb);
+  TEST_ASSERT_EQ(strcmp(task_get_name(tb), kName), 0);
+  TEST_ASSERT(tb->name == kName); /* same address, no copy */
+
+  /* NULL name normalises to "". */
+  task_create_named(dummy_task, NULL, 256, 3, NULL);
+  TEST_ASSERT_EQ(strcmp(task_get_name(ready_lists[3]), ""), 0);
+
+  /* Setter updates by id; unknown id is a no-op (no crash). */
+  task_set_name(a, "rate_ctl");
+  TEST_ASSERT_EQ(strcmp(task_get_name(ta), "rate_ctl"), 0);
+  task_set_name(0xDEADBEEF, "ghost"); /* must not crash */
+
+  /* get_name tolerates NULL. */
+  TEST_ASSERT_EQ(strcmp(task_get_name(NULL), ""), 0);
+
+  /* by-id lookup resolves named tasks and returns "" for unknown ids. */
+  TEST_ASSERT_EQ(strcmp(task_get_name_by_id(a), "rate_ctl"), 0);
+  TEST_ASSERT_EQ(strcmp(task_get_name_by_id(0xDEADBEEF), ""), 0);
+}
+
+/* task_delay_until: drift-free periodic delay. Blocks until the ABSOLUTE tick
+ * *last_wake + period (set as the task's deadline) and advances *last_wake;
+ * returns false without blocking when the deadline already passed (overrun). */
+static void test_task_delay_until(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t id = task_create(dummy_task, NULL, 256, 1);
+  TEST_ASSERT(id != 0u);
+  TCB *t = ready_lists[1];
+  TEST_ASSERT_NOT_NULL(t);
+  current_task = t; /* pretend this task is the one running */
+
+  /* Overrun: 50 + 10 = 60, but now is 100 -> don't block, advance last_wake. */
+  stub_set_ticks(100);
+  stub_reset_yield_count();
+  uint32_t last = 50;
+  TEST_ASSERT(!task_delay_until(&last, 10)); /* overran -> no block */
+  TEST_ASSERT_EQ(last, 60u);                 /* advanced by one period */
+  TEST_ASSERT_EQ(stub_yield_count(), 0);     /* did not yield */
+
+  /* Normal: 100 + 5 = 105 > now(100) -> block until absolute tick 105. */
+  last = 100;
+  TEST_ASSERT(task_delay_until(&last, 5));
+  TEST_ASSERT_EQ(last, 105u);          /* advanced by period */
+  TEST_ASSERT_EQ(t->delay_ticks, 105u); /* absolute deadline, not relative */
+  TEST_ASSERT_EQ(t->status, TASK_DELAYED);
+  TEST_ASSERT(stub_yield_count() > 0); /* yielded */
+
+  /* Periodicity is independent of when it's called: a late call still targets
+   * last_wake + period, so the cadence doesn't drift with execution time. */
+  remove_from_delayed_list(t);
+  current_task = t;
+  stub_set_ticks(107);     /* called 2 ticks "late" */
+  last = 105;              /* previous wake */
+  TEST_ASSERT(task_delay_until(&last, 5));
+  TEST_ASSERT_EQ(last, 110u);           /* 105 + 5, NOT 107 + 5 */
+  TEST_ASSERT_EQ(t->delay_ticks, 110u); /* deadline tracks the schedule */
+
+  /* Guards: idle task / NULL / zero period are no-ops. */
+  current_task = idle_task;
+  TEST_ASSERT(!task_delay_until(&last, 5));
+  current_task = t;
+  TEST_ASSERT(!task_delay_until(NULL, 5));
+  TEST_ASSERT(!task_delay_until(&last, 0));
+}
+
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_scheduler_tests(void) {
   TEST_SUITE_BEGIN("Scheduler");
+  TEST_RUN(test_task_delay_until);
+  TEST_RUN(test_task_naming);
   TEST_RUN(test_task_snapshot_list_covers_all_once);
   TEST_RUN(test_scheduler_init_creates_idle);
   TEST_RUN(test_scheduler_init_current_is_idle);
