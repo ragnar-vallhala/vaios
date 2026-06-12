@@ -140,7 +140,10 @@
 #endif
 
 #ifndef IDLE_TASK_STACK_SIZE
-#define IDLE_TASK_STACK_SIZE 2048
+/* Idle does only log-flush + dead-task GC + WFI; measured high-water is ~100 B.
+ * 512 keeps a generous (~5x) margin for the V_KLOG-on-free path while freeing
+ * ~1.5 KB of SRAM vs the old 2048. Watch the perf stack-peak after a change. */
+#define IDLE_TASK_STACK_SIZE 512
 #endif
 
 #ifndef TASK_STACK_WATERMARK_ENABLE
