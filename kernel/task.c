@@ -374,6 +374,15 @@ void idle_task_function(void *arg) {
       }
       v_free(to_free);
     }
+
+#ifdef NAVHAL
+    /* Sleep the core until the next interrupt instead of busy-spinning. Each
+     * wake does one housekeeping pass (log flush + dead-task GC) then sleeps
+     * again, so idle CPU/power collapses from a full-clock spin to interrupt
+     * cadence. A wakeup event pending at entry returns immediately, so the GC
+     * and flush still keep up. (No-HAL builds keep the spin.) */
+    hal_cpu_idle();
+#endif
   }
 }
 
