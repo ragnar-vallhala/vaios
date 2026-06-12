@@ -13,6 +13,10 @@
 TCB *ready_lists[MAX_PRIORITY + 1];        // Ready list heads by priority
 static TCB *ready_tails[MAX_PRIORITY + 1]; // Ready list tails — O(1) append
 TCB *blocked_list = NULL;           // Blocked tasks list
+/* Count of TASK_TERMINATED tasks parked on blocked_list awaiting the idle-task
+ * garbage collector. Bumped at each termination, decremented on free, so the
+ * idle GC can skip the blocked_list walk entirely when nothing is pending. */
+static volatile uint32_t _terminated_count = 0;
 TCB *delayed_list = NULL;           // Delayed tasks list
 TCB *current_task = NULL;           // Currently running task
 TCB *idle_task = NULL;              // Idle task pointer
@@ -315,6 +319,7 @@ __attribute__((noreturn)) void task_exit(void) {
   ENTER_CRITICAL();
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
+  _terminated_count++;
   EXIT_CRITICAL();
 
   task_yield();
@@ -336,6 +341,7 @@ void task_exit_request(uint32_t task_id) {
 
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);
+  _terminated_count++;
   EXIT_CRITICAL();
 
   task_yield();
@@ -347,33 +353,51 @@ extern void v_log_flush(void);
 void idle_task_function(void *arg) {
   while (1) {
 #if LOGGING_ENABLED == 1
-    for (int i = 0; i < 64; i++)
-      v_log_flush();
+    /* One attempt per pass: v_log_flush() is DMA-driven and self-gated by its
+     * read_lock — it kicks a flush if one isn't already in flight, else returns.
+     * The old 64x loop just took 63 extra critical sections per pass while the
+     * first flush's DMA was still running. At interrupt-cadence wakes this keeps
+     * the log buffer drained. */
+    v_log_flush();
 #endif
-    TCB *to_free = NULL;
 
-    // Find one terminated task to free under critical section
-    ENTER_CRITICAL();
-    TCB *task = blocked_list;
-    while (task) {
-      if (task->status == TASK_TERMINATED) {
-        to_free = task;
-        remove_from_blocked_list(to_free);
-        break; // we will free this one, then check again next loop
+    /* Dead-task GC: only walk blocked_list when a task has actually terminated.
+     * The common case (nothing pending) costs no critical section / list walk,
+     * removing the per-pass interrupt-off window the unconditional scan added. */
+    if (_terminated_count > 0) {
+      TCB *to_free = NULL;
+      ENTER_CRITICAL();
+      TCB *task = blocked_list;
+      while (task) {
+        if (task->status == TASK_TERMINATED) {
+          to_free = task;
+          remove_from_blocked_list(to_free);
+          _terminated_count--;
+          break; // free this one; the next pass collects any others
+        }
+        task = task->next;
       }
-      task = task->next;
-    }
-    EXIT_CRITICAL();
+      EXIT_CRITICAL();
 
-    if (to_free) {
-      V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
-            to_free->task_id);
-      if (to_free->mem_block) {
-        v_free(to_free->mem_block);
-        to_free->mem_block = NULL;
+      if (to_free) {
+        V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
+              to_free->task_id);
+        if (to_free->mem_block) {
+          v_free(to_free->mem_block);
+          to_free->mem_block = NULL;
+        }
+        v_free(to_free);
       }
-      v_free(to_free);
     }
+
+#ifdef NAVHAL
+    /* Sleep the core until the next interrupt instead of busy-spinning. Each
+     * wake does one housekeeping pass (log flush + dead-task GC) then sleeps
+     * again, so idle CPU/power collapses from a full-clock spin to interrupt
+     * cadence. A wakeup event pending at entry returns immediately, so the GC
+     * and flush still keep up. (No-HAL builds keep the spin.) */
+    hal_cpu_idle();
+#endif
   }
 }
 
