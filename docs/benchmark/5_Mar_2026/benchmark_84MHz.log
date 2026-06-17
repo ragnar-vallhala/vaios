@@ -1,7 +1,7 @@
 [INFO 0] [VAIOS INIT] SYSTICK started with time period of 1000 μs
 [INFO 0] [VAIOS INIT] UART started with baudrate 115200 bps
 [INFO 11] [MEMORY] Heap memory head initialized at 0x200087a8 size 0x8000
-[INFO 12] === VAiOS Benchmark Suite Starting ===
+[INFO 12] === VaiOS Benchmark Suite Starting ===
 [INFO 12] Ticks at start: 12
 [INFO 12] FPU: ENABLED (hard-float ABI)
 [INFO 12] DMA: ENABLED
