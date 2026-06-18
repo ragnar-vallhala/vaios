@@ -1,0 +1,13 @@
+# Keep the build context small and the baked qemu image free of stale host
+# artifacts. Mirrors .gitignore plus VCS/editor cruft.
+.git
+.cache
+.vscode
+build
+build_tests
+build_bench
+build_hw_tests
+build_coverage
+build_pil
+logs
+compile_commands.json
