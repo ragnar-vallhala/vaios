@@ -1,4 +1,4 @@
-# VAiOS Benchmark Report — 5 March 2026
+# VaiOS Benchmark Report — 5 March 2026
 
 ## Platform
 
@@ -8,7 +8,7 @@
 | CPU | Cortex-M4 @ **84 MHz** (PLL: HSI/16 × 336 / 4) |
 | FPU | Enabled (hard-float ABI, lazy stacking) |
 | DMA | Enabled (`_DMA_ENABLED`, DMA-backed UART logging) |
-| RTOS | VAiOS v0.1.0 |
+| RTOS | VaiOS v0.1.0 |
 | Build | Release (`-O2`, `-mfpu=fpv4-sp-d16`, `-mfloat-abi=hard`) |
 | SysTick | 1 ms period |
 | UART | USART2 @ 115200 bps |

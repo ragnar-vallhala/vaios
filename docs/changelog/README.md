@@ -1,4 +1,4 @@
-# VAiOS Changelog
+# VaiOS Changelog
 
 All significant bug fixes and improvements are documented here.
 Each file covers one discrete issue — root cause, fix, and lesson learned.

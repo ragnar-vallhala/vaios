@@ -1,4 +1,4 @@
-# VAiOS Benchmark Run Analysis — 5 March 2026
+# VaiOS Benchmark Run Analysis — 5 March 2026
 
 **Log file:** [`benchmark.log`](benchmark.log)  
 **Board:** STM32F4 (Cortex-M4 @ 16 MHz)  
@@ -12,7 +12,7 @@
 [INFO 0]  SYSTICK started with time period of 1000 μs
 [INFO 0]  UART started with baudrate 115200 bps
 [INFO 38] Heap memory head initialized at 0x200028a0 size 0x8000
-[INFO 40] === VAiOS Benchmark Suite Starting ===
+[INFO 40] === VaiOS Benchmark Suite Starting ===
 ```
 
 | Item | Value |

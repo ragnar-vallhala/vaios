@@ -1,4 +1,9 @@
-# VAiOS
+# VaiOS
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/ragnar-vallhala/vaios/ci.yml?branch=main&label=ci)](https://github.com/ragnar-vallhala/vaios/actions/workflows/ci.yml)
+[![Target](https://img.shields.io/badge/target-STM32F401RE-green.svg)](https://www.st.com/en/microcontrollers-microprocessors/stm32f401re.html)
+[![C11](https://img.shields.io/badge/C-11-blue.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
 
 A small preemptive real-time operating system for ARM Cortex-M4, targeted at
 the hard-real-time workloads of a 1 kHz flight controller. Built on top of
@@ -147,3 +152,18 @@ navhal.config        Authoritative NavHAL Kconfig (copied into the submodule)
   — the gap analysis and phased execution plan that drove the 2026-05
   flight-profile campaign.
 - **Doxygen** — `cd build && make doc` (when Doxygen is installed).
+
+## Contributing
+
+Bug reports, feature ideas, and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the dev environment, build/test workflow,
+commit-message format, and how to add an example or a new port.
+
+By participating you agree to abide by our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+Apache License 2.0 — see [LICENSE.md](LICENSE.md) for details.
+
+Copyright © 2025 Ashutosh Vishwakarma.

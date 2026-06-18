@@ -6,7 +6,7 @@
 
 ## Problem
 
-1.  **Portability Leak**: The kernel utilities (`utils.c`) contained inline assembly specific to Cortex-M4 (e.g., `mrs psp`, `cpsid i`), making it difficult to port VAiOS to other architectures (like RISC-V or Simulators).
+1.  **Portability Leak**: The kernel utilities (`utils.c`) contained inline assembly specific to Cortex-M4 (e.g., `mrs psp`, `cpsid i`), making it difficult to port VaiOS to other architectures (like RISC-V or Simulators).
 2.  **Synchronous Bottlenecks**: Logging was purely synchronous/polling-based, consuming significant CPU cycles during high-frequency debug output.
 3.  **Flag Inconsistency**: The `scheduler_running` flag used inconsistent "magic" values (e.g., `123`), making logic checks brittle.
 
