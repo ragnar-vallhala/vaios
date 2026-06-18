@@ -116,13 +116,30 @@ logging busy-waits forever there. On real hardware the bit clears and logging
 works. The QEMU `netduinoplus2` machine does not emulate the F4 RCC at all and
 the firmware hangs in clock init. Use real hardware for end-to-end testing.
 
-The Docker image still bundles a no-HAL QEMU build for smoke-testing the
-kernel without peripherals:
+The `Dockerfile` is multi-stage with two targets. The `qemu` target (default)
+bakes the source in, builds a no-HAL example and boots it under QEMU for
+smoke-testing the kernel without peripherals — pick the example with the
+`VAIOS_EXAMPLE` build arg or env var (defaults to `FIFO_TEST`):
 
 ```bash
-docker build -t vaios-arm-qemu .
-docker run --rm vaios-arm-qemu
+docker build -t vaios:qemu .
+docker run --rm vaios:qemu                       # FIFO_TEST
+docker run --rm -e VAIOS_EXAMPLE=PERF_DEMO vaios:qemu
 ```
+
+The `dev` target is an interactive shell with the full toolchain
+(`cmake`, `arm-none-eabi-gcc`, `qemu-system-arm`, `gdb-multiarch`). Mount your
+working tree so host edits build inside the container:
+
+```bash
+docker build --target dev -t vaios:dev .
+docker run --rm -it -v "$PWD:/project" vaios:dev
+```
+
+> The QEMU `netduinoplus2` machine omits the no-HAL example's `VAIOS_EXAMPLE`
+> at your peril: a bare `-DNAVHAL=OFF -DEXAMPLES=ON` builds the libs but no
+> `examples/main`, so QEMU has nothing to load. `tools/qemu_no_hal.sh` always
+> passes one for this reason.
 
 ## Repository layout
 
