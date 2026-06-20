@@ -261,9 +261,14 @@ void init_task_stack(TCB *task) {
   sp--;
   *sp = INITIAL_XPSR;
   sp--;
-  *sp = (uint32_t)task->entry;
+  // Stacked PC: the Thumb state comes from INITIAL_XPSR's T bit, so the
+  // entry address itself must be halfword-aligned. A C function pointer in
+  // Thumb has bit[0] set; leaving it set makes the exception-return PC odd,
+  // which is UNPREDICTABLE on v7-M (QEMU warns "return from interrupt with
+  // misaligned PC" and may execute from the bad address). Mask it off.
+  *sp = (uint32_t)task->entry & ~1UL;
   sp--;
-  *sp = (uint32_t)TASK_EXIT; // Hardware LR
+  *sp = (uint32_t)TASK_EXIT; // Hardware LR (entered via BX, keeps its Thumb bit)
 
   // R12, R3, R2, R1
   sp -= 4;
