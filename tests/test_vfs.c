@@ -159,6 +159,64 @@ static void test_vfs_preallocate_passes_args_and_returns(void) {
   TEST_ASSERT_EQ(vfs_stub.preallocate_size, 8192u);
 }
 
+/* vfs_stat copies v_stat fields through and propagates exists/ret, so a caller
+ * can tell "absent" (ret<0, exists=0) from a real entry. */
+static void test_vfs_stat_passes_and_translates(void) {
+  full_reset();
+  vfs_init();
+  vfs_stub.stat_ret = 0;
+  vfs_stub.stat_out.size = 1234u;
+  vfs_stub.stat_out.mtime = 0xABCD1234u;
+  vfs_stub.stat_out.is_dir = 1;
+  vfs_stub.stat_out.exists = 1;
+  vfs_stat_t st;
+  memset(&st, 0, sizeof st);
+  TEST_ASSERT_EQ(vfs_stat("/logs", &st), 0);
+  TEST_ASSERT_EQ(vfs_stub.stat_called, 1);
+  TEST_ASSERT(strcmp(vfs_stub.stat_path, "/logs") == 0);
+  TEST_ASSERT_EQ(st.size, 1234u);
+  TEST_ASSERT_EQ(st.mtime, 0xABCD1234u);
+  TEST_ASSERT_EQ(st.is_dir, 1);
+  TEST_ASSERT_EQ(st.exists, 1);
+
+  /* Missing path: ret<0 and exists=0 reach the caller. */
+  vfs_stub.stat_ret = -4; /* FR_NO_FILE */
+  vfs_stub.stat_out.exists = 0;
+  TEST_ASSERT(vfs_stat("/nope", &st) < 0);
+  TEST_ASSERT_EQ(st.exists, 0);
+}
+
+/* vfs_opendir/readdir/closedir plumb the handle + translate each entry; a
+ * readdir returning 1 yields an entry, 0 ends the walk. */
+static void test_vfs_dir_iteration(void) {
+  full_reset();
+  vfs_init();
+  vfs_stub.opendir_ret = 1;
+  TEST_ASSERT_EQ(vfs_opendir("0:"), 1);
+  TEST_ASSERT_EQ(vfs_stub.opendir_called, 1);
+  TEST_ASSERT(strcmp(vfs_stub.opendir_path, "0:") == 0);
+
+  vfs_stub.readdir_ret = 1;
+  vfs_stub.readdir_out.size = 99u;
+  vfs_stub.readdir_out.is_dir = 0;
+  memcpy(vfs_stub.readdir_out.name, "LOG.BIN", 8);
+  vfs_dirent_t ent;
+  memset(&ent, 0, sizeof ent);
+  TEST_ASSERT_EQ(vfs_readdir(1, &ent), 1);
+  TEST_ASSERT_EQ(vfs_stub.readdir_dir, 1);
+  TEST_ASSERT(strcmp(ent.name, "LOG.BIN") == 0);
+  TEST_ASSERT_EQ(ent.size, 99u);
+  TEST_ASSERT_EQ(ent.is_dir, 0);
+
+  /* End of directory. */
+  vfs_stub.readdir_ret = 0;
+  TEST_ASSERT_EQ(vfs_readdir(1, &ent), 0);
+
+  vfs_stub.closedir_ret = 0;
+  TEST_ASSERT_EQ(vfs_closedir(1), 0);
+  TEST_ASSERT_EQ(vfs_stub.closedir_dir, 1);
+}
+
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
@@ -175,5 +233,7 @@ void run_vfs_tests(void) {
   TEST_RUN(test_vfs_unlink_passes_path_and_returns);
   TEST_RUN(test_vfs_sync_passes_fd_and_returns);
   TEST_RUN(test_vfs_preallocate_passes_args_and_returns);
+  TEST_RUN(test_vfs_stat_passes_and_translates);
+  TEST_RUN(test_vfs_dir_iteration);
   TEST_SUITE_END();
 }

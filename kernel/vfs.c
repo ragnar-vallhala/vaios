@@ -100,3 +100,53 @@ long vfs_size(vfs_fd_t fd) {
   vfs_unlock();
   return res;
 }
+
+int vfs_stat(const char *path, vfs_stat_t *st) {
+  if (st == NULL) {
+    return -1;
+  }
+  v_stat_t vs;
+  vfs_lock();
+  int res = v_stat(path, &vs);
+  vfs_unlock();
+  st->exists = vs.exists;
+  if (res != 0) {
+    return res;
+  }
+  st->size = vs.size;
+  st->mtime = vs.mtime;
+  st->is_dir = vs.is_dir;
+  return 0;
+}
+
+vfs_dir_t vfs_opendir(const char *path) {
+  vfs_lock();
+  vfs_dir_t d = (vfs_dir_t)v_opendir(path);
+  vfs_unlock();
+  return d;
+}
+
+int vfs_readdir(vfs_dir_t d, vfs_dirent_t *ent) {
+  if (ent == NULL) {
+    return -1;
+  }
+  v_dirent_t ve;
+  vfs_lock();
+  int res = v_readdir((v_dir_t)d, &ve);
+  vfs_unlock();
+  if (res == 1) {
+    for (int i = 0; i < VFS_NAME_MAX; i++) {
+      ent->name[i] = ve.name[i];
+    }
+    ent->size = ve.size;
+    ent->is_dir = ve.is_dir;
+  }
+  return res;
+}
+
+int vfs_closedir(vfs_dir_t d) {
+  vfs_lock();
+  int res = v_closedir((v_dir_t)d);
+  vfs_unlock();
+  return res;
+}
