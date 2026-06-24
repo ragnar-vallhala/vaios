@@ -358,6 +358,106 @@ static void test_spsc_zero_copy_write_read(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * Request/response handoff contract (mirrors fs_owner's fs_sync_call).
+ *
+ * fs_owner routes cross-task vfs ops through a rendezvous built from the mpmc
+ * primitive: a 1-token lock serialiser + a cap-1 request lane + a cap-1
+ * response lane. The hazard the SDIO file-transfer debugging surfaced is a
+ * request/response DESYNC: if a requester abandons its wait (a timeout), its
+ * late response lingers in the cap-1 response lane and is mis-delivered to the
+ * NEXT requester. The contract that prevents it: while holding the lock token,
+ * DRAIN any stale response before issuing a request. These pin that contract on
+ * the primitive — host-deterministic, since the hazard lives in the handoff
+ * protocol, not in real preemption timing.
+ * ---------------------------------------------------------------------- */
+static mpmc_queue_t hs_lock, hs_req, hs_res;
+static uint8_t hs_lock_buf[1];
+static uint32_t hs_req_buf[1];
+static uint32_t hs_res_buf[1];
+
+#define HS_ANSWER(id) ((uint32_t)((id) ^ 0xA5A5u))
+
+static void handoff_setup(void) {
+  mpmc_init(&hs_lock, hs_lock_buf, 1, sizeof(uint8_t));
+  mpmc_init(&hs_req, hs_req_buf, 1, sizeof(uint32_t));
+  mpmc_init(&hs_res, hs_res_buf, 1, sizeof(uint32_t));
+  uint8_t tok = 1u;
+  mpmc_try_push(&hs_lock, &tok); /* token starts available */
+}
+
+/* The FS-task side: answer one pending request (res = req ^ MARK). The cap-1
+ * response lane uses the default DROP policy, so a parked stale answer makes a
+ * fresh answer drop — exactly the on-target behaviour. */
+static int handoff_server_step(void) {
+  uint32_t r;
+  if (!mpmc_try_pop(&hs_req, &r))
+    return 0;
+  uint32_t ans = HS_ANSWER(r);
+  mpmc_try_push(&hs_res, &ans);
+  return 1;
+}
+
+/* A correct requester: take the token, DRAIN any stale response, request, let
+ * the server answer, take the response, release the token. */
+static uint32_t handoff_call(uint32_t id) {
+  uint8_t tok;
+  TEST_ASSERT(mpmc_try_pop(&hs_lock, &tok));
+  uint32_t junk;
+  while (mpmc_try_pop(&hs_res, &junk)) { /* drain stale (the contract) */
+  }
+  TEST_ASSERT(mpmc_try_push(&hs_req, &id));
+  handoff_server_step();
+  uint32_t res = 0;
+  TEST_ASSERT(mpmc_try_pop(&hs_res, &res));
+  mpmc_try_push(&hs_lock, &tok);
+  return res;
+}
+
+/* Normal operation: every request gets its own response, repeatedly. */
+static void test_handoff_pairs_request_with_response(void) {
+  handoff_setup();
+  for (uint32_t id = 1u; id <= 32u; id++)
+    TEST_ASSERT_EQ(handoff_call(id), HS_ANSWER(id));
+}
+
+/* After a requester abandons its wait (a stale response left parked), the next
+ * drained call still gets ITS OWN response — the contract holds. */
+static void test_handoff_drain_recovers_after_abandon(void) {
+  handoff_setup();
+  uint8_t tok;
+  uint32_t a_id = 7u;
+  TEST_ASSERT(mpmc_try_pop(&hs_lock, &tok)); /* requester A */
+  TEST_ASSERT(mpmc_try_push(&hs_req, &a_id));
+  handoff_server_step();                /* server answers A */
+  mpmc_try_push(&hs_lock, &tok);        /* A releases WITHOUT popping its res */
+  TEST_ASSERT(!mpmc_is_empty(&hs_res)); /* a stale response is parked */
+
+  TEST_ASSERT_EQ(handoff_call(11u), HS_ANSWER(11u)); /* B gets B's answer */
+}
+
+/* Documents WHY the drain is required: a naive requester that skips it reads the
+ * previous requester's stale response — the exact desync the contract prevents.
+ * If this ever stops holding, the handoff's cap-1/DROP assumptions changed. */
+static void test_handoff_without_drain_desyncs(void) {
+  handoff_setup();
+  uint8_t tok;
+  uint32_t a_id = 7u, b_id = 11u, got = 0u;
+  /* A abandons after requesting -> res(A) parked in the cap-1 lane. */
+  mpmc_try_pop(&hs_lock, &tok);
+  mpmc_try_push(&hs_req, &a_id);
+  handoff_server_step();
+  mpmc_try_push(&hs_lock, &tok);
+  /* B skips the drain: the cap-1 lane is full of A's answer, so B's answer is
+   * dropped and B reads A's stale one. */
+  mpmc_try_pop(&hs_lock, &tok);
+  mpmc_try_push(&hs_req, &b_id);
+  handoff_server_step();
+  mpmc_try_pop(&hs_res, &got);
+  mpmc_try_push(&hs_lock, &tok);
+  TEST_ASSERT_EQ(got, HS_ANSWER(a_id)); /* A's stale answer, not B's */
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_structure_tests(void) {
@@ -386,5 +486,9 @@ void run_structure_tests(void) {
   TEST_RUN(test_mpmc_peek_empty_fails);
   TEST_RUN(test_mpmc_reset_empties);
   TEST_RUN(test_mpmc_overwrite_policy);
+  /* Request/response handoff contract (fs_owner rendezvous) */
+  TEST_RUN(test_handoff_pairs_request_with_response);
+  TEST_RUN(test_handoff_drain_recovers_after_abandon);
+  TEST_RUN(test_handoff_without_drain_desyncs);
   TEST_SUITE_END();
 }
