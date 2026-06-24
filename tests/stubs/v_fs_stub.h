@@ -58,6 +58,24 @@ struct vfs_stub_state {
   const char *preallocate_path;
   uint32_t preallocate_size;
   int preallocate_ret;
+
+  int stat_called;
+  const char *stat_path;
+  int stat_ret;
+  v_stat_t stat_out; /* copied into the caller's *st */
+
+  int opendir_called;
+  const char *opendir_path;
+  v_dir_t opendir_ret;
+
+  int readdir_called;
+  v_dir_t readdir_dir;
+  int readdir_ret;
+  v_dirent_t readdir_out; /* copied into the caller's *ent when ret == 1 */
+
+  int closedir_called;
+  v_dir_t closedir_dir;
+  int closedir_ret;
 };
 
 extern struct vfs_stub_state vfs_stub;
