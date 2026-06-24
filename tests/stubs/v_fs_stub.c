@@ -82,3 +82,31 @@ int v_preallocate(const char *path, uint32_t size) {
   vfs_stub.preallocate_size = size;
   return vfs_stub.preallocate_ret;
 }
+
+int v_stat(const char *path, v_stat_t *st) {
+  vfs_stub.stat_called++;
+  vfs_stub.stat_path = path;
+  if (st != NULL)
+    *st = vfs_stub.stat_out;
+  return vfs_stub.stat_ret;
+}
+
+v_dir_t v_opendir(const char *path) {
+  vfs_stub.opendir_called++;
+  vfs_stub.opendir_path = path;
+  return vfs_stub.opendir_ret;
+}
+
+int v_readdir(v_dir_t d, v_dirent_t *ent) {
+  vfs_stub.readdir_called++;
+  vfs_stub.readdir_dir = d;
+  if (ent != NULL && vfs_stub.readdir_ret == 1)
+    *ent = vfs_stub.readdir_out;
+  return vfs_stub.readdir_ret;
+}
+
+int v_closedir(v_dir_t d) {
+  vfs_stub.closedir_called++;
+  vfs_stub.closedir_dir = d;
+  return vfs_stub.closedir_ret;
+}

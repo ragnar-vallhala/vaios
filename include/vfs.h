@@ -18,6 +18,25 @@
 #define VFS_SEEK_END 2
 
 typedef int vfs_fd_t;
+typedef int vfs_dir_t;
+
+/* FatFS short (8.3) names: 12 chars + NUL (FF_USE_LFN = 0). */
+#define VFS_NAME_MAX 13
+
+/* One directory entry from vfs_readdir(). */
+typedef struct {
+  char name[VFS_NAME_MAX];
+  uint32_t size; /* 0 for directories */
+  uint8_t is_dir;
+} vfs_dirent_t;
+
+/* File/directory status from vfs_stat(). */
+typedef struct {
+  uint32_t size;
+  uint32_t mtime; /* FatFS packed: (fdate << 16) | ftime */
+  uint8_t is_dir;
+  uint8_t exists; /* 0 distinguishes "absent" from "error" */
+} vfs_stat_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,6 +53,16 @@ int vfs_unlink(const char *path);
 int vfs_sync(vfs_fd_t fd);
 int vfs_preallocate(const char *path, uint32_t size);
 long vfs_size(vfs_fd_t fd);
+
+/* Directory iteration + status. All take the same vfs_mutex as the rest of the
+ * VFS, so SD access stays single-transaction. vfs_stat returns 0 if the path
+ * exists (st->exists=1), <0 otherwise (st->exists=0 — lets callers report
+ * "path does not exist" distinctly). vfs_readdir returns 1 per entry, 0 at end
+ * of directory, <0 on error. */
+int vfs_stat(const char *path, vfs_stat_t *st);
+vfs_dir_t vfs_opendir(const char *path);
+int vfs_readdir(vfs_dir_t d, vfs_dirent_t *ent);
+int vfs_closedir(vfs_dir_t d);
 
 #ifdef __cplusplus
 }
