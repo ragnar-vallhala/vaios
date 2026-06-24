@@ -117,13 +117,17 @@ if(NAVHAL)
   add_compile_definitions(SUBMODULE)
   include_directories(extern/NavHAL/include)
   set(USE_FPU ${VAIOS_FPU} CACHE BOOL "Pass FPU setting to NavHAL" FORCE)
-  # NavHAL's Kconfig reads extern/NavHAL/.config from a hardcoded path. Keep
-  # the authoritative copy here in the vaios repo (navhal.config) so NavHAL
-  # stays an unmodified submodule, and stage it into place before NavHAL's
-  # CMake runs kconfig.py. .config is gitignored inside NavHAL, so this never
-  # dirties the submodule. Editing navhal.config re-triggers configure.
+  # NavHAL's Kconfig reads extern/NavHAL/.config from a hardcoded path. NavHAL is
+  # configured from NAVHAL_CONFIG_FILE: it defaults to vaios's own navhal.config
+  # (so a standalone vaios build works), but a superproject (e.g. vayu) FORCE-sets
+  # it to its own copy to OWN the driver set WITHOUT ever writing into the vaios
+  # tree — the same pattern as VAIOS_CONFIG_FILE above. We stage whatever it points
+  # at into NavHAL's .config (gitignored, so NavHAL stays an unmodified submodule)
+  # before NavHAL's CMake runs kconfig.py. Editing the file re-triggers configure.
+  set(NAVHAL_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config"
+      CACHE STRING "Path to the NavHAL Kconfig .config (firmware driver set)")
   configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/navhal.config
+    ${NAVHAL_CONFIG_FILE}
     ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config
     COPYONLY)
   add_subdirectory(extern/NavHAL)
