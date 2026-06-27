@@ -1,0 +1,28 @@
+:name: vaios example under Renode (STM32F4)
+:description: Boot any NAVHAL-built vaios example on a generic STM32F4 and
+:            stream its USART2 output to the console. Headless (no GUI).
+:
+: Build first (NAVHAL=ON), e.g.:
+:   export srctree="$PWD/extern/NavHAL"
+:   cmake -S . -B build_renode -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=FIFO_TEST
+:   cmake --build build_renode
+: Then, from the repo root:
+:   renode --console --disable-xwt -e "include @tools/renode_example.resc"
+: Override the ELF and/or run time:
+:   renode --console --disable-xwt -e '$bin=@path/to/main' -e '$run="5.0"' \
+:          -e "include @tools/renode_example.resc"
+
+using sysbus
+$bin?=@build_renode/examples/main
+$run?="3.0"
+
+mach create "vaios"
+machine LoadPlatformDescription @platforms/cpus/stm32f4.repl
+cpu PerformanceInMips 84
+
+# Stream USART2 TX to the console log (works headless, no X).
+showAnalyzer sysbus.usart2 Antmicro.Renode.Analyzers.LoggingUartAnalyzer
+
+sysbus LoadELF $bin
+emulation RunFor $run
+quit
