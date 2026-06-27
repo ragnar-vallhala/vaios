@@ -105,12 +105,12 @@ void bench_print_summary(void) {
 static void heartbeat_task(void *arg) {
   (void)arg;
 
-  hal_gpio_setmode(GPIO_PB10, GPIO_OUTPUT, GPIO_PUPD_NONE);
+  hal_gpio_set_mode(GPIO_PB10, HAL_GPIO_MODE_OUTPUT, HAL_GPIO_PULL_NONE);
 
   while (1) {
-    hal_gpio_digitalwrite(GPIO_PB10, GPIO_HIGH);
+    hal_gpio_write(GPIO_PB10, HAL_GPIO_HIGH);
     v_delay(500);
-    hal_gpio_digitalwrite(GPIO_PB10, GPIO_LOW);
+    hal_gpio_write(GPIO_PB10, HAL_GPIO_LOW);
     v_delay(500);
   }
 }

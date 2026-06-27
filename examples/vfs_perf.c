@@ -108,7 +108,7 @@ int main(void) {
   vaios_init_config_t cfg = {.internal_clock_setup = 1,
                              .internal_sd_card_setup = 1};
   v_system_init(&cfg);
-  uart2_write_string("VAIOS Boot Successful");
+  hal_uart_write_string(HAL_UART_2, "VAIOS Boot Successful");
 
   /* 8KB stack for safety */
   task_create(perf_task, NULL, 8192, 1);

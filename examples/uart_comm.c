@@ -15,7 +15,7 @@ int available = 0;
 void onRecieve()
 {
 
-    char c = uart2_read_char();
+    char c = hal_uart_read_char(HAL_UART_2);
     msg[ptr++] = c;
     if (c == '\n')
     {
@@ -41,7 +41,7 @@ int main()
     msg[47] = '\0';
     v_init();
     hal_interrupt_attach_callback(USART2_IRQn, onRecieve);
-    hal_enable_interrupt(USART2_IRQn);
+    hal_interrupt_enable(USART2_IRQn);
     v_heap_memory_init();
     scheduler_init();
     uint32_t t2 = task_create(send, NULL, 1024, 0);

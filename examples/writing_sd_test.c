@@ -31,15 +31,15 @@ void writer_task(void *arg) {
       vfs_sync(fd);
       vfs_close(fd);
 
-      uart2_write("written: ");
-      uart2_write(written);
-      uart2_write("\n\r");
+      hal_uart_print(HAL_UART_2, "written: ");
+      hal_uart_print(HAL_UART_2, written);
+      hal_uart_print(HAL_UART_2, "\n\r");
 
       /* Advance circular buffer */
       write_pos = (write_pos + TEST_DATA_LEN) % (LOG_FILE_SIZE - TEST_DATA_LEN);
 
     } else {
-      uart2_write("open failed\n\r");
+      hal_uart_print(HAL_UART_2, "open failed\n\r");
     }
 
     v_delay(1000); // safe delay
@@ -55,17 +55,17 @@ int main(void) {
 
   v_system_init(&cfg);
 
-  uart2_write("System Init Done\n\r");
+  hal_uart_print(HAL_UART_2, "System Init Done\n\r");
 
   /* Preallocate ONCE */
   int pa_ret = vfs_preallocate(LOG_FILE, LOG_FILE_SIZE);
 
-  uart2_write("prealloc: ");
-  uart2_write(pa_ret);
-  uart2_write("\n\r");
+  hal_uart_print(HAL_UART_2, "prealloc: ");
+  hal_uart_print(HAL_UART_2, pa_ret);
+  hal_uart_print(HAL_UART_2, "\n\r");
 
   if (pa_ret != 0) {
-    uart2_write("Prealloc failed\n\r");
+    hal_uart_print(HAL_UART_2, "Prealloc failed\n\r");
     while (1)
       ;
   }

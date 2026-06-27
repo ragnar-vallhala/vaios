@@ -22,7 +22,7 @@
 #endif
 
 #ifdef _DMA_ENABLED
-#include "core/cortex-m4/dma.h"
+#include "navhal.h"
 #endif
 
 /* ----------------------------- tunables --------------------------------- */
@@ -90,31 +90,31 @@ static void stress_dma(void *arg) {
   for (uint32_t i = 0; i < STRESS_DMA_BUF_SZ; i++)
     s_stress_src[i] = (uint8_t)(i ^ 0xCDu);
 
-  dma_config_t cfg = {
-      .controller = DMA_CONTROLLER_2,
+  hal_dma_config_t cfg = {
+      .controller = HAL_DMA_CONTROLLER_2,
       .stream = 4,
       .channel = 0,
-      .direction = DMA_DIR_M2M,
+      .direction = HAL_DMA_DIR_M2M,
       .src_addr = (uint32_t)s_stress_src,
       .dst_addr = (uint32_t)s_stress_dst,
       .data_count = STRESS_DMA_BUF_SZ,
       .src_inc = 1,
       .dst_inc = 1,
-      .data_width = DMA_DATA_WIDTH_8,
-      .priority = DMA_PRIORITY_MEDIUM,
+      .data_width = HAL_DMA_DATA_WIDTH_8,
+      .priority = HAL_DMA_PRIORITY_MEDIUM,
       .circular = 0,
   };
-  dma_init(&cfg);
+  hal_dma_init(&cfg);
 
   uint32_t count = 0;
   while (!s_stress_stop && count < STRESS_DMA_ITERS_MAX) {
     for (uint32_t i = 0; i < STRESS_DMA_BUF_SZ; i++)
       s_stress_dst[i] = 0;
-    dma_start(&cfg);
+    hal_dma_start(&cfg);
     uint32_t poll = 0;
-    while (!dma_transfer_complete(&cfg) && poll < 100000u)
+    while (!hal_dma_transfer_complete(&cfg) && poll < 100000u)
       poll++;
-    dma_clear_flags(&cfg);
+    hal_dma_clear_flags(&cfg);
     /* Verify */
     for (uint32_t i = 0; i < STRESS_DMA_BUF_SZ; i++) {
       if (s_stress_dst[i] != s_stress_src[i]) {
