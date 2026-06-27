@@ -22,7 +22,9 @@ void callback() {
 }
 
 int main() {
-  v_init();
+  vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                             .internal_sd_card_setup = 0};
+  v_init(&cfg);
   v_heap_memory_init();
   {
     hal_timer_init_freq(TIM5, 1000);

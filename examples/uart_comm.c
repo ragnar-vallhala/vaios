@@ -39,7 +39,9 @@ void send()
 int main()
 {
     msg[47] = '\0';
-    v_init();
+    vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                               .internal_sd_card_setup = 0};
+    v_init(&cfg);
     hal_interrupt_attach_callback(USART2_IRQn, onRecieve);
     hal_interrupt_enable(USART2_IRQn);
     v_heap_memory_init();

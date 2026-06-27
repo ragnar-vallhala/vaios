@@ -16,7 +16,9 @@ static inline uint32_t nonzero_sz(uint32_t ticks) {
 }
 
 int main(void) {
-  v_init();
+  vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                             .internal_sd_card_setup = 0};
+  v_init(&cfg);
   v_heap_memory_init();
 
   // Zero-initialized table so we never free garbage.

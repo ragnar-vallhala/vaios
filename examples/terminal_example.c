@@ -12,7 +12,9 @@ void inf(void *args)
 }
 int main()
 {
-    v_init();
+    vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                               .internal_sd_card_setup = 0};
+    v_init(&cfg);
     terminal_init();
     register_command(inf, "inf");
     register_command(inf, "inf1");
