@@ -88,7 +88,9 @@ run_sitl() {
 
   local log; log="$(mktemp)"
   timeout 120s renode --console --disable-xwt \
-      -e "include @$SCRIPT_DIR/renode_unit_tests.resc" >"$log" 2>&1 || true
+      -e "\$bin=@$ROOT_DIR/build_pil/examples/main" \
+      -e '$run="4.0"' \
+      -e "include @$SCRIPT_DIR/renode.resc" >"$log" 2>&1 || true
   sed -E 's/.*usart2: \[[^]]*\] ?//; s/\x1b\[[0-9;]*m//g' "$log" \
     | grep -aE 'Suite:|Results:|ON-TARGET' || true
   if grep -aq 'ON-TARGET RESULT: ALL PASS' "$log"; then

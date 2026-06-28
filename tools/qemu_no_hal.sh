@@ -14,12 +14,20 @@
 # =============================================================================
 set -euo pipefail
 
+# Anchor everything to the repo root so the build dir and the log path resolve
+# the same way regardless of where the script is invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_ROOT"
+
 # Example to build. FIFO_TEST runs cleanly on the netduinoplus2 QEMU model.
 VAIOS_EXAMPLE=${VAIOS_EXAMPLE:-FIFO_TEST}
 
-# Default log path if not provided. Ensure the directory exists so `tee`
-# does not fail when ../logs is absent (it is .gitignored / not checked in).
-LOG_FILE=${1:-../logs/run_$(date +"%Y-%m-%d_%H:%M:%S").log}
+# Default log path if not provided. Make it absolute (anchored at the repo
+# root) so it still resolves after we `cd build`; a relative override is taken
+# relative to the repo root. logs/ is .gitignored, so create it.
+LOG_FILE=${1:-$REPO_ROOT/logs/run_$(date +"%Y-%m-%d_%H:%M:%S").log}
+case "$LOG_FILE" in /*) ;; *) LOG_FILE="$REPO_ROOT/$LOG_FILE" ;; esac
 mkdir -p "$(dirname "$LOG_FILE")"
 
 # Clean and build
