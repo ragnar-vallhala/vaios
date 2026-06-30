@@ -21,6 +21,12 @@ endif()
 
 add_library(vaios STATIC ${VAIOS_SOURCES})
 
+# Export the public headers as a usage requirement so projects that link vaios
+# (e.g. a nav firmware consumer that pulls vaios in as a [dependencies] library)
+# get include/ on their include path. The top-level include_directories() only
+# covers vaios's own compilation, not consumers in another source tree.
+target_include_directories(vaios PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+
 # Surface each module switch to C code as a 1/0 macro so init calls and APIs
 # can be #if'd out to match the gated source list.
 target_compile_definitions(vaios PUBLIC
@@ -30,7 +36,11 @@ target_compile_definitions(vaios PUBLIC
   VAIOS_MODULE_FIFO=$<BOOL:${VAIOS_MODULE_FIFO}>
   VAIOS_MODULE_PERF=$<BOOL:${VAIOS_MODULE_PERF}>
 )
-if(NAVHAL)
+# On a NAVHAL build the `hal`/`common` targets exist whether vaios embedded its
+# own NavHAL or a superproject (e.g. a nav firmware consumer) provided it; link
+# them either way. The TARGET guard keeps a misconfigured NAVHAL build (flag on
+# but no NavHAL present) from erroring on undefined targets.
+if(NAVHAL AND TARGET hal)
 target_link_libraries(vaios PUBLIC -Wl,--start-group hal common -Wl,--end-group -lc -lgcc portable)
 target_include_directories(vaios PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../extern/NavHAL/include)
 else()
