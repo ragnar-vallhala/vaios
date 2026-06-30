@@ -66,7 +66,7 @@ void v_port_hw_fpu_enable(void) {
 
 void v_port_hw_systick_init(uint32_t period_us) {
 #ifdef NAVHAL
-  systick_init(period_us);
+  hal_timebase_init(period_us);
 #else
   uint32_t period_ms = period_us / 1000u;
   uint32_t reload = (CPU_CLOCK_HZ / 1000u) * period_ms - 1u;
@@ -83,8 +83,8 @@ void v_port_hw_sched_irq_init(void) {
   /* SysTick below PendSV so a tick can pend a context switch that runs only
    * once all higher-priority IRQs have drained. PendSV is the lowest. */
 #ifdef NAVHAL
-  hal_set_interrupt_priority(SysTick_IRQn, 14);
-  hal_set_interrupt_priority(PendSV_IRQn, 15);
+  hal_interrupt_set_priority(SysTick_IRQn, 14);
+  hal_interrupt_set_priority(PendSV_IRQn, 15);
 #else
   set_systick_interrupt_priority(14);
   set_pendsv_interrupt_priority(15);
@@ -97,7 +97,8 @@ void v_port_hw_sched_irq_init(void) {
 
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 #ifdef NAVHAL
-  uart2_init(baudrate);
+  hal_uart_config_t uart_cfg = {.baudrate = baudrate};
+  hal_uart_init(HAL_UART_2, &uart_cfg);
 #if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA) &&                     \
     (BUFFERED_LOGGING == 1)
   if (dma_tx_done_cb) {
@@ -114,7 +115,7 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
 #if defined(NAVHAL) && defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
-  uart2_write_dma(bytes, len);
+  hal_uart_write_dma(HAL_UART_2, bytes, len);
 #else
   (void)bytes;
   (void)len;
@@ -123,7 +124,7 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
 
 void v_port_hw_console_write_string(const char *str) {
 #ifdef NAVHAL
-  uart2_write_string(str);
+  hal_uart_write_string(HAL_UART_2, str);
 #else
   sh_write0(str);
 #endif
@@ -131,7 +132,7 @@ void v_port_hw_console_write_string(const char *str) {
 
 char v_port_hw_console_read_char(void) {
 #ifdef NAVHAL
-  return uart2_read_char();
+  return hal_uart_read_char(HAL_UART_2);
 #else
   return sh_readc();
 #endif
@@ -140,7 +141,7 @@ char v_port_hw_console_read_char(void) {
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 #ifdef NAVHAL
   hal_interrupt_attach_callback(USART2_IRQn, rx_cb);
-  hal_enable_interrupt(USART2_IRQn);
+  hal_interrupt_enable(USART2_IRQn);
 #else
   /* QEMU semihosting has no async RX IRQ; the terminal polls instead. */
   (void)rx_cb;
@@ -155,7 +156,7 @@ int v_port_hw_sdio_init(void) {
 #ifdef NAVHAL
   /* clock_div is auto-calculated from the system clock. */
   hal_sdio_config_t sd_config = {.clock_div = 118, .bus_width = 1};
-  return (sdio_init(&sd_config) == HAL_SDIO_OK) ? 0 : -1;
+  return (hal_sdio_init(&sd_config) == HAL_SDIO_OK) ? 0 : -1;
 #else
   return -1; /* No SDIO model under QEMU. */
 #endif
@@ -163,7 +164,7 @@ int v_port_hw_sdio_init(void) {
 
 int v_port_hw_sdio_card_init(void) {
 #ifdef NAVHAL
-  return (sdio_card_init() == HAL_SDIO_OK) ? 0 : -1;
+  return (hal_sdio_card_init() == HAL_SDIO_OK) ? 0 : -1;
 #else
   return -1;
 #endif

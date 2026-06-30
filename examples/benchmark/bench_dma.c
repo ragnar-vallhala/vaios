@@ -15,7 +15,7 @@
 #include "benchmark.h"
 
 #ifdef _DMA_ENABLED
-#include "core/cortex-m4/dma.h"
+#include "navhal.h"
 
 /* ----------------------------- tunables --------------------------------- */
 #define DMA_SMALL_BYTES 4096u    /* single transfer size, small test  */
@@ -55,12 +55,12 @@ static int buf_verify(const uint8_t *src, const uint8_t *dst, uint32_t len) {
 }
 
 /**
- * @brief Poll dma_transfer_complete() up to @p timeout times.
+ * @brief Poll hal_dma_transfer_complete() up to @p timeout times.
  * @return 1 = done,  0 = timed out.
  */
-static int dma_poll_complete(const dma_config_t *cfg, uint32_t timeout) {
+static int dma_poll_complete(const hal_dma_config_t *cfg, uint32_t timeout) {
   for (uint32_t i = 0; i < timeout; i++) {
-    if (dma_transfer_complete(cfg))
+    if (hal_dma_transfer_complete(cfg))
       return 1;
   }
   return 0;
@@ -76,34 +76,34 @@ void bench_dma_m2m_small(void) {
 
   buf_prepare(s_src_small, s_dst_small, DMA_SMALL_BYTES);
 
-  dma_config_t cfg = {
-      .controller = DMA_CONTROLLER_2,
+  hal_dma_config_t cfg = {
+      .controller = HAL_DMA_CONTROLLER_2,
       .stream = 0,
       .channel = 0,
-      .direction = DMA_DIR_M2M,
+      .direction = HAL_DMA_DIR_M2M,
       .src_addr = (uint32_t)s_src_small,
       .dst_addr = (uint32_t)s_dst_small,
       .data_count = DMA_SMALL_BYTES,
       .src_inc = 1,
       .dst_inc = 1,
-      .data_width = DMA_DATA_WIDTH_8,
-      .priority = DMA_PRIORITY_HIGH,
+      .data_width = HAL_DMA_DATA_WIDTH_8,
+      .priority = HAL_DMA_PRIORITY_HIGH,
       .circular = 0,
   };
-  dma_init(&cfg);
+  hal_dma_init(&cfg);
 
   uint32_t iters = 0;
   int ok = 1;
   uint32_t t0 = BENCH_START();
 
   do {
-    dma_start(&cfg);
+    hal_dma_start(&cfg);
     if (!dma_poll_complete(&cfg, DMA_POLL_TIMEOUT)) {
       r->status = BENCH_TIMEOUT;
       BENCH_LOG(LOG_ERROR, "DMA M2M small: TIMEOUT at iter %u", iters);
       return;
     }
-    dma_clear_flags(&cfg);
+    hal_dma_clear_flags(&cfg);
     if (!buf_verify(s_src_small, s_dst_small, DMA_SMALL_BYTES))
       ok = 0;
     iters++;
@@ -133,34 +133,34 @@ void bench_dma_m2m_large(void) {
 
   buf_prepare(s_src_large, s_dst_large, DMA_LARGE_BYTES);
 
-  dma_config_t cfg = {
-      .controller = DMA_CONTROLLER_2,
+  hal_dma_config_t cfg = {
+      .controller = HAL_DMA_CONTROLLER_2,
       .stream = 1,
       .channel = 0,
-      .direction = DMA_DIR_M2M,
+      .direction = HAL_DMA_DIR_M2M,
       .src_addr = (uint32_t)s_src_large,
       .dst_addr = (uint32_t)s_dst_large,
       .data_count = DMA_LARGE_BYTES,
       .src_inc = 1,
       .dst_inc = 1,
-      .data_width = DMA_DATA_WIDTH_8,
-      .priority = DMA_PRIORITY_VERY_HIGH,
+      .data_width = HAL_DMA_DATA_WIDTH_8,
+      .priority = HAL_DMA_PRIORITY_VERY_HIGH,
       .circular = 0,
   };
-  dma_init(&cfg);
+  hal_dma_init(&cfg);
 
   uint32_t iters = 0;
   int ok = 1;
   uint32_t t0 = BENCH_START();
 
   do {
-    dma_start(&cfg);
+    hal_dma_start(&cfg);
     if (!dma_poll_complete(&cfg, DMA_POLL_TIMEOUT)) {
       r->status = BENCH_TIMEOUT;
       BENCH_LOG(LOG_ERROR, "DMA M2M large: TIMEOUT at iter %u", iters);
       return;
     }
-    dma_clear_flags(&cfg);
+    hal_dma_clear_flags(&cfg);
     if (!buf_verify(s_src_large, s_dst_large, DMA_LARGE_BYTES))
       ok = 0;
     iters++;
@@ -193,48 +193,48 @@ void bench_dma_concurrent(void) {
   for (uint32_t i = 0; i < DMA_CONC_BYTES; i++)
     s_src_con[i] = (uint8_t)(i ^ 0x55u);
 
-  dma_config_t cfg0 = {
-      .controller = DMA_CONTROLLER_2,
+  hal_dma_config_t cfg0 = {
+      .controller = HAL_DMA_CONTROLLER_2,
       .stream = 2,
       .channel = 0,
-      .direction = DMA_DIR_M2M,
+      .direction = HAL_DMA_DIR_M2M,
       .src_addr = (uint32_t)s_src_small,
       .dst_addr = (uint32_t)s_dst_small,
       .data_count = DMA_CONC_BYTES,
       .src_inc = 1,
       .dst_inc = 1,
-      .data_width = DMA_DATA_WIDTH_8,
-      .priority = DMA_PRIORITY_HIGH,
+      .data_width = HAL_DMA_DATA_WIDTH_8,
+      .priority = HAL_DMA_PRIORITY_HIGH,
       .circular = 0,
   };
-  dma_config_t cfg1 = {
-      .controller = DMA_CONTROLLER_2,
+  hal_dma_config_t cfg1 = {
+      .controller = HAL_DMA_CONTROLLER_2,
       .stream = 3,
       .channel = 0,
-      .direction = DMA_DIR_M2M,
+      .direction = HAL_DMA_DIR_M2M,
       .src_addr = (uint32_t)s_src_con,
       .dst_addr = (uint32_t)s_dst_con,
       .data_count = DMA_CONC_BYTES,
       .src_inc = 1,
       .dst_inc = 1,
-      .data_width = DMA_DATA_WIDTH_8,
-      .priority = DMA_PRIORITY_MEDIUM,
+      .data_width = HAL_DMA_DATA_WIDTH_8,
+      .priority = HAL_DMA_PRIORITY_MEDIUM,
       .circular = 0,
   };
-  dma_init(&cfg0);
-  dma_init(&cfg1);
+  hal_dma_init(&cfg0);
+  hal_dma_init(&cfg1);
 
   uint32_t iters = 0;
   int ok0 = 1, ok1 = 1;
   uint32_t t0 = BENCH_START();
 
   do {
-    dma_start(&cfg0);
-    dma_start(&cfg1);
+    hal_dma_start(&cfg0);
+    hal_dma_start(&cfg1);
     int d0 = dma_poll_complete(&cfg0, DMA_POLL_TIMEOUT);
     int d1 = dma_poll_complete(&cfg1, DMA_POLL_TIMEOUT);
-    dma_clear_flags(&cfg0);
-    dma_clear_flags(&cfg1);
+    hal_dma_clear_flags(&cfg0);
+    hal_dma_clear_flags(&cfg1);
     if (!d0 || !d1) {
       r->status = BENCH_TIMEOUT;
       BENCH_LOG(LOG_ERROR, "DMA concurrent: TIMEOUT at iter %u", iters);

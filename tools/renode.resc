@@ -1,0 +1,78 @@
+:name: vaios on STM32F4 (Renode)
+:description: Boot any NAVHAL vaios image on a generic STM32F4, stream USART2,
+:            enable the DWT cycle counter, and probe scheduler liveness.
+:            Replaces the old renode_example / renode_unit_tests / renode_sitl
+:            scripts — select behaviour with the $bin and $run variables.
+:
+: Build first (NAVHAL=ON), e.g.:
+:   export srctree="$PWD/extern/NavHAL"
+:   cmake -S . -B build_renode -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=FIFO_TEST
+:   cmake --build build_renode
+: Then, from the repo root:
+:   renode --console --disable-xwt -e "include @tools/renode.resc"
+: Override the ELF and/or run time (set the vars BEFORE the include):
+:   renode --console --disable-xwt \
+:          -e '$bin=@build_pil/examples/main' -e '$run="4.0"' \
+:          -e "include @tools/renode.resc"
+
+using sysbus
+$bin?=@build_renode/examples/main
+$run?="3.0"
+
+mach create "vaios"
+machine LoadPlatformDescription @platforms/cpus/stm32f4.repl
+
+# The generic stm32f4.repl has no DWT; add the cycle counter at the 84 MHz core
+# clock so the firmware's DWT_CYCCNT reads (v_perf_cycles) resolve instead of
+# faulting on a non-existent peripheral. It counts once firmware sets CYCCNTENA.
+machine LoadPlatformDescriptionFromString "dwt: Miscellaneous.DWT @ sysbus 0xE0001000 { frequency: 84000000 }"
+
+# Renode's STM32F4 DMA model doesn't implement every config / flag-clear bit
+# the vaios DMA-backed logger writes (stream priority, interrupt-flag clears),
+# so it spams "Unhandled write" warnings even though logging works. Mute dma1 /
+# dma2 to errors-only; USART2 output and any genuine DMA faults still show.
+logLevel 3 sysbus.dma1
+logLevel 3 sysbus.dma2
+
+# Renode's Cortex-M derives SysTick from the core frequency.
+cpu PerformanceInMips 84
+
+# Stream USART2 TX into the console log (works headless, no GUI).
+showAnalyzer sysbus.usart2 Antmicro.Renode.Analyzers.LoggingUartAnalyzer
+
+sysbus LoadELF $bin
+
+# Resolve the liveness-probe addresses from the ELF symbol table rather than
+# hardcoding them: the SRAM layout shifts between images (UNIT_TESTS vs a
+# scheduler example), so a fixed address reads the wrong word. These are all
+# global kernel symbols (kernel/task.c, kernel/vaios.c) so GetSymbolAddress
+# finds them in any vaios image.
+$systick=`sysbus GetSymbolAddress "systick_count"`
+$sched=`sysbus GetSymbolAddress "scheduler_running"`
+$curtask=`sysbus GetSymbolAddress "current_task"`
+
+echo "=== boot ==="
+emulation RunFor "0.5"
+echo "PC @0.5s:"
+cpu PC
+echo "systick_count @0.5s:"
+sysbus ReadDoubleWord $systick
+echo "scheduler_running @0.5s:"
+sysbus ReadDoubleWord $sched
+echo "current_task @0.5s:"
+sysbus ReadDoubleWord $curtask
+
+# Main run — UART output streams to the console throughout this window.
+emulation RunFor $run
+
+echo "=== liveness after main run ==="
+echo "PC:"
+cpu PC
+echo "systick_count (must have advanced past the 0.5s sample if SysTick is live):"
+sysbus ReadDoubleWord $systick
+echo "scheduler_running:"
+sysbus ReadDoubleWord $sched
+echo "current_task:"
+sysbus ReadDoubleWord $curtask
+
+quit

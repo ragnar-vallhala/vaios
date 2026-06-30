@@ -24,6 +24,10 @@ PORT="${PORT:-/dev/ttyACM0}"
 CAPTURE_SECS="${CAPTURE_SECS:-10}"
 cd "$ROOT_DIR"
 
+# NavHAL's Kconfig resolves paths relative to $srctree; any -DNAVHAL=ON build
+# (sitl, pitl) fails to configure without it. Export once for every layer.
+export srctree="${srctree:-$ROOT_DIR/extern/NavHAL}"
+
 c_grn() { printf '\033[1;32m%s\033[0m' "$1"; }
 c_red() { printf '\033[1;31m%s\033[0m' "$1"; }
 c_yel() { printf '\033[1;33m%s\033[0m' "$1"; }
@@ -86,16 +90,39 @@ run_sitl() {
     STATUS[sitl]=FAIL; DETAIL[sitl]="build failed (see /tmp/all_sitl_bld.log)"; return
   fi
 
+  # Detach stdin (</dev/null) so `--console` renode never tries to read from an
+  # interactive terminal and can't block waiting on one. Defensive: renode's
+  # stdout is already redirected to a file below, but a detached stdin keeps the
+  # headless path deterministic. A retry hedges a genuine cold-start hiccup.
   local log; log="$(mktemp)"
-  timeout 120s renode --console --disable-xwt \
-      -e "include @$SCRIPT_DIR/renode_unit_tests.resc" >"$log" 2>&1 || true
+  local attempt produced=0
+  for attempt in 1 2; do
+    : > "$log"
+    timeout 120s renode --console --disable-xwt \
+        -e "\$bin=@$ROOT_DIR/build_pil/examples/main" \
+        -e '$run="4.0"' \
+        -e "include @$SCRIPT_DIR/renode.resc" </dev/null >"$log" 2>&1 || true
+    if grep -aq 'ON-TARGET' "$log"; then produced=1; break; fi
+    echo "  renode produced no on-target output (attempt $attempt); retrying ..."
+  done
   sed -E 's/.*usart2: \[[^]]*\] ?//; s/\x1b\[[0-9;]*m//g' "$log" \
     | grep -aE 'Suite:|Results:|ON-TARGET' || true
   if grep -aq 'ON-TARGET RESULT: ALL PASS' "$log"; then
     STATUS[sitl]=PASS
   else
-    STATUS[sitl]=FAIL; DETAIL[sitl]="no ALL PASS in Renode UART (log /tmp/all_sitl_uart.log)"
     cp "$log" /tmp/all_sitl_uart.log
+    # Surface what renode actually said so an empty/failed capture is
+    # self-diagnosing instead of an opaque "no UART". An empty capture is
+    # usually renode erroring before the machine ran (bad ELF, display, a
+    # monitor prompt that hung until the timeout) — that reason is in here.
+    echo "  ---- last 15 lines of renode output (/tmp/all_sitl_uart.log) ----"
+    sed -E 's/\x1b\[[0-9;]*m//g' "$log" | tail -n 15 | sed 's/^/  | /'
+    echo "  ----------------------------------------------------------------"
+    if [ "$produced" -eq 0 ]; then
+      STATUS[sitl]=FAIL; DETAIL[sitl]="renode captured no UART after 2 tries (see tail above / /tmp/all_sitl_uart.log)"
+    else
+      STATUS[sitl]=FAIL; DETAIL[sitl]="ran but no ALL PASS (see tail above / /tmp/all_sitl_uart.log)"
+    fi
   fi
   rm -f "$log"
 }
@@ -106,11 +133,13 @@ run_pitl() {
   if ! have arm-none-eabi-gcc || ! have st-flash || ! have st-info; then
     STATUS[pitl]=SKIP; DETAIL[pitl]="no arm toolchain / st-tools"; return
   fi
-  if ! st-info --probe 2>/dev/null | grep -qi 'stlink\|serial'; then
-    STATUS[pitl]=SKIP; DETAIL[pitl]="no ST-Link board detected"; return
-  fi
+  # Cheap, side-effect-free gate first: no serial port means no board to talk
+  # to, so skip before poking the ST-Link with `st-info --probe`.
   if [ ! -e "$PORT" ]; then
     STATUS[pitl]=SKIP; DETAIL[pitl]="serial port $PORT absent (set PORT=...)"; return
+  fi
+  if ! st-info --probe 2>/dev/null | grep -qi 'stlink\|serial'; then
+    STATUS[pitl]=SKIP; DETAIL[pitl]="no ST-Link board detected"; return
   fi
   if CAPTURE_SECS="$CAPTURE_SECS" PORT="$PORT" bash "$SCRIPT_DIR/run_hw_tests.sh"; then
     STATUS[pitl]=PASS

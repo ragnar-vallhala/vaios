@@ -110,14 +110,14 @@ int main(void) {
                              .internal_sd_card_setup = 1};
   v_system_init(&cfg);
 
-  uart2_write_string("[MAIN] v_system_init done\r\n");
+  hal_uart_write_string(HAL_UART_2, "[MAIN] v_system_init done\r\n");
 
   /* Pre-allocate the log file once. On subsequent boots this is a no-op. */
-  uart2_write_string("[MAIN] calling vfs_preallocate...\r\n");
+  hal_uart_write_string(HAL_UART_2, "[MAIN] calling vfs_preallocate...\r\n");
   int pa_ret = vfs_preallocate(LOG_FILE, LOG_FILE_SIZE);
-  uart2_write_string("[MAIN] vfs_preallocate returned: ");
-  uart2_write_int(pa_ret);
-  uart2_write_string("\r\n");
+  hal_uart_write_string(HAL_UART_2, "[MAIN] vfs_preallocate returned: ");
+  hal_uart_write_int(HAL_UART_2, pa_ret);
+  hal_uart_write_string(HAL_UART_2, "\r\n");
 
   if (pa_ret != 0) {
     v_log(LOG_ERROR, "Failed to pre-allocate log file! (code %d)", pa_ret);

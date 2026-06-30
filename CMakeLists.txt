@@ -71,6 +71,20 @@ if(NOT NAVHAL AND NOT VAIOS_MODULE_SEMIHOSTING)
   set(VAIOS_MODULE_SEMIHOSTING ON CACHE BOOL "Build the semihosting debug I/O module" FORCE)
 endif()
 
+# The VFS examples call vfs_* directly, so they only link when the VFS module
+# (kernel/vfs.c) is compiled into libvaios. Gate it on the selected example:
+# auto-enable VAIOS_MODULE_VFS for those examples so a plain
+# -DVAIOS_EXAMPLE=VFS_PERF build links without a manual -DVAIOS_MODULE_VFS=ON,
+# while every other example keeps VFS out of flash.
+if(VAIOS_EXAMPLE STREQUAL "VFS_PERF" OR
+   VAIOS_EXAMPLE STREQUAL "VFS_CONCURRENT" OR
+   VAIOS_EXAMPLE STREQUAL "SD_WRITE_TEST")
+  if(NOT VAIOS_MODULE_VFS)
+    message(STATUS "VAIOS_EXAMPLE=${VAIOS_EXAMPLE} uses the VFS API -- forcing VAIOS_MODULE_VFS ON.")
+    set(VAIOS_MODULE_VFS ON CACHE BOOL "Build the virtual file system (FatFs)" FORCE)
+  endif()
+endif()
+
 message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
                "perf=${VAIOS_MODULE_PERF}")

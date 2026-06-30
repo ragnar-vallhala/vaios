@@ -1,4 +1,4 @@
-#include "core/cortex-m4/timer.h"
+#include "navhal.h"
 #include "memory.h"
 #include "task.h"
 #include "utils.h"
@@ -22,13 +22,15 @@ void callback() {
 }
 
 int main() {
-  v_init();
+  vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                             .internal_sd_card_setup = 0};
+  v_init(&cfg);
   v_heap_memory_init();
   {
-    timer_init_freq(TIM5, 1000);
-    timer_attach_callback(TIM5, callback);
-    timer_enable_interrupt(TIM5);
-    timer_start(TIM5);
+    hal_timer_init_freq(TIM5, 1000);
+    hal_timer_attach_callback(TIM5, callback);
+    hal_timer_enable_interrupt(TIM5);
+    hal_timer_start(TIM5);
   }
   scheduler_init();
   task_id = task_create(task, NULL, 1024, 1);

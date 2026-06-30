@@ -33,7 +33,9 @@ void kernel_task(void *arg)
 int main(void)
 {
 
-  v_init();
+  vaios_init_config_t cfg = {.internal_clock_setup = 1,
+                             .internal_sd_card_setup = 0};
+  v_init(&cfg);
   v_heap_memory_init();
   scheduler_init();
   count = 0;
