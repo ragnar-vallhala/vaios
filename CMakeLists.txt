@@ -94,6 +94,33 @@ if(VAIOS_CONFIG_FILE)
     message(STATUS "VAIOS: Using custom config file ${VAIOS_CONFIG_FILE}")
 endif()
 
+# Mirror NavHAL's FPU setting so vaios's float ABI can never diverge from the HAL
+# it links against. NavHAL carries the FPU decision in two places that must agree:
+# the CMake `USE_FPU` var (sets -mfloat-abi in cmake/arch/armv7e-m.cmake) and the
+# Kconfig `CONFIG_USE_FPU` (-> navhal_target.h NAVHAL_HAS_FPU -> defines
+# _FPU_ENABLED, which port.c's context-switch asm keys off). If vaios builds
+# soft-float while NavHAL's .config still has CONFIG_USE_FPU=y, _FPU_ENABLED stays
+# defined and the `vstmdb/vldmia {s16-s31}` asm fails to assemble. So take the
+# canonical NavHAL flag (CONFIG_USE_FPU in the .config NavHAL is configured from)
+# as the single source of truth and force VAIOS_FPU to match it. Non-NAVHAL builds
+# keep VAIOS_FPU as an independent knob.
+if(NAVHAL)
+    if(DEFINED NAVHAL_CONFIG_FILE)
+        set(_nav_cfg "${NAVHAL_CONFIG_FILE}")
+    else()
+        set(_nav_cfg "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
+    endif()
+    if(EXISTS "${_nav_cfg}")
+        file(STRINGS "${_nav_cfg}" _nav_fpu REGEX "^CONFIG_USE_FPU=y$")
+        if(_nav_fpu)
+            set(VAIOS_FPU ON CACHE BOOL "Enable FPU support" FORCE)
+        else()
+            set(VAIOS_FPU OFF CACHE BOOL "Enable FPU support" FORCE)
+        endif()
+        message(STATUS "VAIOS: FPU mirrored from NavHAL (${_nav_cfg}) -> VAIOS_FPU=${VAIOS_FPU}")
+    endif()
+endif()
+
 if(VAIOS_FPU)
     set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
     add_compile_definitions(_FPU_ENABLED __FPU_PRESENT=1)

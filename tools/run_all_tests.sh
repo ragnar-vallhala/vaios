@@ -4,6 +4,7 @@
 #
 # Layers (each skips cleanly if its prerequisites are missing):
 #   host      Host-native unit suite           tools/run_tests.sh        (gcc)
+#   build     Cross build matrix (FPU modes)   tools/test_build_matrix.sh (arm-gcc)
 #   coverage  Host gcov line/branch report     tools/coverage.sh         (gcov)
 #   sitl      On-target unit tests in Renode   build + Renode            (arm-gcc, renode)
 #   pitl      Hardware regression on a board   tools/run_hw_tests.sh     (st-flash + board)
@@ -36,7 +37,7 @@ hr() { printf '%s\n' "----------------------------------------------------------
 header() { echo; c_blu "########## $1 ##########"; echo; }
 
 # Which layers to run.
-ALL_LAYERS=(host coverage sitl pitl)
+ALL_LAYERS=(host build coverage sitl pitl)
 if [ "$#" -gt 0 ]; then
   LAYERS=("$@")
 else
@@ -56,6 +57,17 @@ run_host() {
     STATUS[host]=PASS
   else
     STATUS[host]=FAIL; DETAIL[host]="see output above"
+  fi
+}
+
+# --------------------------------------------------------------- build --------
+run_build() {
+  header "BUILD MATRIX (FPU coherence)"
+  if ! have arm-none-eabi-gcc; then STATUS[build]=SKIP; DETAIL[build]="no arm toolchain"; return; fi
+  if bash "$SCRIPT_DIR/test_build_matrix.sh"; then
+    STATUS[build]=PASS
+  else
+    STATUS[build]=FAIL; DETAIL[build]="a build mode failed (see output above)"
   fi
 }
 
@@ -152,6 +164,7 @@ run_pitl() {
 for layer in "${LAYERS[@]}"; do
   case "$layer" in
     host)     run_host ;;
+    build)    run_build ;;
     coverage) run_coverage ;;
     sitl)     run_sitl ;;
     pitl)     run_pitl ;;
