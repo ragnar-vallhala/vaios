@@ -21,6 +21,15 @@ void v_port_hw_fpu_enable(void) {}
 void v_port_hw_systick_init(uint32_t period_us) { (void)period_us; }
 void v_port_hw_sched_irq_init(void) {}
 
+/* FromISR priority-assert seam. Tests may set these to simulate the active
+ * exception; the default (VECTACTIVE 0 = thread mode) is always "safe". */
+uint32_t g_stub_active_vectactive = 0;
+uint32_t g_stub_active_irq_prio = 0;
+uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
+  if (vectactive_out) *vectactive_out = g_stub_active_vectactive;
+  return g_stub_active_irq_prio;
+}
+
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
   (void)baudrate;
   (void)dma_tx_done_cb;

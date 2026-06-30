@@ -468,10 +468,36 @@ static void test_pi_unlock_keeps_priority_floor(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * FromISR priority assert predicate (problems/vaios-issues.md). An IRQ more
+ * urgent than MAX_SYSCALL_INTERRUPT_PRIORITY must not call *_from_isr APIs.
+ * ---------------------------------------------------------------------- */
+static void test_isr_prio_thread_mode_is_safe(void) {
+  /* VECTACTIVE < 16: thread mode / a system handler — no NVIC priority to break. */
+  TEST_ASSERT_EQ(vaios_isr_priority_is_safe(0, 0), 1);
+  TEST_ASSERT_EQ(vaios_isr_priority_is_safe(15, 0), 1);
+}
+static void test_isr_prio_maskable_irq_is_safe(void) {
+  /* External IRQ (>=16) at or below the syscall band (numerically >= threshold). */
+  TEST_ASSERT_EQ(vaios_isr_priority_is_safe(16, MAX_SYSCALL_INTERRUPT_PRIORITY), 1);
+  TEST_ASSERT_EQ(
+      vaios_isr_priority_is_safe(42, MAX_SYSCALL_INTERRUPT_PRIORITY + 0x10), 1);
+}
+static void test_isr_prio_urgent_irq_is_unsafe(void) {
+  /* External IRQ more urgent than the threshold (numerically lower) — unmaskable. */
+  TEST_ASSERT_EQ(vaios_isr_priority_is_safe(16, 0), 0);
+  TEST_ASSERT_EQ(
+      vaios_isr_priority_is_safe(50, MAX_SYSCALL_INTERRUPT_PRIORITY - 0x10), 0);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 void run_ipc_tests(void) {
   TEST_SUITE_BEGIN("IPC (Semaphores & Mutexes)");
+  /* FromISR priority assert predicate */
+  TEST_RUN(test_isr_prio_thread_mode_is_safe);
+  TEST_RUN(test_isr_prio_maskable_irq_is_safe);
+  TEST_RUN(test_isr_prio_urgent_irq_is_unsafe);
   /* Binary semaphore */
   TEST_RUN(test_binary_sem_create);
   TEST_RUN(test_binary_sem_take_empty);

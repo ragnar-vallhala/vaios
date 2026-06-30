@@ -101,6 +101,11 @@ void v_port_hw_fpu_enable(void);
 void v_port_hw_systick_init(uint32_t period_us);
 void v_port_hw_sched_irq_init(void);
 
+// Active-exception NVIC priority, for the FromISR priority assert. Returns the
+// priority byte of the currently-executing external IRQ (or 0 in thread mode /
+// a system handler) and writes ICSR.VECTACTIVE to *vectactive_out.
+uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
+
 // Console: log/terminal UART on hardware, semihosting under QEMU.
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
