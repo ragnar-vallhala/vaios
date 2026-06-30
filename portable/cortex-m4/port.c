@@ -146,6 +146,12 @@ void task_yield(void) {
 
 __attribute__((naked)) void scheduler_start(void) {
   __asm volatile(
+      /* Mask interrupts for the whole first-task setup. v_init left interrupts
+         enabled (hal_delay needs the tick), so without this a SysTick landing
+         after scheduler_running is set — but before the svc establishes PSP —
+         pends PendSV, which then saves to PSP=0 (fault at 0xFFFFFFDC). The
+         cpsie i further down re-enables them right before the svc. */
+      "cpsid i                \n"
       "ldr r0, =scheduler_running\n"
       "mov r1, #1             \n"
       "strb r1, [r0]          \n"
@@ -158,6 +164,22 @@ __attribute__((naked)) void scheduler_start(void) {
       " mov r0, #0            \n" /* Clear the bit that indicates the FPU is in
                                      use, see comment above. */
       " msr control, r0       \n"
+      /* First-task launch must not be preempted by SysTick. SysTick was started
+         in v_init, so the instant interrupts are enabled a pending tick would
+         take PendSV BEFORE the svc below establishes this task's PSP; PendSV then
+         saves context to PSP=0, writing 9 words down to 0xFFFFFFDC (bus fault on
+         QEMU; silent corruption on Renode/hardware). Disable the SysTick
+         interrupt and clear any pending PendSV here; SVCall_Handler re-enables
+         SysTick once PSP is valid, at priority 0 where a tick cannot preempt. */
+      " ldr r0, =0xE000E010   \n" /* SysTick CSR: stop the counter entirely    */
+      " ldr r1, [r0]          \n"
+      " bic r1, r1, #3        \n" /* clear ENABLE|TICKINT                       */
+      " str r1, [r0]          \n"
+      " ldr r0, =0xE000ED04   \n" /* ICSR: drop any ALREADY-pending exceptions */
+      " ldr r1, =0x0A000000   \n" /* PENDSVCLR (bit27) | PENDSTCLR (bit25)     */
+      " str r1, [r0]          \n"
+      " dsb                   \n"
+      " isb                   \n"
       " cpsie i               \n" /* Globally enable interrupts. */
       " cpsie f               \n"
       " dsb                   \n"
@@ -244,6 +266,14 @@ __attribute__((naked)) void SVCall_Handler(void) {
 #endif
       "   msr psp, r0                     \n" /* Restore the task stack pointer.
                                                */
+      /* PSP is now valid and we are in SVCall at priority 0 (un-preemptible).
+         Re-enable the SysTick interrupt that scheduler_start disabled, so the
+         first preemptive tick only arrives after we return into the first task
+         with a good PSP. */
+      "   ldr r0, =0xE000E010             \n" /* SysTick CSR */
+      "   ldr r1, [r0]                    \n"
+      "   orr r1, r1, #3                  \n" /* set ENABLE|TICKINT */
+      "   str r1, [r0]                    \n"
       "   isb                             \n"
       "   mov r0, #0                      \n"
       "   msr basepri, r0                 \n"

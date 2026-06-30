@@ -5,6 +5,7 @@
 # Layers (each skips cleanly if its prerequisites are missing):
 #   host      Host-native unit suite           tools/run_tests.sh        (gcc)
 #   build     Cross build matrix (FPU modes)   tools/test_build_matrix.sh (arm-gcc)
+#   qemu      Context-switch smoke in QEMU     tools/test_qemu_smoke.sh  (arm-gcc, qemu)
 #   coverage  Host gcov line/branch report     tools/coverage.sh         (gcov)
 #   sitl      On-target unit tests in Renode   build + Renode            (arm-gcc, renode)
 #   pitl      Hardware regression on a board   tools/run_hw_tests.sh     (st-flash + board)
@@ -37,7 +38,7 @@ hr() { printf '%s\n' "----------------------------------------------------------
 header() { echo; c_blu "########## $1 ##########"; echo; }
 
 # Which layers to run.
-ALL_LAYERS=(host build coverage sitl pitl)
+ALL_LAYERS=(host build qemu coverage sitl pitl)
 if [ "$#" -gt 0 ]; then
   LAYERS=("$@")
 else
@@ -68,6 +69,18 @@ run_build() {
     STATUS[build]=PASS
   else
     STATUS[build]=FAIL; DETAIL[build]="a build mode failed (see output above)"
+  fi
+}
+
+# ---------------------------------------------------------------- qemu --------
+run_qemu() {
+  header "QEMU CONTEXT-SWITCH SMOKE"
+  if ! have arm-none-eabi-gcc; then STATUS[qemu]=SKIP; DETAIL[qemu]="no arm toolchain"; return; fi
+  if ! have qemu-system-arm; then STATUS[qemu]=SKIP; DETAIL[qemu]="qemu-system-arm not installed"; return; fi
+  if bash "$SCRIPT_DIR/test_qemu_smoke.sh"; then
+    STATUS[qemu]=PASS
+  else
+    STATUS[qemu]=FAIL; DETAIL[qemu]="context-switch smoke faulted (see output above)"
   fi
 }
 
@@ -165,6 +178,7 @@ for layer in "${LAYERS[@]}"; do
   case "$layer" in
     host)     run_host ;;
     build)    run_build ;;
+    qemu)     run_qemu ;;
     coverage) run_coverage ;;
     sitl)     run_sitl ;;
     pitl)     run_pitl ;;
