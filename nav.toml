@@ -15,3 +15,9 @@ board = "nucleo_f401re"
 
 [build]
 backend = "cmake"
+
+# vaios owns the Cortex-M CPU vectors (SysTick/PendSV/SVCall/HardFault). A
+# firmware project depending on vaios must build NavHAL with -DSUBMODULE so
+# NavHAL cedes those handlers instead of emitting its own (link collision).
+[library]
+navhal_submodule = true
