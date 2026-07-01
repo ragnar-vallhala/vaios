@@ -94,6 +94,33 @@ if(VAIOS_CONFIG_FILE)
     message(STATUS "VAIOS: Using custom config file ${VAIOS_CONFIG_FILE}")
 endif()
 
+# Mirror NavHAL's FPU setting so vaios's float ABI can never diverge from the HAL
+# it links against. NavHAL carries the FPU decision in two places that must agree:
+# the CMake `USE_FPU` var (sets -mfloat-abi in cmake/arch/armv7e-m.cmake) and the
+# Kconfig `CONFIG_USE_FPU` (-> navhal_target.h NAVHAL_HAS_FPU -> defines
+# _FPU_ENABLED, which port.c's context-switch asm keys off). If vaios builds
+# soft-float while NavHAL's .config still has CONFIG_USE_FPU=y, _FPU_ENABLED stays
+# defined and the `vstmdb/vldmia {s16-s31}` asm fails to assemble. So take the
+# canonical NavHAL flag (CONFIG_USE_FPU in the .config NavHAL is configured from)
+# as the single source of truth and force VAIOS_FPU to match it. Non-NAVHAL builds
+# keep VAIOS_FPU as an independent knob.
+if(NAVHAL)
+    if(DEFINED NAVHAL_CONFIG_FILE)
+        set(_nav_cfg "${NAVHAL_CONFIG_FILE}")
+    else()
+        set(_nav_cfg "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
+    endif()
+    if(EXISTS "${_nav_cfg}")
+        file(STRINGS "${_nav_cfg}" _nav_fpu REGEX "^CONFIG_USE_FPU=y$")
+        if(_nav_fpu)
+            set(VAIOS_FPU ON CACHE BOOL "Enable FPU support" FORCE)
+        else()
+            set(VAIOS_FPU OFF CACHE BOOL "Enable FPU support" FORCE)
+        endif()
+        message(STATUS "VAIOS: FPU mirrored from NavHAL (${_nav_cfg}) -> VAIOS_FPU=${VAIOS_FPU}")
+    endif()
+endif()
+
 if(VAIOS_FPU)
     set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
     add_compile_definitions(_FPU_ENABLED __FPU_PRESENT=1)
@@ -130,28 +157,37 @@ if(NAVHAL)
   # SysTick_Handler that collides with vaios's at link time.
   add_compile_definitions(SUBMODULE)
   include_directories(extern/NavHAL/include)
-  set(USE_FPU ${VAIOS_FPU} CACHE BOOL "Pass FPU setting to NavHAL" FORCE)
-  # NavHAL's Kconfig reads extern/NavHAL/.config from a hardcoded path. NavHAL is
-  # configured from NAVHAL_CONFIG_FILE: it defaults to vaios's own navhal.config
-  # (so a standalone vaios build works), but a superproject (e.g. vayu) FORCE-sets
-  # it to its own copy to OWN the driver set WITHOUT ever writing into the vaios
-  # tree — the same pattern as VAIOS_CONFIG_FILE above. We stage whatever it points
-  # at into NavHAL's .config (gitignored, so NavHAL stays an unmodified submodule)
-  # before NavHAL's CMake runs kconfig.py. Editing the file re-triggers configure.
-  set(NAVHAL_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config"
-      CACHE STRING "Path to the NavHAL Kconfig .config (firmware driver set)")
-  configure_file(
-    ${NAVHAL_CONFIG_FILE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config
-    COPYONLY)
-  add_subdirectory(extern/NavHAL)
-  # NavHAL hardcodes -O0 in its own CMAKE_C_FLAGS. Rather than editing the
-  # submodule, override per target from here — gcc honours the last -O flag,
-  # so a trailing -O2 wins. Keeps NavHAL (incl. the DWT cycle counter)
-  # optimized without dirtying the submodule.
-  target_compile_options(hal    PRIVATE -O2)
-  target_compile_options(common PRIVATE -O2)
-  set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
+
+  # Who provides NavHAL? When a superproject has already added it (e.g. a nav
+  # firmware project that does add_subdirectory(extern/NavHAL) before pulling
+  # vaios in as a [dependencies] library), the `hal` target already exists —
+  # share it instead of adding NavHAL a second time, which would collide on the
+  # `hal`/`common` targets. Only embed our own NavHAL when nobody else has.
+  # See nav/docs/vaios-as-library.md.
+  if(NOT TARGET hal)
+    set(USE_FPU ${VAIOS_FPU} CACHE BOOL "Pass FPU setting to NavHAL" FORCE)
+    # NavHAL's Kconfig reads extern/NavHAL/.config from a hardcoded path. NavHAL is
+    # configured from NAVHAL_CONFIG_FILE: it defaults to vaios's own navhal.config
+    # (so a standalone vaios build works), but a superproject (e.g. vayu) FORCE-sets
+    # it to its own copy to OWN the driver set WITHOUT ever writing into the vaios
+    # tree — the same pattern as VAIOS_CONFIG_FILE above. We stage whatever it points
+    # at into NavHAL's .config (gitignored, so NavHAL stays an unmodified submodule)
+    # before NavHAL's CMake runs kconfig.py. Editing the file re-triggers configure.
+    set(NAVHAL_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config"
+        CACHE STRING "Path to the NavHAL Kconfig .config (firmware driver set)")
+    configure_file(
+      ${NAVHAL_CONFIG_FILE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config
+      COPYONLY)
+    add_subdirectory(extern/NavHAL)
+    # NavHAL hardcodes -O0 in its own CMAKE_C_FLAGS. Rather than editing the
+    # submodule, override per target from here — gcc honours the last -O flag,
+    # so a trailing -O2 wins. Keeps NavHAL (incl. the DWT cycle counter)
+    # optimized without dirtying the submodule.
+    target_compile_options(hal    PRIVATE -O2)
+    target_compile_options(common PRIVATE -O2)
+    set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
+  endif()
 endif()
 
 

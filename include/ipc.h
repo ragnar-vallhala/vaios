@@ -72,6 +72,15 @@ int v_semaphore_give(SemaphoreHandle_t sem);
 int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
                               int *pxHigherPriorityTaskWoken);
 
+// Predicate behind the FromISR priority assert (pure; host-testable). Given the
+// active exception number (ICSR.VECTACTIVE) and the active IRQ's NVIC priority
+// byte, returns 1 when calling a *_from_isr API here is safe: thread mode / a
+// system handler (vectactive < 16), or an external IRQ whose priority is
+// numerically >= MAX_SYSCALL_INTERRUPT_PRIORITY (so the kernel's BASEPRI masks
+// it). An IRQ more urgent than that can preempt a kernel critical section and
+// silently corrupt the scheduler's lists — the assert turns that into a panic.
+int vaios_isr_priority_is_safe(uint32_t vectactive, uint32_t irq_prio);
+
 // Mutex operations
 int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait);
 int v_mutex_unlock(MutexHandle_t mtx);

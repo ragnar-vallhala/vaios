@@ -294,10 +294,30 @@ int v_semaphore_give(SemaphoreHandle_t sem) {
   return semaphore_give_common((sema_t *)sem, NULL);
 }
 
+int vaios_isr_priority_is_safe(uint32_t vectactive, uint32_t irq_prio) {
+  if (vectactive < 16u)
+    return 1; // thread mode or a system handler — no NVIC priority to violate
+  return irq_prio >= (uint32_t)MAX_SYSCALL_INTERRUPT_PRIORITY;
+}
+
 int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
                               int *pxHigherPriorityTaskWoken) {
   if (!sem)
     return VA_FAIL;
+#if VAIOS_FROMISR_PRIO_CHECK
+  // Enforce the FromISR priority contract the scheduler's correctness relies on:
+  // an IRQ more urgent than MAX_SYSCALL_INTERRUPT_PRIORITY is not masked by the
+  // kernel's critical sections, so calling this from there can tear the
+  // scheduler lists. Fail loudly and locatably instead of corrupting silently.
+  {
+    uint32_t vectactive = 0;
+    uint32_t prio = v_port_hw_active_irq_priority(&vectactive);
+    if (!vaios_isr_priority_is_safe(vectactive, prio))
+      v_panic(__FILE__, __LINE__,
+              "v_semaphore_give_from_isr called from an IRQ above the syscall "
+              "priority; raise its NVIC priority to the maskable band");
+  }
+#endif
   return semaphore_give_common((sema_t *)sem, pxHigherPriorityTaskWoken);
 }
 

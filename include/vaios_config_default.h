@@ -59,6 +59,15 @@
 #define MAX_SYSCALL_INTERRUPT_PRIORITY (7 << (8 - __NVIC_PRIO_BITS))
 #endif
 
+// When 1, *_from_isr APIs assert that the calling IRQ's NVIC priority is within
+// the maskable band (>= MAX_SYSCALL_INTERRUPT_PRIORITY). An IRQ more urgent than
+// that can preempt a kernel critical section and silently corrupt the scheduler;
+// the assert v_panic's with a clear message instead. Default on; set 0 to drop
+// the check from a size-critical release build.
+#ifndef VAIOS_FROMISR_PRIO_CHECK
+#define VAIOS_FROMISR_PRIO_CHECK 1
+#endif
+
 // Critical-section masking strategy. When 1, v_enter_critical / v_exit_critical
 // use BASEPRI so IRQs with priority numerically below MAX_SYSCALL_INTERRUPT_-
 // PRIORITY (i.e. more urgent — motor PWM, IMU EXTI, ESC telemetry) stay

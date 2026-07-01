@@ -91,6 +91,22 @@ void v_port_hw_sched_irq_init(void) {
 #endif
 }
 
+uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
+  /* ICSR.VECTACTIVE (bits [8:0]) is the active exception number: 0 = thread
+   * mode, 1..15 = system handlers, >=16 = external IRQ (IRQn = VECTACTIVE-16).
+   * Only external IRQs carry an NVIC priority that BASEPRI masks. */
+  uint32_t vectactive = (*(volatile uint32_t *)0xE000ED04u) & 0x1FFu;
+  uint32_t prio = 0u;
+  if (vectactive >= 16u) {
+    uint32_t irqn = vectactive - 16u;
+    /* NVIC_IPR is byte-per-IRQ from 0xE000E400. */
+    prio = *(volatile uint8_t *)(0xE000E400u + irqn);
+  }
+  if (vectactive_out)
+    *vectactive_out = vectactive;
+  return prio;
+}
+
 /* ---------------------------------------------------------------------------
  * Console (log/terminal UART, or semihosting under QEMU)
  * ------------------------------------------------------------------------- */
