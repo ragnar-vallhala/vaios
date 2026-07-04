@@ -25,7 +25,11 @@ set(TEST_INCLUDE_DIRS
 # Kernel source files compiled natively (no arm-none-eabi toolchain)
 # -------------------------------------------------------------------------
 set(KERNEL_SOURCES
-    "${VAIOS_ROOT}/kernel/memory.c"
+    # Heap facade + both index backends. VAIOS_HEAP_ALGO (vaios_config) makes
+    # exactly one backend compile a body, the other an empty TU — no clash.
+    "${VAIOS_ROOT}/kernel/memory/memory.c"
+    "${VAIOS_ROOT}/kernel/memory/seglist.c"
+    "${VAIOS_ROOT}/kernel/memory/tlsf.c"
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/structure.c"

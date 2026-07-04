@@ -139,6 +139,31 @@
 #define HEAP_WATERMARK_THRESHOLD 1024
 #endif
 
+// Heap allocator selection. The kernel ships two allocators behind one public
+// API (memory.h); exactly one is compiled in. Both are boundary-tagged and
+// coalescing, and share the same Heap_Mem_Block header, so they are drop-in
+// interchangeable — pick with VAIOS_HEAP_ALGO in your vaios_app_config.h.
+//
+//   VAIOS_HEAP_SEGLIST  kernel/memory.c      — 8-class segregated fit with
+//                       first-fit-within-class search. O(1) free, but malloc
+//                       walks a class list (worst-case O(n), interrupts off).
+//                       Smallest code; the historical default.
+//
+//   VAIOS_HEAP_TLSF     kernel/memory_tlsf.c — two-level segregated fit with
+//                       bitmap + CLZ lookup. O(1) worst-case malloc AND free,
+//                       bounded fragmentation. Preferred for hard-real-time /
+//                       ISR-adjacent allocation. Costs a small fixed control
+//                       block (~1 KB of .bss) for the bitmaps and list heads.
+#ifndef VAIOS_HEAP_SEGLIST
+#define VAIOS_HEAP_SEGLIST 0
+#endif
+#ifndef VAIOS_HEAP_TLSF
+#define VAIOS_HEAP_TLSF 1
+#endif
+#ifndef VAIOS_HEAP_ALGO
+#define VAIOS_HEAP_ALGO VAIOS_HEAP_SEGLIST
+#endif
+
 // Tasks
 #ifndef MAX_TASK_PRIORITY
 #define MAX_TASK_PRIORITY 7

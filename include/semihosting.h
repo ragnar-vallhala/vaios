@@ -44,6 +44,14 @@ char sh_readc(void);
 void sh_exit(int code);
 uint32_t sh_get_ticks(void);
 
+// High-resolution elapsed-time source (SYS_ELAPSED / SYS_TICKFREQ). Under QEMU
+// this exposes the virtual clock, giving a real per-operation time base where
+// no DWT cycle counter exists — see v_port_hw_cycle_counter_read. sh_elapsed
+// returns elapsed target ticks since start (0 if the host doesn't implement
+// SYS_ELAPSED); sh_tickfreq returns ticks/second (0 if unknown).
+uint64_t sh_elapsed(void);
+uint32_t sh_tickfreq(void);
+
 #ifdef __cplusplus
 }
 #endif
