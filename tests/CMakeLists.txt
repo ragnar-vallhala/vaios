@@ -53,6 +53,7 @@ set(STUB_SOURCES
 # -------------------------------------------------------------------------
 set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"  # counters + suite runners (once)
     "${CMAKE_CURRENT_SOURCE_DIR}/test_memory.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_task_list.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.c"
@@ -119,6 +120,7 @@ set_tests_properties(vaios_unit_tests PROPERTIES
 # -------------------------------------------------------------------------
 add_executable(vaios_utils_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/utils_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"  # counters + suite runners (once)
     "${CMAKE_CURRENT_SOURCE_DIR}/test_utils.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/utils_stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # v_port_hw_* facade

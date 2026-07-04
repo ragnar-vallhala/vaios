@@ -220,20 +220,23 @@ static void test_vfs_dir_iteration(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_vfs_tests(void) {
-  TEST_SUITE_BEGIN("VFS (mutex-serialized wrapper)");
-  TEST_RUN(test_vfs_init_calls_v_fs_init);
-  TEST_RUN(test_vfs_open_passes_args_and_returns);
-  TEST_RUN(test_vfs_close_passes_fd_and_returns);
-  TEST_RUN(test_vfs_read_passes_args_and_returns);
-  TEST_RUN(test_vfs_write_passes_args_and_returns);
-  TEST_RUN(test_vfs_lseek_passes_args_and_returns);
-  TEST_RUN(test_vfs_size_uses_lseek_end);
-  TEST_RUN(test_vfs_mkdir_passes_path_and_returns);
-  TEST_RUN(test_vfs_unlink_passes_path_and_returns);
-  TEST_RUN(test_vfs_sync_passes_fd_and_returns);
-  TEST_RUN(test_vfs_preallocate_passes_args_and_returns);
-  TEST_RUN(test_vfs_stat_passes_and_translates);
-  TEST_RUN(test_vfs_dir_iteration);
-  TEST_SUITE_END();
-}
+static const test_case_t vfs_cases[] = {
+    TEST_CASE(test_vfs_init_calls_v_fs_init),
+    TEST_CASE(test_vfs_open_passes_args_and_returns),
+    TEST_CASE(test_vfs_close_passes_fd_and_returns),
+    TEST_CASE(test_vfs_read_passes_args_and_returns),
+    TEST_CASE(test_vfs_write_passes_args_and_returns),
+    TEST_CASE(test_vfs_lseek_passes_args_and_returns),
+    TEST_CASE(test_vfs_size_uses_lseek_end),
+    TEST_CASE(test_vfs_mkdir_passes_path_and_returns),
+    TEST_CASE(test_vfs_unlink_passes_path_and_returns),
+    TEST_CASE(test_vfs_sync_passes_fd_and_returns),
+    TEST_CASE(test_vfs_preallocate_passes_args_and_returns),
+    TEST_CASE(test_vfs_stat_passes_and_translates),
+    TEST_CASE(test_vfs_dir_iteration),
+};
+const test_suite_t vfs_suite = {
+    .name = "VFS (mutex-serialized wrapper)",
+    .cases = vfs_cases,
+    .count = TEST_COUNT(vfs_cases),
+};

@@ -460,35 +460,38 @@ static void test_handoff_without_drain_desyncs(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_structure_tests(void) {
-  TEST_SUITE_BEGIN("Structure (SPSC FIFO & MPMC Queue)");
-  /* SPSC */
-  TEST_RUN(test_spsc_init_empty);
-  TEST_RUN(test_spsc_write_read_single);
-  TEST_RUN(test_spsc_write_read_multi);
-  TEST_RUN(test_spsc_full_drop_policy);
-  TEST_RUN(test_spsc_perf_peak_and_drops);
-  TEST_RUN(test_spsc_overwrite_counts_drops);
-  TEST_RUN(test_spsc_full_overwrite_policy);
-  TEST_RUN(test_spsc_wrap_around);
-  TEST_RUN(test_spsc_peek_does_not_consume);
-  TEST_RUN(test_spsc_skip_consumes_without_copying);
-  TEST_RUN(test_spsc_reset);
-  TEST_RUN(test_spsc_zero_copy_write_read);
-  /* MPMC */
-  TEST_RUN(test_mpmc_init_empty);
-  TEST_RUN(test_mpmc_try_push_pop_single);
-  TEST_RUN(test_mpmc_try_pop_empty);
-  TEST_RUN(test_mpmc_bulk);
-  TEST_RUN(test_mpmc_full_try_push_fails);
-  TEST_RUN(test_mpmc_blocking_push_pop_immediate);
-  TEST_RUN(test_mpmc_peek_does_not_consume);
-  TEST_RUN(test_mpmc_peek_empty_fails);
-  TEST_RUN(test_mpmc_reset_empties);
-  TEST_RUN(test_mpmc_overwrite_policy);
-  /* Request/response handoff contract (fs_owner rendezvous) */
-  TEST_RUN(test_handoff_pairs_request_with_response);
-  TEST_RUN(test_handoff_drain_recovers_after_abandon);
-  TEST_RUN(test_handoff_without_drain_desyncs);
-  TEST_SUITE_END();
-}
+static const test_case_t structure_cases[] = {
+    /* SPSC */
+    TEST_CASE(test_spsc_init_empty),
+    TEST_CASE(test_spsc_write_read_single),
+    TEST_CASE(test_spsc_write_read_multi),
+    TEST_CASE(test_spsc_full_drop_policy),
+    TEST_CASE(test_spsc_perf_peak_and_drops),
+    TEST_CASE(test_spsc_overwrite_counts_drops),
+    TEST_CASE(test_spsc_full_overwrite_policy),
+    TEST_CASE(test_spsc_wrap_around),
+    TEST_CASE(test_spsc_peek_does_not_consume),
+    TEST_CASE(test_spsc_skip_consumes_without_copying),
+    TEST_CASE(test_spsc_reset),
+    TEST_CASE(test_spsc_zero_copy_write_read),
+    /* MPMC */
+    TEST_CASE(test_mpmc_init_empty),
+    TEST_CASE(test_mpmc_try_push_pop_single),
+    TEST_CASE(test_mpmc_try_pop_empty),
+    TEST_CASE(test_mpmc_bulk),
+    TEST_CASE(test_mpmc_full_try_push_fails),
+    TEST_CASE(test_mpmc_blocking_push_pop_immediate),
+    TEST_CASE(test_mpmc_peek_does_not_consume),
+    TEST_CASE(test_mpmc_peek_empty_fails),
+    TEST_CASE(test_mpmc_reset_empties),
+    TEST_CASE(test_mpmc_overwrite_policy),
+    /* Request/response handoff contract (fs_owner rendezvous) */
+    TEST_CASE(test_handoff_pairs_request_with_response),
+    TEST_CASE(test_handoff_drain_recovers_after_abandon),
+    TEST_CASE(test_handoff_without_drain_desyncs),
+};
+const test_suite_t structure_suite = {
+    .name = "Structure (SPSC FIFO & MPMC Queue)",
+    .cases = structure_cases,
+    .count = TEST_COUNT(structure_cases),
+};

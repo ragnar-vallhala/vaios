@@ -11,8 +11,8 @@
  *
  * Note: terminal.c's _commands array and _cmd_count_idx are file-static
  * with no reset hook, so these tests share state. They are written
- * cumulatively (each registration is counted) and the order in
- * run_terminal_tests() matters.
+ * cumulatively (each registration is counted) and the order of
+ * terminal_suite's cases matters.
  */
 #include "framework.h"
 #include "terminal.h"
@@ -41,9 +41,12 @@ static void test_register_command_returns_1_when_full(void) {
   TEST_ASSERT(saw_full);
 }
 
-void run_terminal_tests(void) {
-  TEST_SUITE_BEGIN("terminal (register_command)");
-  TEST_RUN(test_register_command_succeeds_with_room);
-  TEST_RUN(test_register_command_returns_1_when_full);
-  TEST_SUITE_END();
-}
+static const test_case_t terminal_cases[] = {
+    TEST_CASE(test_register_command_succeeds_with_room),
+    TEST_CASE(test_register_command_returns_1_when_full),
+};
+const test_suite_t terminal_suite = {
+    .name = "terminal (register_command)",
+    .cases = terminal_cases,
+    .count = TEST_COUNT(terminal_cases),
+};

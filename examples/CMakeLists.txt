@@ -64,6 +64,7 @@ elseif(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
   # kernel + port. Curated to suites that need no scheduler / SD / DWT.
   add_executable(main
       unit_tests.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/../tests/framework.c  # counters + suite runners
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_memory.c
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_structure.c
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_utils.c

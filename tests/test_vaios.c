@@ -104,10 +104,13 @@ static void test_v_delay_zero_returns_immediately_no_scheduler(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_vaios_tests(void) {
-  TEST_SUITE_BEGIN("vaios (v_delay)");
-  TEST_RUN(test_v_delay_delegates_to_task_delay_when_scheduler_running);
-  TEST_RUN(test_v_delay_noop_on_idle_task);
-  TEST_RUN(test_v_delay_zero_returns_immediately_no_scheduler);
-  TEST_SUITE_END();
-}
+static const test_case_t vaios_cases[] = {
+    TEST_CASE(test_v_delay_delegates_to_task_delay_when_scheduler_running),
+    TEST_CASE(test_v_delay_noop_on_idle_task),
+    TEST_CASE(test_v_delay_zero_returns_immediately_no_scheduler),
+};
+const test_suite_t vaios_suite = {
+    .name = "vaios (v_delay)",
+    .cases = vaios_cases,
+    .count = TEST_COUNT(vaios_cases),
+};

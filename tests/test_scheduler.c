@@ -119,6 +119,46 @@ static void test_task_create_oom(void) {
   TEST_ASSERT_EQ(id, 0u);
 }
 
+/* task_create rejects any stack_size that is not a power of two (>= 128 B) and
+ * fails loudly — no silent rounding. The size must map 1:1 onto a single
+ * power-of-two MPU region for stack protection, so an off-size request must not
+ * create a task. Rejection happens before any allocation, so no heap leaks and
+ * task_count / the ready lists stay untouched. */
+static void test_task_create_rejects_non_power_of_two(void) {
+  full_reset();
+  scheduler_init();
+
+  uint32_t count_before = task_count;
+  uint32_t heap_before = v_get_heap_allocation_count();
+
+  /* Non-power-of-two, sub-minimum, and zero are all invalid. */
+  static const uint32_t bad[] = {0u, 1u, 64u, 127u, 129u, 200u,
+                                 700u, 1000u, 1536u, 2560u, 6144u};
+  for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    uint32_t id = task_create(dummy_task, NULL, bad[i], 3);
+    TEST_ASSERT_EQ(id, 0u); /* creation refused */
+  }
+
+  /* No side effects from any rejected call. */
+  TEST_ASSERT_EQ(task_count, count_before);
+  TEST_ASSERT_EQ(v_get_heap_allocation_count(), heap_before); /* no leak */
+  TEST_ASSERT_NULL(ready_lists[3]); /* nothing queued at the target priority */
+}
+
+/* Exact powers of two >= 128 B are accepted, including the 128 B minimum. */
+static void test_task_create_accepts_power_of_two(void) {
+  full_reset();
+  scheduler_init();
+
+  static const uint32_t good[] = {128u, 256u, 512u, 1024u, 2048u, 8192u};
+  for (unsigned i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+    /* Priority 1..MAX_PRIORITY; distinct so we can spot-check queuing. */
+    uint32_t prio = 1u + (i % (uint32_t)MAX_PRIORITY);
+    uint32_t id = task_create(dummy_task, NULL, good[i], prio);
+    TEST_ASSERT(id != 0u); /* accepted */
+  }
+}
+
 /* Multiple tasks created at different priorities */
 static void test_task_create_multi_priority(void) {
   full_reset();
@@ -383,26 +423,31 @@ static void test_task_delay_until(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_scheduler_tests(void) {
-  TEST_SUITE_BEGIN("Scheduler");
-  TEST_RUN(test_task_delay_until);
-  TEST_RUN(test_task_naming);
-  TEST_RUN(test_task_snapshot_list_covers_all_once);
-  TEST_RUN(test_scheduler_init_creates_idle);
-  TEST_RUN(test_scheduler_init_current_is_idle);
-  TEST_RUN(test_scheduler_init_bitmap);
-  TEST_RUN(test_task_create_returns_id);
-  TEST_RUN(test_task_create_increments_count);
-  TEST_RUN(test_task_create_in_ready_list);
-  TEST_RUN(test_task_create_oom);
-  TEST_RUN(test_task_create_multi_priority);
-  TEST_RUN(test_wake_up_delayed_tasks);
-  TEST_RUN(test_delayed_add_remove);
-  TEST_RUN(test_context_switch_count_zero);
-  TEST_RUN(test_get_next_task_picks_highest_priority);
-  TEST_RUN(test_get_next_task_round_robin_same_priority);
-  TEST_RUN(test_get_next_task_returns_idle_when_no_tasks);
-  TEST_RUN(test_get_next_task_bumps_switch_count);
-  TEST_RUN(test_set_next_task_updates_current);
-  TEST_SUITE_END();
-}
+static const test_case_t scheduler_cases[] = {
+    TEST_CASE(test_task_delay_until),
+    TEST_CASE(test_task_naming),
+    TEST_CASE(test_task_snapshot_list_covers_all_once),
+    TEST_CASE(test_scheduler_init_creates_idle),
+    TEST_CASE(test_scheduler_init_current_is_idle),
+    TEST_CASE(test_scheduler_init_bitmap),
+    TEST_CASE(test_task_create_returns_id),
+    TEST_CASE(test_task_create_increments_count),
+    TEST_CASE(test_task_create_in_ready_list),
+    TEST_CASE(test_task_create_oom),
+    TEST_CASE(test_task_create_rejects_non_power_of_two),
+    TEST_CASE(test_task_create_accepts_power_of_two),
+    TEST_CASE(test_task_create_multi_priority),
+    TEST_CASE(test_wake_up_delayed_tasks),
+    TEST_CASE(test_delayed_add_remove),
+    TEST_CASE(test_context_switch_count_zero),
+    TEST_CASE(test_get_next_task_picks_highest_priority),
+    TEST_CASE(test_get_next_task_round_robin_same_priority),
+    TEST_CASE(test_get_next_task_returns_idle_when_no_tasks),
+    TEST_CASE(test_get_next_task_bumps_switch_count),
+    TEST_CASE(test_set_next_task_updates_current),
+};
+const test_suite_t scheduler_suite = {
+    .name = "Scheduler",
+    .cases = scheduler_cases,
+    .count = TEST_COUNT(scheduler_cases),
+};
