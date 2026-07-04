@@ -89,6 +89,29 @@ message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MOD
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
                "perf=${VAIOS_MODULE_PERF}")
 
+# Heap allocator selection. The facade kernel/memory/memory.c always compiles;
+# the free-block index backends kernel/memory/seglist.c (segregated fit) and
+# kernel/memory/tlsf.c (TLSF) are both in the build, and VAIOS_HEAP_ALGO decides
+# which one compiles a live body. The primary selector is the config header
+# (VAIOS_HEAP_ALGO in vaios_app_config.h / vaios_config_default.h), so by
+# default this CMake var is empty and defers to it. Set -DVAIOS_HEAP_ALGO=TLSF
+# (or =SEGLIST) to FORCE it from the command line instead — emitted via
+# add_compile_definitions, which (unlike CMAKE_C_FLAGS, overwritten below)
+# survives, and overrides the header.
+set(VAIOS_HEAP_ALGO "" CACHE STRING "Heap allocator: SEGLIST, TLSF, or empty (use vaios_config)")
+set_property(CACHE VAIOS_HEAP_ALGO PROPERTY STRINGS "" SEGLIST TLSF)
+if(VAIOS_HEAP_ALGO STREQUAL "TLSF")
+  add_compile_definitions(VAIOS_HEAP_ALGO=1)
+  message(STATUS "VAIOS heap allocator: TLSF (forced by CMake)")
+elseif(VAIOS_HEAP_ALGO STREQUAL "SEGLIST")
+  add_compile_definitions(VAIOS_HEAP_ALGO=0)
+  message(STATUS "VAIOS heap allocator: segregated-fit (forced by CMake)")
+elseif(VAIOS_HEAP_ALGO STREQUAL "")
+  message(STATUS "VAIOS heap allocator: from vaios_config (default segregated-fit)")
+else()
+  message(FATAL_ERROR "VAIOS_HEAP_ALGO must be SEGLIST, TLSF, or empty (got '${VAIOS_HEAP_ALGO}')")
+endif()
+
 if(VAIOS_CONFIG_FILE)
     add_compile_definitions(VAIOS_CONFIG_FILE="${VAIOS_CONFIG_FILE}")
     message(STATUS "VAIOS: Using custom config file ${VAIOS_CONFIG_FILE}")

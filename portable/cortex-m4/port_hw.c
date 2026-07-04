@@ -200,10 +200,12 @@ uint32_t v_port_hw_cycle_counter_read(void) {
 #ifdef NAVHAL
   return hal_cycle_counter_get();
 #else
-  /* QEMU has no DWT we rely on here; monotonic stub keeps perf accounting
-   * sane without a real cycle source. */
-  static uint32_t fake;
-  fake += 100;
-  return fake;
+  /* No DWT CYCCNT on the QEMU model, but semihosting SYS_ELAPSED exposes the
+   * emulator's virtual clock — a real, high-resolution monotonic source. Map
+   * the DWT read onto it so v_perf_cycles() yields genuine per-operation timing
+   * under QEMU (deterministic when QEMU runs with -icount). Truncate to 32 bits;
+   * v_perf_cycles extends wraps. If the host lacks SYS_ELAPSED, sh_elapsed
+   * returns 0 and perf timing reads zero rather than a fabricated value. */
+  return (uint32_t)sh_elapsed();
 #endif
 }

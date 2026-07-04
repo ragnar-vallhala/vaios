@@ -64,3 +64,20 @@ void sh_exit(int code) {
 uint32_t sh_get_ticks(void) {
   return (uint32_t)semihosting_call(SYS_CLOCK, NULL);
 }
+
+// SYS_ELAPSED writes a 64-bit tick count into a two-word block and returns 0 on
+// success (-1 if the host has no such counter). QEMU backs it with the virtual
+// clock, so this is a genuine high-resolution monotonic time source under
+// emulation — unlike SYS_CLOCK (10 ms granularity) it resolves individual
+// operations.
+uint64_t sh_elapsed(void) {
+  volatile uint32_t words[2] = {0, 0};
+  if (semihosting_call(SYS_ELAPSED, (void *)words) != 0)
+    return 0; // unsupported by this host
+  return ((uint64_t)words[1] << 32) | words[0];
+}
+
+uint32_t sh_tickfreq(void) {
+  int f = semihosting_call(SYS_TICKFREQ, NULL);
+  return (f < 0) ? 0u : (uint32_t)f; // -1 => host doesn't know the frequency
+}
