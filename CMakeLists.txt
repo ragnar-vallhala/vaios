@@ -211,6 +211,18 @@ if(NAVHAL)
     target_compile_options(common PRIVATE -O2)
     set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
   endif()
+
+  # Force-include the Kconfig-generated navhal_target.h into vaios's OWN
+  # translation units, mirroring NavHAL's own `-include` (which is scoped to the
+  # submodule). NavHAL's capability flags (NAVHAL_CONFIG_DRV_*) live only in this
+  # generated header — the hal_config.h/navhal_port_config.h chain is an inert
+  # stub. Capability-gated NavHAL headers wrap their whole body in
+  # `#if NAVHAL_CONFIG_DRV_*` (common/hal_sdio.h today, hal_eth.h next), so
+  # without the flag ambient in vaios sources those APIs compile out and their
+  # symbols vanish from consumers like portable/cortex-m4/port_hw.c. The header
+  # is generated at configure time (before any TU compiles) and its dir is
+  # already on the include path. Applies to portable/kernel/examples added below.
+  add_compile_options(-include ${CMAKE_BINARY_DIR}/navhal_target.h)
 endif()
 
 
