@@ -21,7 +21,15 @@ own run consumes them). See docs/plan/KCONFIG_CONFIG_SYSTEM_PLAN.md.
 import os
 import sys
 import argparse
-import kconfiglib
+
+try:
+    import kconfiglib
+except ImportError:
+    sys.stderr.write(
+        "FATAL: python module 'kconfiglib' is required for vaios config "
+        "generation.\n       Install it with: python3 -m pip install kconfiglib\n"
+    )
+    sys.exit(1)
 
 
 def parse_args():
