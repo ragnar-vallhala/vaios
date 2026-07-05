@@ -148,6 +148,31 @@ config VAIOS_HEAP_ALGO_TLSF
 endchoice
 endmenu
 
+menu "Memory protection (MPU)"
+config VAIOS_MPU_ENABLE
+    bool "Enable the ARMv7-M MPU (hardware memory protection)"
+    default n
+    help
+      Program the MPU (via NavHAL hal_mpu) for hardware memory protection.
+      Requires a target with an MPU (checked at runtime with hal_mpu_present);
+      no effect on QEMU/host builds. Off until the region programming is
+      Renode-validated. See docs/plan/MPU_CACHE_INTEGRATION_PLAN.md.
+config VAIOS_MPU_STACK_GUARD
+    bool "Per-task stack-overflow guard region"
+    depends on VAIOS_MPU_ENABLE
+    default y
+    help
+      Place a no-access MPU region at the low end of each task stack so an
+      overflow traps into MemManage_Handler at the faulting store instead of
+      silently corrupting the neighbouring block. The stack base is aligned to
+      the guard size via v_memalign. Falls back to the software watermark on
+      MPU-less targets.
+config VAIOS_MPU_GUARD_SIZE
+    int "Stack guard region size (bytes, power of two >= 32)"
+    depends on VAIOS_MPU_STACK_GUARD
+    default 32
+endmenu
+
 menu "IPC"
 config MAX_SEMAPHORE_COUNT
     hex "Maximum counting-semaphore value"
