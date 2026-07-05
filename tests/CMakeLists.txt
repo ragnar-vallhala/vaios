@@ -30,18 +30,24 @@ set(TEST_INCLUDE_DIRS
 # -------------------------------------------------------------------------
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_vaios_autoconf "${CMAKE_BINARY_DIR}/vaios_autoconf.h")
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/.config" AND EXISTS "${VAIOS_ROOT}/defconfig")
-  configure_file("${VAIOS_ROOT}/defconfig" "${CMAKE_BINARY_DIR}/.config" COPYONLY)
+# Settable like the main build (-DVAIOS_CONFIG=<path>); defaults build-local.
+set(VAIOS_CONFIG "${CMAKE_BINARY_DIR}/.config" CACHE FILEPATH
+    "Kconfig .config the host-test build reads")
+set(VAIOS_DEFCONFIG "${VAIOS_ROOT}/defconfig" CACHE FILEPATH
+    "Kconfig defconfig used to seed VAIOS_CONFIG")
+if(NOT EXISTS "${VAIOS_CONFIG}" AND EXISTS "${VAIOS_DEFCONFIG}")
+  configure_file("${VAIOS_DEFCONFIG}" "${VAIOS_CONFIG}" COPYONLY)
 endif()
 execute_process(
   COMMAND ${Python3_EXECUTABLE} "${VAIOS_ROOT}/tools/kconfig.py"
           --kconfig "${VAIOS_ROOT}/Kconfig"
-          --config "${CMAKE_BINARY_DIR}/.config"
+          --config "${VAIOS_CONFIG}"
           --header-out "${_vaios_autoconf}"
   RESULT_VARIABLE _vaios_kconfig_rc)
 if(NOT _vaios_kconfig_rc EQUAL 0)
   message(FATAL_ERROR "vaios Kconfig generation failed (rc=${_vaios_kconfig_rc})")
 endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VAIOS_CONFIG}")
 add_compile_options("SHELL:-include ${_vaios_autoconf}")
 add_compile_options("SHELL:-include ${VAIOS_ROOT}/include/vaios_config_derived.h")
 

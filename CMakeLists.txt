@@ -20,7 +20,16 @@ else()
     add_compile_definitions(SUBMODULE)
 endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_COMPILE_COMMANDS_OUTPUT "${CMAKE_SOURCE_DIR}/compile_commands.json")
+# Mirror the generated compile_commands.json to the repo root on every build, so
+# clangd / editors (which look at the source root) always see the current DB.
+# ALL runs it each `cmake --build`; copy_if_different is a no-op when unchanged.
+# (copy_compile_commands is NavHAL's own target — use a distinct name.)
+add_custom_target(vaios_copy_compile_commands ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_BINARY_DIR}/compile_commands.json"
+          "${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json"
+  BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json"
+  COMMENT "Mirroring compile_commands.json to repo root")
 
 # Defaults
 set(CMAKE_SYSTEM_PROCESSOR
@@ -126,7 +135,15 @@ endif()
 # ---------------------------------------------------------------------------
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(VAIOS_AUTOCONF "${CMAKE_BINARY_DIR}/vaios_autoconf.h")
-set(_vaios_dotconfig "${CMAKE_BINARY_DIR}/.config")
+# The .config the build reads/generates from — settable so the build is not hard
+# bound to the build dir. Default is a build-local artifact (gitignored);
+# override with -DVAIOS_CONFIG=<path> to point at a shared/checked-in config.
+# The seed-source defconfig is likewise overridable.
+set(VAIOS_CONFIG "${CMAKE_BINARY_DIR}/.config" CACHE FILEPATH
+    "Kconfig .config the build reads (generated build artifact by default)")
+set(VAIOS_DEFCONFIG "${CMAKE_CURRENT_SOURCE_DIR}/defconfig" CACHE FILEPATH
+    "Kconfig defconfig used to seed VAIOS_CONFIG on first configure")
+set(_vaios_dotconfig "${VAIOS_CONFIG}")
 # Env the generator needs to pull NavHAL's tree in: NAVHAL_KCONFIG names the file
 # to osource (unset -> standalone, sources nothing); srctree roots NavHAL's own
 # `source "src/..."` lines. Standalone builds set neither.
@@ -140,8 +157,8 @@ endif()
 # set so the single file carries both symbol worlds. menuconfig edits persist.
 if(NOT EXISTS "${_vaios_dotconfig}")
   set(_seed "")
-  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/defconfig")
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/defconfig" _d)
+  if(EXISTS "${VAIOS_DEFCONFIG}")
+    file(READ "${VAIOS_DEFCONFIG}" _d)
     string(APPEND _seed "${_d}\n")
   endif()
   if(NAVHAL AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
@@ -161,6 +178,11 @@ if(NOT _vaios_kconfig_rc EQUAL 0)
   message(FATAL_ERROR "vaios Kconfig generation failed (rc=${_vaios_kconfig_rc})")
 endif()
 include("${CMAKE_BINARY_DIR}/vaios_config.cmake")
+
+# Re-run configure (hence regenerate the headers) when the .config changes, so
+# editing it or running the menuconfig target takes effect on the next cmake
+# without deleting the build dir.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_vaios_dotconfig}")
 
 # Interactive configuration: `cmake --build <dir> --target menuconfig` edits the
 # unified build .config (vaios symbols + NavHAL's when NAVHAL=ON). Re-run cmake
@@ -245,17 +267,25 @@ if(NAVHAL)
   # See nav/docs/vaios-as-library.md.
   if(NOT TARGET hal)
     set(USE_FPU ${VAIOS_FPU} CACHE BOOL "Pass FPU setting to NavHAL" FORCE)
-    # Single source of truth: NavHAL reads extern/NavHAL/.config, and we stage
-    # vaios's UNIFIED .config there (it was seeded from vaios/defconfig +
-    # navhal.config above and carries both symbol sets). So one file — editable
-    # via the menuconfig target — drives both vaios_autoconf.h and
-    # navhal_target.h. NavHAL's kconfig run reads only its own symbols
-    # (load_config ignores the vaios ones). The file is gitignored, so NavHAL
-    # stays an unmodified submodule. Editing it re-triggers configure.
-    configure_file(
-      ${_vaios_dotconfig}
-      ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config
-      COPYONLY)
+    # Stage the config NavHAL reads (extern/NavHAL/.config): the unified vaios
+    # .config (its CONFIG_VAIOS_* are ignored by NavHAL's load_config) with
+    # navhal.config appended so NavHAL's driver set is ALWAYS present and
+    # authoritative — appended last, its values win. This is the robustness
+    # fix: a build .config first seeded WITHOUT -DNAVHAL=ON has no CONFIG_DRV_*,
+    # and copying it verbatim silently compiled every NavHAL driver out (SDIO,
+    # MPU, ...). navhal.config remains the source of truth for the HAL driver
+    # set; the unified menuconfig still shows both trees. The file is gitignored,
+    # so NavHAL stays an unmodified submodule; rewriting it re-triggers configure.
+    set(_nav_staged "")
+    if(EXISTS "${_vaios_dotconfig}")
+      file(READ "${_vaios_dotconfig}" _vc)
+      string(APPEND _nav_staged "${_vc}\n")
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
+      file(READ "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config" _nc)
+      string(APPEND _nav_staged "${_nc}\n")
+    endif()
+    file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config" "${_nav_staged}")
     add_subdirectory(extern/NavHAL)
     # NavHAL hardcodes -O0 in its own CMAKE_C_FLAGS. Rather than editing the
     # submodule, override per target from here — gcc honours the last -O flag,
