@@ -91,6 +91,14 @@ void v_port_hw_sched_irq_init(void) {
 #endif
 }
 
+void v_port_hw_cpu_idle(void) {
+#ifdef NAVHAL
+  /* WFI until the next interrupt; NavHAL owns the barriers/event handling. */
+  hal_cpu_idle();
+#endif
+  /* No-HAL target: fall through — the idle loop stays a busy-spin. */
+}
+
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
   /* ICSR.VECTACTIVE (bits [8:0]) is the active exception number: 0 = thread
    * mode, 1..15 = system handlers, >=16 = external IRQ (IRQn = VECTACTIVE-16).

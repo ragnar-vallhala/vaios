@@ -20,6 +20,7 @@ void v_port_hw_clock_init(uint8_t internal_clock_setup) {
 void v_port_hw_fpu_enable(void) {}
 void v_port_hw_systick_init(uint32_t period_us) { (void)period_us; }
 void v_port_hw_sched_irq_init(void) {}
+void v_port_hw_cpu_idle(void) {} /* host idle loop just spins */
 
 /* FromISR priority-assert seam. Tests may set these to simulate the active
  * exception; the default (VECTACTIVE 0 = thread mode) is always "safe". */
