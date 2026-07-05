@@ -181,7 +181,14 @@ void *v_memalign(size_t align, size_t size) {
     // until the leading remainder can hold a valid free block (header already
     // present as blk's, so just its own min payload).
     uint8_t *h = (uint8_t *)a - sizeof(Heap_Mem_Block);
-    while ((uint32_t)(h - payload0) < VHEAP_MIN_PAYLOAD) {
+    // Bump by `align` until the leading remainder [payload0, h) can hold a valid
+    // free block (>= VHEAP_MIN_PAYLOAD). Compare as pointers, NOT as
+    // (uint32_t)(h - payload0): when the first aligned header lands below
+    // payload0 that subtraction underflows to a huge unsigned value, the test
+    // passes spuriously, and `aligned` gets planted on top of blk's own header
+    // -> heap corruption (hits whenever blk sits at align/4 + payload offset,
+    // e.g. blk ≡ 8 mod 32 for a 32-byte guard).
+    while (h < payload0 + VHEAP_MIN_PAYLOAD) {
       a += align;
       h = (uint8_t *)a - sizeof(Heap_Mem_Block);
     }

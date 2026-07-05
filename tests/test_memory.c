@@ -282,6 +282,40 @@ static void test_memalign_leading_slack_reusable(void) {
   v_free(p);
 }
 
+/* Regression for the unsigned-underflow in v_memalign's leading-remainder loop.
+ * The bump condition was (uint32_t)(h - payload0) < VHEAP_MIN_PAYLOAD; when the
+ * first aligned header `h` fell below payload0 the subtraction wrapped to a huge
+ * value, the loop failed to bump `a`, and the aligned block was planted on top
+ * of the source block's own header — corrupting the heap. It fired for ~1 in 4
+ * source-block residues (e.g. blk ≡ 8 mod 32 for a 32-byte guard), which is why
+ * the host suite passed but MPU-guarded task stacks tripped "Invalid free or
+ * corrupted block" on target. Sweep every 8-byte residue via a filler alloc;
+ * each carve must be aligned and leave the heap exactly as it was. */
+static void test_memalign_leading_underflow_regression(void) {
+  for (size_t pad = 0; pad <= 56; pad += 8) {
+    reset();
+    void *filler = pad ? v_malloc(pad) : NULL;
+    if (pad)
+      TEST_ASSERT_NOT_NULL(filler);
+    uint32_t count0 = v_get_heap_allocation_count();
+    uint32_t used0 = v_get_heap_allocation_size();
+
+    void *p = v_memalign(32, 200);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQ((uintptr_t)p & 31u, (uintptr_t)0);
+    for (int i = 0; i < 200; i++) /* touch the whole payload */
+      ((volatile uint8_t *)p)[i] = 0xAB;
+    v_free(p);
+
+    /* Heap fully restored: the aligned block + leading slack coalesced back.
+     * Corruption would desync the counters or make v_free reject the block. */
+    TEST_ASSERT_EQ(v_get_heap_allocation_count(), count0);
+    TEST_ASSERT_EQ(v_get_heap_allocation_size(), used0);
+    if (filler)
+      v_free(filler);
+  }
+}
+
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
@@ -299,6 +333,7 @@ static const test_case_t memory_cases[] = {
     TEST_CASE(test_memalign_small_align_falls_back),
     TEST_CASE(test_memalign_no_leak),
     TEST_CASE(test_memalign_leading_slack_reusable),
+    TEST_CASE(test_memalign_leading_underflow_regression),
 };
 const test_suite_t memory_suite = {
     .name = "Memory Allocator",
