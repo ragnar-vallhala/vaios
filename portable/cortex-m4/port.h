@@ -78,6 +78,16 @@ void v_port_disable_interrupts(void);
 void v_port_halt(void);
 void v_port_trigger_pendsv(void);
 
+// --- MPU (memory protection) — implemented in port_hw.c, no-ops without an MPU
+// or when VAIOS_MPU_ENABLE is off. See docs/plan/MPU_CACHE_INTEGRATION_PLAN.md.
+// Enable the MPU (background region privileged) + MemManage fault, once at init.
+void v_port_mpu_init(void);
+// Pre-encode a no-access stack-guard region of `size` bytes at `base` into the
+// two-word RBAR/RASR pair `out`. Returns 0 on success, non-zero if unavailable.
+int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]);
+// Apply a pre-encoded region pair to the hardware (context-switch fast path).
+void v_port_mpu_apply(const uint32_t enc[2], uint32_t count);
+
 // CPU hint for a short busy-wait spin (keeps the arch `nop` out of the kernel).
 __attribute__((always_inline)) static inline void v_port_cpu_relax(void) {
   __asm volatile("nop" ::: "memory");

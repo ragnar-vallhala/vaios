@@ -195,6 +195,69 @@ int v_port_hw_sdio_card_init(void) {
 }
 
 /* ---------------------------------------------------------------------------
+ * MPU — Phase 1 per-task stack-overflow guard (docs/plan/MPU_CACHE_INTEGRATION_
+ * PLAN.md). Backed by NavHAL hal_mpu; no-op stubs without an MPU / when
+ * VAIOS_MPU_ENABLE is off. Runtime hal_mpu_present() keeps QEMU/M4-less targets
+ * safe. Region 0 holds the guard; MPU is enabled with PRIVDEFENA so all other
+ * memory keeps the default map and only the guard span faults.
+ * ------------------------------------------------------------------------- */
+#define SCB_SHCSR (*(volatile uint32_t *)0xE000ED24)
+#define SHCSR_MEMFAULTENA (1u << 16)
+#define VAIOS_MPU_GUARD_REGION 0u
+
+#if defined(NAVHAL) && VAIOS_MPU_ENABLE
+/* hal_mpu_size_t encodes SIZE as log2(bytes) - 1. */
+static inline hal_mpu_size_t v_mpu_size_enum(uint32_t bytes) {
+  return (hal_mpu_size_t)(__builtin_ctz(bytes) - 1);
+}
+
+void v_port_mpu_init(void) {
+  if (!hal_mpu_present())
+    return;
+  SCB_SHCSR |= SHCSR_MEMFAULTENA; /* MPU violations trap to MemManage_Handler */
+  hal_mpu_enable(true);           /* PRIVDEFENA: default map for uncovered addrs */
+}
+
+int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
+  if (!hal_mpu_present())
+    return -1;
+  hal_mpu_region_t r = {
+      .base = (uint32_t)base,
+      .size = v_mpu_size_enum(size),
+      .ap = HAL_MPU_AP_NONE, /* no access in either mode -> fault on overflow */
+      .mem = HAL_MPU_MEM_NORMAL_WB,
+      .executable = false,
+      .shareable = false,
+      .srd_mask = 0,
+  };
+  hal_mpu_encoded_t enc;
+  if (hal_mpu_encode(VAIOS_MPU_GUARD_REGION, &r, &enc) != HAL_OK)
+    return -1;
+  out[0] = enc.rbar;
+  out[1] = enc.rasr;
+  return 0;
+}
+
+void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
+  if (count == 0 || !hal_mpu_present())
+    return;
+  hal_mpu_apply((const hal_mpu_encoded_t *)enc, count);
+}
+#else
+void v_port_mpu_init(void) {}
+int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
+  (void)base;
+  (void)size;
+  (void)out;
+  return -1;
+}
+void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
+  (void)enc;
+  (void)count;
+}
+#endif
+
+/* ---------------------------------------------------------------------------
  * Cycle counter (DWT CYCCNT) — perf module backend
  * ------------------------------------------------------------------------- */
 

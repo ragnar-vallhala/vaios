@@ -202,7 +202,14 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->task_id = ++task_count;
   task->name = name ? name : "";
   task->stack_size = stack_size;
+#if VAIOS_MPU_STACK_GUARD
+  // The MPU stack-guard region sits at the stack base, so the base must land on
+  // the guard's size boundary. v_memalign gives that; the no-access guard region
+  // is encoded in init_task_stack.
+  task->mem_block = (uint32_t *)v_memalign(VAIOS_MPU_GUARD_SIZE, stack_size);
+#else
   task->mem_block = (uint32_t *)v_malloc(stack_size);
+#endif
   if (!task->mem_block) {
     v_panic(__FILE__, __LINE__, "failed to allocate stack for task %u",
             task->task_id);

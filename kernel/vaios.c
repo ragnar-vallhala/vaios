@@ -24,6 +24,11 @@ void v_init(vaios_init_config_t *cfg) {
   v_port_hw_systick_init(SYSTICK_PERIOD);
   v_port_hw_sched_irq_init();
 
+  /* Enable the MPU + MemManage fault once the core is up, so per-task stack
+   * guards take effect on the first context switch. No-op without an MPU or
+   * when VAIOS_MPU_ENABLE is off. */
+  v_port_mpu_init();
+
 #if UART_LOGGING_ENABLE == 1
   v_port_hw_console_init(UART_BAUDRATE, dma_tx_complete_callback);
   v_log(LOG_INFO, "[VAIOS INIT] SYSTICK started with time period of %d μs",

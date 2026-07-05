@@ -59,6 +59,13 @@ typedef struct Task_Control_Block {
 #if VAIOS_MODULE_PERF
   v_perf_task_t perf; // Per-task perf counters (see perf.h)
 #endif
+#if VAIOS_MPU_STACK_GUARD
+  // Pre-encoded MPU stack-guard region (RBAR/RASR word pair), applied on
+  // context switch. Opaque here (mirrors NavHAL's hal_mpu_encoded_t) so task.h
+  // stays architecture-independent. Valid only when mpu_guard_valid != 0.
+  uint32_t mpu_guard[2];
+  uint8_t mpu_guard_valid;
+#endif
   uint32_t magic; // Sanity check (must be TCB_MAGIC)
 } TCB;
 
