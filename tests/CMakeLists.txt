@@ -22,6 +22,30 @@ set(TEST_INCLUDE_DIRS
 )
 
 # -------------------------------------------------------------------------
+# Kconfig-generated config. The host build has no NavHAL and no static default
+# header any more, so it configures from the same Kconfig (standalone: NavHAL is
+# not sourced) and force-includes the generated scalars + derived layer into
+# every TU below. Binary-specific overrides (VFS, watermarks, semaphore size)
+# stay as per-target -D and still win — precedence is -D > Kconfig > derived.
+# -------------------------------------------------------------------------
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(_vaios_autoconf "${CMAKE_BINARY_DIR}/vaios_autoconf.h")
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/.config" AND EXISTS "${VAIOS_ROOT}/defconfig")
+  configure_file("${VAIOS_ROOT}/defconfig" "${CMAKE_BINARY_DIR}/.config" COPYONLY)
+endif()
+execute_process(
+  COMMAND ${Python3_EXECUTABLE} "${VAIOS_ROOT}/tools/kconfig.py"
+          --kconfig "${VAIOS_ROOT}/Kconfig"
+          --config "${CMAKE_BINARY_DIR}/.config"
+          --header-out "${_vaios_autoconf}"
+  RESULT_VARIABLE _vaios_kconfig_rc)
+if(NOT _vaios_kconfig_rc EQUAL 0)
+  message(FATAL_ERROR "vaios Kconfig generation failed (rc=${_vaios_kconfig_rc})")
+endif()
+add_compile_options("SHELL:-include ${_vaios_autoconf}")
+add_compile_options("SHELL:-include ${VAIOS_ROOT}/include/vaios_config_derived.h")
+
+# -------------------------------------------------------------------------
 # Kernel source files compiled natively (no arm-none-eabi toolchain)
 # -------------------------------------------------------------------------
 set(KERNEL_SOURCES
@@ -53,6 +77,7 @@ set(STUB_SOURCES
 # -------------------------------------------------------------------------
 set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"  # counters + suite runners (once)
     "${CMAKE_CURRENT_SOURCE_DIR}/test_memory.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_task_list.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.c"
@@ -119,6 +144,7 @@ set_tests_properties(vaios_unit_tests PROPERTIES
 # -------------------------------------------------------------------------
 add_executable(vaios_utils_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/utils_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"  # counters + suite runners (once)
     "${CMAKE_CURRENT_SOURCE_DIR}/test_utils.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/utils_stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # v_port_hw_* facade

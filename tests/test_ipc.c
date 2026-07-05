@@ -492,40 +492,43 @@ static void test_isr_prio_urgent_irq_is_unsafe(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_ipc_tests(void) {
-  TEST_SUITE_BEGIN("IPC (Semaphores & Mutexes)");
-  /* FromISR priority assert predicate */
-  TEST_RUN(test_isr_prio_thread_mode_is_safe);
-  TEST_RUN(test_isr_prio_maskable_irq_is_safe);
-  TEST_RUN(test_isr_prio_urgent_irq_is_unsafe);
-  /* Binary semaphore */
-  TEST_RUN(test_binary_sem_create);
-  TEST_RUN(test_binary_sem_take_empty);
-  TEST_RUN(test_binary_sem_give_take);
-  TEST_RUN(test_binary_sem_no_overflow);
-  TEST_RUN(test_binary_sem_null_handle);
-  TEST_RUN(test_binary_sem_static);
-  TEST_RUN(test_binary_sem_static_null_buf);
-  TEST_RUN(test_sem_give_from_isr);
-  /* Counting semaphore */
-  TEST_RUN(test_counting_sem_invalid_init);
-  TEST_RUN(test_counting_sem_limit);
-  TEST_RUN(test_counting_sem_take);
-  TEST_RUN(test_counting_sem_static);
-  /* Mutex */
-  TEST_RUN(test_mutex_create);
-  TEST_RUN(test_mutex_lock_succeeds);
-  TEST_RUN(test_mutex_double_lock_fails);
-  TEST_RUN(test_mutex_unlock_relocks);
-  TEST_RUN(test_mutex_null_handle);
-  TEST_RUN(test_mutex_static);
-  /* Phase 2: campaign bug-fix regressions */
-  TEST_RUN(test_wait_queue_independent_of_blocked_list);
-  TEST_RUN(test_sema_timeout_ejects_multiple_waiters);
-  TEST_RUN(test_mutex_recursive_lock_unlock);
-  /* Phase 3: new IPC behaviour */
-  TEST_RUN(test_wait_queue_priority_order);
-  TEST_RUN(test_pi_transitive_chain);
-  TEST_RUN(test_pi_unlock_keeps_priority_floor);
-  TEST_SUITE_END();
-}
+static const test_case_t ipc_cases[] = {
+    /* FromISR priority assert predicate */
+    TEST_CASE(test_isr_prio_thread_mode_is_safe),
+    TEST_CASE(test_isr_prio_maskable_irq_is_safe),
+    TEST_CASE(test_isr_prio_urgent_irq_is_unsafe),
+    /* Binary semaphore */
+    TEST_CASE(test_binary_sem_create),
+    TEST_CASE(test_binary_sem_take_empty),
+    TEST_CASE(test_binary_sem_give_take),
+    TEST_CASE(test_binary_sem_no_overflow),
+    TEST_CASE(test_binary_sem_null_handle),
+    TEST_CASE(test_binary_sem_static),
+    TEST_CASE(test_binary_sem_static_null_buf),
+    TEST_CASE(test_sem_give_from_isr),
+    /* Counting semaphore */
+    TEST_CASE(test_counting_sem_invalid_init),
+    TEST_CASE(test_counting_sem_limit),
+    TEST_CASE(test_counting_sem_take),
+    TEST_CASE(test_counting_sem_static),
+    /* Mutex */
+    TEST_CASE(test_mutex_create),
+    TEST_CASE(test_mutex_lock_succeeds),
+    TEST_CASE(test_mutex_double_lock_fails),
+    TEST_CASE(test_mutex_unlock_relocks),
+    TEST_CASE(test_mutex_null_handle),
+    TEST_CASE(test_mutex_static),
+    /* Phase 2: campaign bug-fix regressions */
+    TEST_CASE(test_wait_queue_independent_of_blocked_list),
+    TEST_CASE(test_sema_timeout_ejects_multiple_waiters),
+    TEST_CASE(test_mutex_recursive_lock_unlock),
+    /* Phase 3: new IPC behaviour */
+    TEST_CASE(test_wait_queue_priority_order),
+    TEST_CASE(test_pi_transitive_chain),
+    TEST_CASE(test_pi_unlock_keeps_priority_floor),
+};
+const test_suite_t ipc_suite = {
+    .name = "IPC (Semaphores & Mutexes)",
+    .cases = ipc_cases,
+    .count = TEST_COUNT(ipc_cases),
+};

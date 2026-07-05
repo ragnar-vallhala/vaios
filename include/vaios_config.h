@@ -1,21 +1,18 @@
 #ifndef VAIOS_CONFIG_H
 #define VAIOS_CONFIG_H
-
-#ifdef VAIOS_CONFIG_FILE
-#include VAIOS_CONFIG_FILE
-#else
-// If not defined, look for a file named "vaios_config.h" by default
-// This can be provided by the user in their include path.
-// However, since we include "vaios_config_default.h" anyway,
-// the user can simply provide a custom vaios_config.h that defines
-// what it needs and then the rest will be filled by defaults.
-
-#if __has_include("vaios_app_config.h")
-#include "vaios_app_config.h"
-#endif
-
-#endif
-
-#include "vaios_config_default.h"
-
+/*
+ * vaios configuration aggregator.
+ *
+ * Scalar config macros are Kconfig-generated (vaios_autoconf.h); the composite
+ * ones (MAX_SYSCALL_INTERRUPT_PRIORITY, the VAIOS_HEAP_* selector, PANIC) are
+ * derived in vaios_config_derived.h. The build force-includes both ahead of
+ * every vaios translation unit (see CMakeLists.txt / tools/kconfig.py), so most
+ * sources need nothing here. Re-including the derived layer keeps a source that
+ * only pulls in "vaios_config.h" self-contained even if the force-include is
+ * ever absent.
+ *
+ * There is no static default header any more — run the menuconfig target (or
+ * edit the build-directory .config) to change values.
+ */
+#include "vaios_config_derived.h"
 #endif // !VAIOS_CONFIG_H

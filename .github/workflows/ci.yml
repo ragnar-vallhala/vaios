@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [dev, stable]
   pull_request:
 
 jobs:
@@ -18,7 +18,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-              gcc cmake make
+              gcc cmake make python3 python3-pip
+          # kconfiglib drives the Kconfig config generation the host build now
+          # runs at configure time (tools/kconfig.py).
+          python3 -m pip install --break-system-packages kconfiglib
 
       - name: Run host test suite
         run: bash tools/run_tests.sh

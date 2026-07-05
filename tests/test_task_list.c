@@ -267,25 +267,28 @@ static void test_delayed_add(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_task_list_tests(void) {
-  TEST_SUITE_BEGIN("Task List Management");
-  TEST_RUN(test_enqueue_single);
-  TEST_RUN(test_enqueue_two);
-  TEST_RUN(test_enqueue_null);
-  TEST_RUN(test_peek);
-  TEST_RUN(test_dequeue);
-  TEST_RUN(test_dequeue_empty);
-  TEST_RUN(test_remove_head);
-  TEST_RUN(test_remove_tail);
-  TEST_RUN(test_remove_middle);
-  TEST_RUN(test_ready_add_single);
-  TEST_RUN(test_ready_remove_clears_bitmap);
-  TEST_RUN(test_get_highest_priority);
-  TEST_RUN(test_get_highest_empty);
-  TEST_RUN(test_ready_fifo_same_priority);
-  TEST_RUN(test_blocked_add);
-  TEST_RUN(test_task_unblock);
-  TEST_RUN(test_task_unblock_noop);
-  TEST_RUN(test_delayed_add);
-  TEST_SUITE_END();
-}
+static const test_case_t task_list_cases[] = {
+    TEST_CASE(test_enqueue_single),
+    TEST_CASE(test_enqueue_two),
+    TEST_CASE(test_enqueue_null),
+    TEST_CASE(test_peek),
+    TEST_CASE(test_dequeue),
+    TEST_CASE(test_dequeue_empty),
+    TEST_CASE(test_remove_head),
+    TEST_CASE(test_remove_tail),
+    TEST_CASE(test_remove_middle),
+    TEST_CASE(test_ready_add_single),
+    TEST_CASE(test_ready_remove_clears_bitmap),
+    TEST_CASE(test_get_highest_priority),
+    TEST_CASE(test_get_highest_empty),
+    TEST_CASE(test_ready_fifo_same_priority),
+    TEST_CASE(test_blocked_add),
+    TEST_CASE(test_task_unblock),
+    TEST_CASE(test_task_unblock_noop),
+    TEST_CASE(test_delayed_add),
+};
+const test_suite_t task_list_suite = {
+    .name = "Task List Management",
+    .cases = task_list_cases,
+    .count = TEST_COUNT(task_list_cases),
+};

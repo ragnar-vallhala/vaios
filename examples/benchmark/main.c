@@ -219,7 +219,7 @@ int main(void) {
   }
 
   /* 5. Spawn runner at high priority so it always gets cpu first */
-  task_create(benchmark_runner, NULL, 6144, MAX_PRIORITY);
+  task_create(benchmark_runner, NULL, 8192, MAX_PRIORITY);
 
 #ifdef NAVHAL
   /* PWM heartbeat on PB10: breathes 0→100% duty cycle every ~4 s.

@@ -218,22 +218,18 @@ static void test_free_invalid_ptr(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_memory_tests(void) {
-  TEST_SUITE_BEGIN("Memory Allocator");
-  TEST_RUN(test_init_counters);
-  TEST_RUN(test_alloc_basic);
-  TEST_RUN(test_alloc_zero);
-  TEST_RUN(test_alloc_no_init);
-  TEST_RUN(test_alloc_alignment);
-  TEST_RUN(test_alloc_multiple);
-  TEST_RUN(test_alloc_counter);
-  TEST_RUN(test_free_counter);
-  TEST_RUN(test_free_null);
-  TEST_RUN(test_alloc_after_free);
-  TEST_RUN(test_block_splitting);
-  TEST_RUN(test_merge_next);
-  TEST_RUN(test_merge_prev);
-  TEST_RUN(test_heap_exhaustion);
-  TEST_RUN(test_free_invalid_ptr);
-  TEST_SUITE_END();
-}
+static const test_case_t memory_cases[] = {
+    TEST_CASE(test_init_counters),   TEST_CASE(test_alloc_basic),
+    TEST_CASE(test_alloc_zero),      TEST_CASE(test_alloc_no_init),
+    TEST_CASE(test_alloc_alignment), TEST_CASE(test_alloc_multiple),
+    TEST_CASE(test_alloc_counter),   TEST_CASE(test_free_counter),
+    TEST_CASE(test_free_null),       TEST_CASE(test_alloc_after_free),
+    TEST_CASE(test_block_splitting), TEST_CASE(test_merge_next),
+    TEST_CASE(test_merge_prev),      TEST_CASE(test_heap_exhaustion),
+    TEST_CASE(test_free_invalid_ptr),
+};
+const test_suite_t memory_suite = {
+    .name = "Memory Allocator",
+    .cases = memory_cases,
+    .count = TEST_COUNT(memory_cases),
+};

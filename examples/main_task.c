@@ -35,8 +35,8 @@ int main(void) {
   v_heap_memory_init();
   scheduler_init();
   count = 0;
-  uint32_t t1 = task_create(task1_func, NULL, 700, 1);
-  uint32_t t2 = task_create(task1_func, NULL, 700, 1);
+  uint32_t t1 = task_create(task1_func, NULL, 1024, 1);
+  uint32_t t2 = task_create(task1_func, NULL, 1024, 1);
 
   // uint32_t t3 = task_create(task3_func, NULL, 512, 2);
   // uint32_t t4 = task_create(task4_func, NULL, 512, 2);

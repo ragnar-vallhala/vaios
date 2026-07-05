@@ -134,6 +134,39 @@ void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t exc_return,
   hardfault_handler_c(&frame, stack_pointer, exc_return);
 }
 
+/* ---------------------------------------------------------------------------
+ * System-fault vectors — OS-owned placeholders.
+ *
+ * NavHAL's startup.s names these vectors and, under SUBMODULE, cedes them to
+ * the OS: what a fault *means* (kill the task, panic, recover) is kernel policy,
+ * not the HAL's to decide. These are minimal shims to satisfy the vector table
+ * for now — behaviour is TBD. In particular MemManage_Handler becomes the MPU
+ * stack-overflow trap in the MPU integration (see
+ * docs/plan/MPU_CACHE_INTEGRATION_PLAN.md), and BusFault/UsageFault will route
+ * into the CFSR + v_panic diagnostics like HardFault. Until then each traps the
+ * core so a fault is caught rather than silently continued.
+ * ------------------------------------------------------------------------- */
+void NMI_Handler(void) {
+  for (;;) {
+  }
+}
+void MemManage_Handler(void) {
+  for (;;) {
+  }
+}
+void BusFault_Handler(void) {
+  for (;;) {
+  }
+}
+void UsageFault_Handler(void) {
+  for (;;) {
+  }
+}
+void DebugMon_Handler(void) {
+  for (;;) {
+  }
+}
+
 #define SCB_ICSR (*(volatile uint32_t *)0xE000ED04)
 #define PENDSVSET (1U << 28)
 void task_yield(void) {

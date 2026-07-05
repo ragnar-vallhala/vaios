@@ -132,26 +132,29 @@ static void test_atof_leading_whitespace(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_utils_tests(void) {
-  TEST_SUITE_BEGIN("utils (print_fmt_buf + v_atof)");
-  /* print_fmt_buf */
-  TEST_RUN(test_pf_plain_string);
-  TEST_RUN(test_pf_percent_d_positive);
-  TEST_RUN(test_pf_percent_d_negative);
-  TEST_RUN(test_pf_percent_d_zero);
-  TEST_RUN(test_pf_percent_u);
-  TEST_RUN(test_pf_percent_x_lower);
-  TEST_RUN(test_pf_percent_s);
-  TEST_RUN(test_pf_percent_c);
-  TEST_RUN(test_pf_double_percent);
-  TEST_RUN(test_pf_multiple_args);
-  TEST_RUN(test_pf_truncation_respects_buf_size);
-  TEST_RUN(test_pf_empty_format);
-  /* v_atof */
-  TEST_RUN(test_atof_integer);
-  TEST_RUN(test_atof_decimal);
-  TEST_RUN(test_atof_negative);
-  TEST_RUN(test_atof_zero);
-  TEST_RUN(test_atof_leading_whitespace);
-  TEST_SUITE_END();
-}
+static const test_case_t utils_cases[] = {
+    /* print_fmt_buf */
+    TEST_CASE(test_pf_plain_string),
+    TEST_CASE(test_pf_percent_d_positive),
+    TEST_CASE(test_pf_percent_d_negative),
+    TEST_CASE(test_pf_percent_d_zero),
+    TEST_CASE(test_pf_percent_u),
+    TEST_CASE(test_pf_percent_x_lower),
+    TEST_CASE(test_pf_percent_s),
+    TEST_CASE(test_pf_percent_c),
+    TEST_CASE(test_pf_double_percent),
+    TEST_CASE(test_pf_multiple_args),
+    TEST_CASE(test_pf_truncation_respects_buf_size),
+    TEST_CASE(test_pf_empty_format),
+    /* v_atof */
+    TEST_CASE(test_atof_integer),
+    TEST_CASE(test_atof_decimal),
+    TEST_CASE(test_atof_negative),
+    TEST_CASE(test_atof_zero),
+    TEST_CASE(test_atof_leading_whitespace),
+};
+const test_suite_t utils_suite = {
+    .name = "utils (print_fmt_buf + v_atof)",
+    .cases = utils_cases,
+    .count = TEST_COUNT(utils_cases),
+};

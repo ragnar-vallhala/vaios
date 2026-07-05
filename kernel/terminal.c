@@ -48,7 +48,7 @@ static Command_t *_find_command(const char *cmd) {
 }
 
 static void vaios_self_check(void *args) {
-  TERM_LOG("VAIOS Version: %s", VERSION);
+  TERM_LOG("VAIOS Version: %s", VAIOS_VERSION);
   TERM_LOG("Developer by NAVROBOTEC PVT. LTD.");
   TERM_LOG("Author: %s", AUTHOR);
   return;

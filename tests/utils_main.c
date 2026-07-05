@@ -6,12 +6,12 @@
  *        v_memset / v_panic stubs.
  */
 #include "framework.h"
+#include "suites.h"
 
-TEST_GLOBALS_IMPL;
-
-void run_utils_tests(void);
+static const test_suite_t *const utils_suites[] = {
+    &utils_suite,
+};
 
 int main(void) {
-  run_utils_tests();
-  TEST_GLOBAL_REPORT();
+  return run_test_suites(utils_suites, TEST_COUNT(utils_suites));
 }

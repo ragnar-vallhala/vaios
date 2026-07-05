@@ -19,6 +19,7 @@
  */
 #include "framework.h"
 #include "memory.h"
+#include "suites.h"
 #include "utils.h"
 #include "vaios.h"
 #include <stddef.h>
@@ -26,13 +27,14 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-/* The framework's pass/fail counters live here (exactly one TU). */
-TEST_GLOBALS_IMPL;
-
-/* Suite entry points, compiled from tests/test_*.c. */
-void run_memory_tests(void);
-void run_structure_tests(void);
-void run_utils_tests(void);
+/* Curated subset of the shared suite registry (suites.h). The pass/fail
+ * counters and run_test_suites live in tests/framework.c, linked into this
+ * target build. Only suites that need no scheduler / SD / DWT run here. */
+static const test_suite_t *const target_suites[] = {
+    &memory_suite,
+    &structure_suite,
+    &utils_suite,
+};
 
 /* The single test-harness hook the curated suites depend on. On the host this
  * lives in tests/stubs/stubs.c; on target it just re-inits the real heap. */
@@ -105,9 +107,8 @@ int main(void) {
 
   print_fmt("\r\n==== vaios ON-TARGET unit tests ====\r\n");
 
-  run_memory_tests();
-  run_structure_tests();
-  run_utils_tests();
+  run_test_suites(target_suites,
+                  sizeof(target_suites) / sizeof(target_suites[0]));
 
   /* Greppable summary (print_fmt is the kernel formatter -> polling UART). */
   print_fmt("\r\n==== ON-TARGET TOTAL: %d passed, %d failed ====\r\n",

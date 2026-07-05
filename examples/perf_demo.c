@@ -141,9 +141,9 @@ static void kernel_task(void *arg) {
 
   task_create(producer_task, NULL, 1024, 2);
   task_create(consumer_task, NULL, 1024, 1);
-  task_create(worker_task, &w1, 1536, 1);
-  task_create(worker_task, &w2, 1536, 1);
-  task_create(deep_stack_task, NULL, 2560, 1); /* needs room for burn_stack */
+  task_create(worker_task, &w1, 2048, 1);
+  task_create(worker_task, &w2, 2048, 1);
+  task_create(deep_stack_task, NULL, 4096, 1); /* needs room for burn_stack */
   task_create(reporter_task, NULL, 2048, 3);   /* highest: owns the console */
 }
 

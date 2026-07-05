@@ -184,9 +184,17 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
 uint32_t task_create_named(void (*entry)(void *), void *arg,
                            uint32_t stack_size, uint32_t priority,
                            const char *name) {
-  if (stack_size < 128)
-    stack_size = 128;
-  stack_size &= ~(3); // Align to 4 bytes
+  // MPU-backed stack protection maps each stack onto a single power-of-two MPU
+  // region, so the requested size must be an exact power of two (>= 128 B to
+  // hold the initial exception frame). Reject anything else outright: silently
+  // rounding the size would desync the caller's view of the stack from the
+  // actual region geometry, so fail the creation instead of hiding the change.
+  if (stack_size < 128 || (stack_size & (stack_size - 1)) != 0) {
+    V_KLOG(LOG_ERROR,
+           "[TASK] stack_size %u is not a power of two >= 128; task not created",
+           (unsigned)stack_size);
+    return 0;
+  }
 
   TCB *task = (TCB *)v_malloc(sizeof(TCB));
   if (!task)

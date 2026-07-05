@@ -2,7 +2,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 message(STATUS "Startup File: ${STARTUP_FILE}")
 
 if(NOT NAVHAL)
-  set(STARTUP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../startup.s)
+  set(STARTUP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../portable/cortex-m4/startup.s)
 endif()
 
 if(VAIOS_EXAMPLE STREQUAL "DMA_DUMP")
@@ -64,6 +64,7 @@ elseif(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
   # kernel + port. Curated to suites that need no scheduler / SD / DWT.
   add_executable(main
       unit_tests.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/../tests/framework.c  # counters + suite runners
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_memory.c
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_structure.c
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_utils.c
