@@ -1,0 +1,227 @@
+# vim: ft=kconfig
+#
+# vaios configuration. Symbol names match the macros the kernel already uses
+# (HEAP_SIZE, MAX_TASK_PRIORITY, VAIOS_MODULE_*, ...) so the generated
+# vaios_autoconf.h is a drop-in for the retired include/vaios_config_default.h.
+# A few composite macros (MAX_SYSCALL_INTERRUPT_PRIORITY, the heap-algo selector,
+# PANIC) are derived from these scalars in include/vaios_config_derived.h.
+#
+# When NAVHAL is enabled the NavHAL Kconfig tree is sourced in below, so one
+# menuconfig / one .config covers both the kernel and the HAL driver set. See
+# docs/plan/KCONFIG_CONFIG_SYSTEM_PLAN.md.
+mainmenu "vaios Configuration"
+
+menu "Version"
+config VAIOS_VERSION_MAJOR
+    int "Major version"
+    default 0
+config VAIOS_VERSION_MINOR
+    int "Minor version"
+    default 1
+config VAIOS_VERSION_PATCH
+    int "Patch version"
+    default 1
+config VAIOS_VERSION
+    string "Version string"
+    default "0.1.0"
+config AUTHOR
+    string "Author"
+    default "ASHUTOSH VISHWAKARMA"
+endmenu
+
+menu "Platform / Init"
+config CORTEX_M4
+    bool "Target is ARM Cortex-M4"
+    default y
+config NVIC_PRIO_BITS
+    int "NVIC priority bits implemented by the silicon"
+    default 4
+config SYSTICK_PERIOD
+    int "SysTick period (microseconds)"
+    default 1000
+config UART_BAUDRATE
+    int "UART console baud rate"
+    default 115200
+config UART_LOGGING_ENABLE
+    bool "Route logging to the UART console"
+    default y
+config LOGGING_ENABLED
+    bool "Enable the logging subsystem"
+    default y
+endmenu
+
+menu "Interrupts / Critical sections"
+config VAIOS_MAX_SYSCALL_PRIO_LEVEL
+    int "Highest priority LEVEL that may call kernel APIs (0..MAX_TASK_PRIORITY)"
+    default 7
+    help
+      The base priority level from which MAX_SYSCALL_INTERRUPT_PRIORITY is
+      derived (as LEVEL << (8 - NVIC_PRIO_BITS), see vaios_config_derived.h).
+      IRQs more urgent than this are never masked by a kernel critical section
+      and MUST NOT call any vaios API.
+config VAIOS_USE_BASEPRI
+    bool "Use BASEPRI for critical sections (else global cpsid i)"
+    default y
+    help
+      When set, v_enter_critical/v_exit_critical mask only IRQs at or below
+      MAX_SYSCALL_INTERRUPT_PRIORITY, keeping hard-real-time IRQs (motor PWM,
+      IMU EXTI) unmaskable. When clear, fall back to global interrupt disable.
+config VAIOS_FROMISR_PRIO_CHECK
+    bool "Assert *_from_isr callers are within the maskable IRQ band"
+    default y
+    help
+      A *_from_isr call from an IRQ more urgent than
+      MAX_SYSCALL_INTERRUPT_PRIORITY can corrupt the scheduler; when set the
+      API v_panics with a clear message instead. Drop for size-critical builds.
+endmenu
+
+menu "Kernel modules"
+config VAIOS_MODULE_TERMINAL
+    bool "Interactive command terminal"
+    default y
+config VAIOS_MODULE_VFS
+    bool "Virtual file system (FatFs/SDIO, needs NavHAL)"
+    default n
+config VAIOS_MODULE_SEMIHOSTING
+    bool "Semihosting debug I/O"
+    default y
+config VAIOS_MODULE_FIFO
+    bool "SPSC/MPMC FIFO data structures"
+    default y
+config VAIOS_MODULE_PERF
+    bool "Kernel performance counters"
+    default y
+endmenu
+
+menu "Scheduling"
+config MAX_TASK_PRIORITY
+    int "Highest usable task priority"
+    default 7
+config IDLE_TASK_PRIORITY
+    int "Idle task priority"
+    default 0
+config IDLE_TASK_STACK_SIZE
+    int "Idle task stack size (bytes)"
+    default 512
+config TIME_SLICE
+    int "Round-robin time slice (ticks)"
+    default 2
+config MAIN_STACK_SIZE
+    int "Main/MSP stack size (bytes)"
+    default 1024
+config STACK_ALIGN_SIZE
+    int "Task stack alignment (bytes)"
+    default 8
+config TASK_STACK_WATERMARK_ENABLE
+    bool "Software stack-overflow watermark check"
+    default y
+config TASK_STACK_OVERFLOW_THRESHOLD
+    int "Stack-overflow guard threshold (bytes)"
+    default 64
+endmenu
+
+menu "Memory / Heap"
+config HEAP_SIZE
+    hex "Kernel heap size (bytes)"
+    default 0x16000
+config HEAP_WATERMARK_ENABLE
+    bool "Panic when heap usage crosses the watermark"
+    default y
+config HEAP_WATERMARK_THRESHOLD
+    int "Heap watermark headroom (bytes)"
+    default 1024
+config DMA_MIN_THRESHOLD
+    int "Minimum transfer size to use DMA (bytes)"
+    default 16
+choice
+    prompt "Heap allocator"
+    default VAIOS_HEAP_ALGO_SEGLIST
+    help
+      Both allocators sit behind the same public API; exactly one is compiled.
+      The fixed index macros VAIOS_HEAP_SEGLIST/TLSF and the selector
+      VAIOS_HEAP_ALGO are built from this choice in vaios_config_derived.h and
+      key the seglist.c / tlsf.c bodies.
+config VAIOS_HEAP_ALGO_SEGLIST
+    bool "Segregated fit (smallest, historical default)"
+config VAIOS_HEAP_ALGO_TLSF
+    bool "TLSF (O(1) worst-case malloc + free, bounded fragmentation)"
+endchoice
+endmenu
+
+menu "IPC"
+config MAX_SEMAPHORE_COUNT
+    hex "Maximum counting-semaphore value"
+    default 0xFFFFFFFF
+config STATIC_SEMAPHORE_SIZE
+    int "Static semaphore storage size (bytes)"
+    default 32
+config MAX_PI_DEPTH
+    int "Maximum priority-inheritance chain depth"
+    default 4
+endmenu
+
+menu "Logging"
+config COLOR_LOGGING
+    bool "ANSI colour in log output"
+    default y
+config BUFFERED_LOGGING
+    bool "Buffer log messages (else synchronous)"
+    default y
+config LOG_BUFFER_SIZE
+    int "Log ring-buffer entry count"
+    default 32
+config LOG_MSG_MAX_LEN
+    int "Max log message length (bytes)"
+    default 64
+config LOG_BUFFER_STORAGE_SIZE
+    int "Log buffer backing storage (bytes)"
+    default 256
+# Log-level thresholds, as the utils.h enum's numeric value
+# (LOG_DEBUG=0, LOG_INFO=1, LOG_WARN=2, LOG_ERROR=3). Used only in
+# `level >= THRESHOLD` comparisons, so the int is interchangeable with the enum.
+config MIN_LOG_LEVEL
+    int "Minimum runtime log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+    default 1
+    range 0 3
+config VAIOS_KERNEL_LOG_LEVEL
+    int "Kernel-internal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+    default 2
+    range 0 3
+config TERMINAL_LOG_LEVEL
+    int "Terminal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+    default 1
+    range 0 3
+endmenu
+
+menu "Terminal"
+depends on VAIOS_MODULE_TERMINAL
+config ENABLE_TERMINAL
+    bool "Enable the terminal at boot"
+    default y
+config ALLOWED_MODULES
+    string "Terminal-accessible modules (\"ALL\" or CSV)"
+    default "ALL"
+config CMD_BUFFER_SIZE
+    int "Command history buffer size"
+    default 10
+config CMD_MAX_LEN
+    int "Maximum command length (bytes)"
+    default 32
+config MAX_CMD_NUMBER
+    int "Maximum registered commands"
+    default 6
+config ESCAPE_SEQ_LEN
+    int "Escape-sequence buffer length"
+    default 2
+config TERMINAL_TASK_STACK_SIZE
+    int "Terminal task stack size (bytes)"
+    default 1024
+endmenu
+
+# When building against NavHAL, pull its entire option tree into this same
+# menu/.config so there is a single source of truth. Driven by the NAVHAL_KCONFIG
+# env var, NOT an `if` block: kconfiglib processes `source` at parse time
+# regardless of `if` conditions, so a guard would still try (and fail) to read
+# NavHAL standalone. The build sets NAVHAL_KCONFIG + $srctree when NAVHAL=ON;
+# unset otherwise, and osource of the empty stub is a silent no-op.
+osource "$(NAVHAL_KCONFIG)"

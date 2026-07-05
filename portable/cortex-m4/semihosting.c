@@ -7,7 +7,9 @@
 #define SCB_SHPR2 (*(volatile uint32_t *)0xE000ED1C)
 #define SCB_SHPR3 (*(volatile uint32_t *)0xE000ED20)
 
+#ifndef __NVIC_PRIO_BITS /* normally from the Kconfig NVIC_PRIO_BITS (config) */
 #define __NVIC_PRIO_BITS 4
+#endif
 #define PRIORITY_MASK ((1UL << __NVIC_PRIO_BITS) - 1)
 
 void set_systick_interrupt_priority(
