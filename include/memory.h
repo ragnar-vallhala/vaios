@@ -23,6 +23,12 @@ void v_heap_memory_init(void);
 // Allocate memory
 void *v_malloc(size_t size);
 
+// Allocate `size` bytes whose payload is aligned to `align` (a power of two).
+// The returned pointer is freeable with v_free. Backs MPU-guarded task stacks
+// whose base must land on a region-size boundary. Returns NULL on bad args or
+// exhaustion; falls back to v_malloc when align <= the default 8-byte alignment.
+void *v_memalign(size_t align, size_t size);
+
 // Free memory
 void v_free(void *ptr);
 

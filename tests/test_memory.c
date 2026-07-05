@@ -215,6 +215,73 @@ static void test_free_invalid_ptr(void) {
   TEST_ASSERT_NOT_NULL(p);
 }
 
+/* ---- v_memalign (aligned allocation backing MPU-guarded stacks) ---- */
+
+/* Every alignment (a power of two) yields a payload on that boundary, and the
+ * block is usable and freeable. */
+static void test_memalign_alignment(void) {
+  reset();
+  for (size_t align = 32; align <= 1024; align <<= 1) {
+    void *p = v_memalign(align, 200);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQ((uintptr_t)p & (align - 1), (uintptr_t)0);
+    /* Writable across the whole request, no corruption. */
+    for (int i = 0; i < 200; i++)
+      ((volatile uint8_t *)p)[i] = (uint8_t)i;
+    v_free(p);
+  }
+}
+
+/* Bad args: non-power-of-two alignment and zero size both return NULL. */
+static void test_memalign_bad_args(void) {
+  reset();
+  TEST_ASSERT_NULL(v_memalign(48, 100)); /* 48 is not a power of two */
+  TEST_ASSERT_NULL(v_memalign(0, 100));  /* 0 is not a power of two */
+  TEST_ASSERT_NULL(v_memalign(64, 0));   /* zero size */
+}
+
+/* align <= the 8-byte default falls back to v_malloc (still aligned enough). */
+static void test_memalign_small_align_falls_back(void) {
+  reset();
+  void *p = v_memalign(8, 64);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQ((uintptr_t)p & 7u, (uintptr_t)0);
+  v_free(p);
+}
+
+/* Alloc + free of an aligned block leaves the heap exactly as it was — the
+ * aligned block and its leading slack both coalesce back. */
+static void test_memalign_no_leak(void) {
+  reset();
+  uint32_t count0 = v_get_heap_allocation_count();
+  uint32_t used0 = v_get_heap_allocation_size();
+  void *p = v_memalign(256, 300);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT(v_get_heap_allocation_count() > count0);
+  v_free(p);
+  TEST_ASSERT_EQ(v_get_heap_allocation_count(), count0);
+  TEST_ASSERT_EQ(v_get_heap_allocation_size(), used0);
+}
+
+/* The slack carved off ahead of the aligned block is returned to the heap and
+ * can satisfy later allocations (it is not leaked). */
+static void test_memalign_leading_slack_reusable(void) {
+  reset();
+  /* Force a non-trivial leading gap: a small alloc so the next aligned block
+   * can't start at the heap head, then a large-alignment request. */
+  void *a = v_malloc(24);
+  TEST_ASSERT_NOT_NULL(a);
+  void *p = v_memalign(512, 512);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQ((uintptr_t)p & 511u, (uintptr_t)0);
+  /* A subsequent small alloc must still succeed (slack + remainder available). */
+  void *b = v_malloc(24);
+  TEST_ASSERT_NOT_NULL(b);
+  v_free(a);
+  v_free(b);
+  v_free(p);
+}
+
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
@@ -227,6 +294,11 @@ static const test_case_t memory_cases[] = {
     TEST_CASE(test_block_splitting), TEST_CASE(test_merge_next),
     TEST_CASE(test_merge_prev),      TEST_CASE(test_heap_exhaustion),
     TEST_CASE(test_free_invalid_ptr),
+    TEST_CASE(test_memalign_alignment),
+    TEST_CASE(test_memalign_bad_args),
+    TEST_CASE(test_memalign_small_align_falls_back),
+    TEST_CASE(test_memalign_no_leak),
+    TEST_CASE(test_memalign_leading_slack_reusable),
 };
 const test_suite_t memory_suite = {
     .name = "Memory Allocator",

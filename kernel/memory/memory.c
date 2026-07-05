@@ -134,6 +134,92 @@ void *v_malloc(size_t size) {
   return (void *)((uint8_t *)blk + sizeof(Heap_Mem_Block));
 }
 
+// Allocate `size` bytes whose PAYLOAD address is aligned to `align` (which must
+// be a power of two). Returns a pointer freeable by the normal v_free — the
+// aligned block carries its own boundary-tag header, and any slack ahead of it
+// is handed back to the free index as an ordinary free block. This backs
+// MPU-guarded task stacks, whose base must sit on a region-size boundary.
+void *v_memalign(size_t align, size_t size) {
+  if (!heap_mem_head) {
+    V_KLOG(LOG_ERROR, "[MEMORY] v_memalign before heap init");
+    return NULL;
+  }
+  if (size == 0 || align == 0 || (align & (align - 1)) != 0)
+    return NULL; // align must be a non-zero power of two
+  if (align <= VHEAP_ALIGN)
+    return v_malloc(size); // every payload is already VHEAP_ALIGN-aligned
+
+  uint32_t need =
+      (uint32_t)((size + (VHEAP_ALIGN - 1)) & ~(size_t)(VHEAP_ALIGN - 1));
+  if (need < VHEAP_MIN_PAYLOAD)
+    need = VHEAP_MIN_PAYLOAD;
+
+  ENTER_CRITICAL();
+
+  // Enough to carve the aligned payload plus up to `align` bytes of leading
+  // slack and a header for the aligned block.
+  Heap_Mem_Block *blk =
+      vheap_index_find(need + (uint32_t)align + (uint32_t)sizeof(Heap_Mem_Block));
+  if (!blk) {
+    EXIT_CRITICAL();
+    PERF_HEAP_OOM();
+    V_KLOG(LOG_ERROR, "[MEMORY] v_memalign failed, memory exhausted.");
+    return NULL;
+  }
+  vheap_index_remove(blk);
+
+  uint8_t *payload0 = (uint8_t *)blk + sizeof(Heap_Mem_Block);
+  uint8_t *orig_end = payload0 + blk->size; // one past the usable payload
+  uintptr_t a =
+      ((uintptr_t)payload0 + (align - 1)) & ~(uintptr_t)(align - 1);
+
+  Heap_Mem_Block *aligned;
+  if ((uint8_t *)a == payload0) {
+    aligned = blk; // blk's payload is already aligned
+  } else {
+    // The aligned block's header sits at `a - header`. Keep bumping by `align`
+    // until the leading remainder can hold a valid free block (header already
+    // present as blk's, so just its own min payload).
+    uint8_t *h = (uint8_t *)a - sizeof(Heap_Mem_Block);
+    while ((uint32_t)(h - payload0) < VHEAP_MIN_PAYLOAD) {
+      a += align;
+      h = (uint8_t *)a - sizeof(Heap_Mem_Block);
+    }
+    aligned = (Heap_Mem_Block *)h;
+    aligned->magic_number = SANITY_MAGIC_NUMBER;
+    aligned->prev = blk;
+    aligned->size =
+        (uint32_t)(orig_end - ((uint8_t *)aligned + sizeof(Heap_Mem_Block)));
+    // blk becomes the leading remainder, returned to the free index.
+    blk->size = (uint32_t)((uint8_t *)aligned - payload0);
+    blk->status = MEM_FREE;
+    fixup_next_prev(aligned); // the block after the original now follows `aligned`
+    vheap_index_insert(blk);
+  }
+
+  int did_split = 0;
+  if (aligned->size >= need + sizeof(Heap_Mem_Block) + VHEAP_MIN_PAYLOAD) {
+    Heap_Mem_Block *res =
+        (Heap_Mem_Block *)((uint8_t *)aligned + sizeof(Heap_Mem_Block) + need);
+    res->magic_number = SANITY_MAGIC_NUMBER;
+    res->status = MEM_FREE;
+    res->size = aligned->size - need - sizeof(Heap_Mem_Block);
+    res->prev = aligned;
+    fixup_next_prev(res);
+    aligned->size = need;
+    vheap_index_insert(res);
+    did_split = 1;
+  }
+
+  aligned->status = MEM_ALOC;
+  allocation_count++;
+  allocation_size += aligned->size;
+  PERF_HEAP_ALLOC(aligned->size, did_split);
+
+  EXIT_CRITICAL();
+  return (void *)((uint8_t *)aligned + sizeof(Heap_Mem_Block));
+}
+
 void v_free(void *ptr) {
   if (ptr == NULL) {
     V_KLOG(LOG_ERROR, "[MEMORY] Deallocation not allowed of NULL pointers");
