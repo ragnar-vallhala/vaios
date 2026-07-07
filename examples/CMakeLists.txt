@@ -39,6 +39,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "MPU_FAULT")
   add_executable(main mpu_fault.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "DEVFS_TEST")
   add_executable(main devfs_test.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "KMSG_TEST")
+  add_executable(main kmsg_test.c ${STARTUP_FILE})
   # Probe select: 0=W^X (default), 1=NULL guard, 2=flash-RO. -DMPU_FAULT_MODE=N
   if(DEFINED MPU_FAULT_MODE)
     target_compile_definitions(main PRIVATE MPU_FAULT_MODE=${MPU_FAULT_MODE})
