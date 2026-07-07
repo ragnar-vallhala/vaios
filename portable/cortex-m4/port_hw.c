@@ -198,12 +198,21 @@ int v_port_hw_sdio_card_init(void) {
  * MPU — Phase 1 per-task stack-overflow guard (docs/plan/MPU_CACHE_INTEGRATION_
  * PLAN.md). Backed by NavHAL hal_mpu; no-op stubs without an MPU / when
  * VAIOS_MPU_ENABLE is off. Runtime hal_mpu_present() keeps QEMU/M4-less targets
- * safe. Region 0 holds the guard; MPU is enabled with PRIVDEFENA so all other
- * memory keeps the default map and only the guard span faults.
+ * safe. MPU is enabled with PRIVDEFENA so uncovered addresses keep the default
+ * map. The per-task guard is the TOP region (VAIOS_MPU_GUARD_REGION) so it wins
+ * on overlap with the Phase 2 static regions (0..3) below it.
+ *
+ * Phase 2 (VAIOS_MPU_STATIC_PROTECT) adds a static background map that bites even
+ * while tasks are still privileged (PRIVDEFENA's privileged default is otherwise
+ * RWX everywhere): SRAM execute-never (W^X) and peripherals privileged-only
+ * device+XN as the safe core, plus optional flash-RO (VAIOS_MPU_FLASH_RO) and a
+ * NULL/low-alias no-access trap (VAIOS_MPU_NULL_GUARD). Programmed once at init.
  * ------------------------------------------------------------------------- */
 #define SCB_SHCSR (*(volatile uint32_t *)0xE000ED24)
 #define SHCSR_MEMFAULTENA (1u << 16)
-#define VAIOS_MPU_GUARD_REGION 0u
+/* Top region on the F401 (8 regions, 0..7). Higher number wins on overlap, so
+ * the guard overrides the Phase 2 SRAM region at the stack base. */
+#define VAIOS_MPU_GUARD_REGION 7u
 
 #if defined(NAVHAL) && VAIOS_MPU_ENABLE
 /* hal_mpu_size_t encodes SIZE as log2(bytes) - 1. */
@@ -211,9 +220,63 @@ static inline hal_mpu_size_t v_mpu_size_enum(uint32_t bytes) {
   return (hal_mpu_size_t)(__builtin_ctz(bytes) - 1);
 }
 
+#if VAIOS_MPU_STATIC_PROTECT
+/* Phase 2 static background protection, programmed once beneath the per-task
+ * guard (region VAIOS_MPU_GUARD_REGION wins on overlap). Regions 0..3; 4..6 stay
+ * free for the Phase 3 per-task set. Safe core = SRAM W^X + peripherals priv+XN;
+ * flash-RO and the NULL trap are separately gated (each has a hazard, below). */
+static void v_mpu_static_protect(void) {
+  /* 0: SRAM (128 KB covers the 96 KB part): RW, execute-never (W^X). vaios runs
+   *    wholly from flash (no ramfuncs), so XN on RAM catches execute-from-stack/
+   *    heap without breaking anything. */
+  static const hal_mpu_region_t sram = {
+      .base = 0x20000000u, .size = HAL_MPU_SIZE_128KB, .ap = HAL_MPU_AP_RW,
+      .mem = HAL_MPU_MEM_NORMAL_WB, .executable = false,
+      .shareable = false, .srd_mask = 0};
+  hal_mpu_configure_region(0u, &sram);
+
+  /* 1: Peripherals [0x40000000, 512 MB): privileged RW device, execute-never.
+   *    Privileged tasks keep access today (AP_PRIV_RW); the unprivileged boundary
+   *    lands in Phase 3. The PPB (0xE0000000, NVIC/SCB/SysTick) is exempt from
+   *    the MPU by architecture, so kernel core access is unaffected. */
+  static const hal_mpu_region_t mmio = {
+      .base = 0x40000000u, .size = HAL_MPU_SIZE_512MB, .ap = HAL_MPU_AP_PRIV_RW,
+      .mem = HAL_MPU_MEM_DEVICE, .executable = false,
+      .shareable = true, .srd_mask = 0};
+  hal_mpu_configure_region(1u, &mmio);
+
+#if VAIOS_MPU_FLASH_RO
+  /* 2: Flash code+rodata (512 KB): read-only, executable. Catches code/const
+   *    corruption. HAZARD: on-chip flash programming writes the 0x08xxxxxx space
+   *    directly, so this is INCOMPATIBLE with hal_flash's key/value store —
+   *    enable only when the KV store is unused (or carve its sectors out via SRD). */
+  static const hal_mpu_region_t flash = {
+      .base = 0x08000000u, .size = HAL_MPU_SIZE_512KB, .ap = HAL_MPU_AP_RO,
+      .mem = HAL_MPU_MEM_NORMAL_WT, .executable = true,
+      .shareable = false, .srd_mask = 0};
+  hal_mpu_configure_region(2u, &flash);
+#endif
+
+#if VAIOS_MPU_NULL_GUARD
+  /* 3: NULL / low-alias trap [0, 1 MB): no access — catch NULL+offset derefs.
+   *    HAZARD: safe ONLY if VTOR points at flash (0x08000000). With VTOR=0 the
+   *    exception vector fetch aliases to 0x0 and this region would fault every
+   *    interrupt. Confirm the startup sets SCB->VTOR before enabling. */
+  static const hal_mpu_region_t null_guard = {
+      .base = 0x00000000u, .size = HAL_MPU_SIZE_1MB, .ap = HAL_MPU_AP_NONE,
+      .mem = HAL_MPU_MEM_STRONGLY_ORDERED, .executable = false,
+      .shareable = false, .srd_mask = 0};
+  hal_mpu_configure_region(3u, &null_guard);
+#endif
+}
+#endif /* VAIOS_MPU_STATIC_PROTECT */
+
 void v_port_mpu_init(void) {
   if (!hal_mpu_present())
     return;
+#if VAIOS_MPU_STATIC_PROTECT
+  v_mpu_static_protect(); /* program the static background map before enabling */
+#endif
   SCB_SHCSR |= SHCSR_MEMFAULTENA; /* MPU violations trap to MemManage_Handler */
   hal_mpu_enable(true);           /* PRIVDEFENA: default map for uncovered addrs */
 }

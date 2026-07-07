@@ -149,21 +149,23 @@ void NMI_Handler(void) {
   }
 }
 
-// MPU violation — Phase 1 this only ever comes from a task overrunning its
-// stack into the no-access guard region. Decode the fault and panic with the
-// offending task + address. (Recovery/task-kill is a later phase.)
+// MPU violation. Phase 1: a task overran its stack into the no-access guard.
+// Phase 2 (VAIOS_MPU_STATIC_PROTECT) adds execute-from-RAM (W^X), flash-write,
+// NULL-deref, and bad-peripheral faults. Decode CFSR/MMFAR and panic with the
+// offending task + address. (Recovery/task-kill is a later phase.) MMFSR bits:
+// IACCVIOL(0) = instruction-fetch (XN) violation, DACCVIOL(1) = data AP.
 #define SCB_CFSR (*(volatile uint32_t *)0xE000ED28)
 #define SCB_MMFAR (*(volatile uint32_t *)0xE000ED34)
 #define MMFSR_MMARVALID (1u << 7)
 void MemManage_Handler(void) {
-#if VAIOS_MPU_STACK_GUARD
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_STATIC_PROTECT
   extern TCB *current_task;
   uint32_t mmfsr = SCB_CFSR & 0xFFu; /* MemManage status is CFSR[7:0] */
   uint32_t addr = (mmfsr & MMFSR_MMARVALID) ? SCB_MMFAR : 0u;
   uint32_t id = current_task ? current_task->task_id : 0u;
   v_panic(__FILE__, __LINE__,
-          "stack overflow (MPU) in task %u | fault addr 0x%x MMFSR 0x%x",
-          (unsigned)id, (unsigned)addr, (unsigned)mmfsr);
+          "MPU fault in task %u | fault addr 0x%x MMFSR 0x%x", (unsigned)id,
+          (unsigned)addr, (unsigned)mmfsr);
 #endif
   for (;;) {
   }
