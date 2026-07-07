@@ -13,8 +13,10 @@
 
 #if VAIOS_SYSCALL_SVC
 
+#include "ipc.h"
 #include "port.h"
 #include "task.h"
+#include <stdint.h>
 
 int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
   switch (num) {
@@ -24,10 +26,15 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
     v_port_trigger_pendsv();
     return 0;
   case SYS_delay:
-    /* Blocking: task_delay marks the caller delayed and pends PendSV; the
-       switch happens on SVCall return. args[0] = ticks. */
+    /* task_delay marks the caller DELAYED and pends PendSV; the switch happens
+       on SVCall return. Reached in handler mode, so its thread-mode trap guard
+       runs the body. args[0] = ticks. */
     task_delay(args[0]);
     return 0;
+  case SYS_sem_give:
+    /* Non-blocking: signal + maybe wake a waiter (result known immediately).
+       args[0] = semaphore handle. */
+    return v_semaphore_give((SemaphoreHandle_t)(uintptr_t)args[0]);
   default:
     return -1; /* unknown syscall */
   }

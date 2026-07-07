@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "perf_hooks.h"
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL
+#include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
@@ -457,6 +458,12 @@ void remove_from_delayed_list(TCB *task) {
 }
 
 void task_delay(uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) { // task-facing: trap into the kernel
+    v_svc1(SYS_delay, ticks);
+    return;
+  }
+#endif
   if (current_task == NULL)
     v_panic(__FILE__, __LINE__, "current_task is NULL");
   if (current_task == idle_task)

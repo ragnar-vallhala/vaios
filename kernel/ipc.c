@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "perf_hooks.h"
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL[_FROM_ISR]
+#include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
 #include "task.h"
 #include "utils.h"
 
@@ -289,6 +290,10 @@ static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
 }
 
 int v_semaphore_give(SemaphoreHandle_t sem) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc1(SYS_sem_give, (uint32_t)(uintptr_t)sem);
+#endif
   if (!sem)
     return VA_FAIL;
   return semaphore_give_common((sema_t *)sem, NULL);

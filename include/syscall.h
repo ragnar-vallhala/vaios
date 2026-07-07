@@ -27,6 +27,10 @@
 typedef enum {
   SYS_yield = 1,
   SYS_delay = 2,
+  SYS_sem_give = 3,
+  /* SYS_sem_take (blocking) is deferred: its result depends on post-wake state,
+     which needs deferred-result delivery (the switch is deferred to handler
+     return, so an inline resume-check would spuriously time out). */
   SYS_MAX
 } v_syscall_t;
 
@@ -36,6 +40,17 @@ typedef enum {
 int32_t v_syscall_dispatch(uint32_t num, uint32_t *args);
 
 #if VAIOS_SYSCALL_SVC
+
+// True in thread mode (a task), false in a handler (the syscall dispatch). A
+// task-facing API whose implementation IS the dispatch target uses this to trap
+// exactly once: a task (thread) traps via svc; the same function reached from
+// the dispatch (handler) runs its body. (task_yield needs no such guard — its
+// implementation is the separate v_port_trigger_pendsv.)
+__attribute__((always_inline)) static inline int v_in_thread_mode(void) {
+  uint32_t ipsr;
+  __asm__ volatile("mrs %0, ipsr" : "=r"(ipsr));
+  return ipsr == 0u;
+}
 
 // Thin `svc 1` trampolines: number in r12, args in r0-r3, result in r0.
 __attribute__((always_inline)) static inline int32_t v_svc0(uint32_t n) {
