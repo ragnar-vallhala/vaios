@@ -35,6 +35,9 @@ typedef enum {
   SYS_write = 8,
   SYS_read = 9,
   SYS_close = 10,
+  SYS_sem_open = 11,     // fd-typed IPC (VAIOS_IPC_FD)
+  SYS_sem_take_fd = 12,
+  SYS_sem_give_fd = 13,
   SYS_MAX
 } v_syscall_t;
 

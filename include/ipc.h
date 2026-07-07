@@ -68,6 +68,17 @@ MutexHandle_t v_mutex_create_recursive_static(StaticSemaphore_t *pxBuffer);
 int v_semaphore_take(SemaphoreHandle_t sem, uint32_t ticks_to_wait);
 int v_semaphore_give(SemaphoreHandle_t sem);
 
+#if VAIOS_IPC_FD
+// fd-typed named semaphores (Phase 3, Stage 3). A named sem lives in the kernel
+// and is referenced by a per-task fd. v_sem_open find-or-creates by name and
+// returns an fd (or < 0); v_sem_take/give resolve fd -> object; close(fd) drops
+// the reference (object destroyed at refcount 0). Binary semaphores for now.
+#define V_IPC_CREATE 0x1 // create the named object if it does not exist
+int v_sem_open(const char *name, int flags);
+int v_sem_take(int fd, uint32_t ticks_to_wait);
+int v_sem_give(int fd);
+#endif
+
 // ISR-safe give
 int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
                               int *pxHigherPriorityTaskWoken);
