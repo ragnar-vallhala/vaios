@@ -210,6 +210,7 @@ int v_port_hw_sdio_card_init(void) {
  * ------------------------------------------------------------------------- */
 #define SCB_SHCSR (*(volatile uint32_t *)0xE000ED24)
 #define SHCSR_MEMFAULTENA (1u << 16)
+#define SCB_VTOR (*(volatile uint32_t *)0xE000ED08u)
 /* Top region on the F401 (8 regions, 0..7). Higher number wins on overlap, so
  * the guard overrides the Phase 2 SRAM region at the stack base. */
 #define VAIOS_MPU_GUARD_REGION 7u
@@ -259,9 +260,12 @@ static void v_mpu_static_protect(void) {
 
 #if VAIOS_MPU_NULL_GUARD
   /* 3: NULL / low-alias trap [0, 1 MB): no access — catch NULL+offset derefs.
-   *    HAZARD: safe ONLY if VTOR points at flash (0x08000000). With VTOR=0 the
-   *    exception vector fetch aliases to 0x0 and this region would fault every
-   *    interrupt. Confirm the startup sets SCB->VTOR before enabling. */
+   *    vaios's own startup.s leaves SCB->VTOR at the 0x0 reset alias, so relocate
+   *    the vector table to flash FIRST — otherwise this region would fault every
+   *    exception vector fetch. The table lives at flash origin (.isr_vector). */
+  SCB_VTOR = 0x08000000u;
+  __asm volatile("dsb" ::: "memory");
+  __asm volatile("isb" ::: "memory");
   static const hal_mpu_region_t null_guard = {
       .base = 0x00000000u, .size = HAL_MPU_SIZE_1MB, .ap = HAL_MPU_AP_NONE,
       .mem = HAL_MPU_MEM_STRONGLY_ORDERED, .executable = false,
