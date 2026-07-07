@@ -39,6 +39,10 @@ void stub_reset_yield_count(void) { _yield_count = 0; }
 
 void task_yield(void) { _yield_count++; }
 
+/* Kernel-internal yield (pends PendSV directly on target). Count it too so the
+ * refactored internal callers (task_delay/exit/block) keep the old semantics. */
+void v_port_trigger_pendsv(void) { _yield_count++; }
+
 /* -------------------------------------------------------------------------
  * init_task_stack stub – trivial host implementation
  * ---------------------------------------------------------------------- */

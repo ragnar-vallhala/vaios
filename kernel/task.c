@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "perf_hooks.h"
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL
+#include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
@@ -337,7 +338,7 @@ __attribute__((noreturn)) void task_exit(void) {
   _terminated_count++;
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
   while (1)
     ;
 }
@@ -359,7 +360,7 @@ void task_exit_request(uint32_t task_id) {
   _terminated_count++;
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 //-----------------------------------------------------------------------------
 // Idle Task Function
@@ -457,6 +458,12 @@ void remove_from_delayed_list(TCB *task) {
 }
 
 void task_delay(uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) { // task-facing: trap into the kernel
+    v_svc1(SYS_delay, ticks);
+    return;
+  }
+#endif
   if (current_task == NULL)
     v_panic(__FILE__, __LINE__, "current_task is NULL");
   if (current_task == idle_task)
@@ -470,7 +477,7 @@ void task_delay(uint32_t ticks) {
   add_to_delayed_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 
 bool task_delay_until(uint32_t *last_wake, uint32_t period) {
@@ -493,7 +500,7 @@ bool task_delay_until(uint32_t *last_wake, uint32_t period) {
   add_to_delayed_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
   return true;
 }
 
@@ -551,6 +558,11 @@ int wake_up_delayed_tasks_isr(void) {
       task->delay_ticks = 0;
       task->status = TASK_READY;
       add_to_ready_list(task);
+      task->wait_mutex = NULL; // clear for a timed-out mutex waiter (no-op for sems)
+#if VAIOS_SYSCALL_SVC
+      // Deliver VA_FAIL to a syscall-blocked take()/lock() that timed out.
+      v_syscall_wake_result(task, VA_FAIL);
+#endif
       if (current_task && task->priority > current_task->priority)
         higher_woken = 1;
     }
@@ -582,7 +594,7 @@ void task_block(void) {
   add_to_blocked_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 
 void add_to_blocked_list(TCB *task) {
@@ -608,7 +620,7 @@ void task_unblock(uint32_t task_id) {
   add_to_ready_list(task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 void task_change_priority(TCB *task, uint32_t new_priority) {
   if (!task || new_priority > MAX_PRIORITY)
