@@ -12,6 +12,9 @@
 // under VAIOS_IPC_FD, the fd-typed API, which is defined earlier in the file.
 static int mutex_lock_common(rmutex_t *rm, uint32_t ticks_to_wait);
 static int mutex_unlock_common(rmutex_t *rm);
+#if VAIOS_IPC_FD
+static void mwait_wake_observers(sema_t *s); // wake v_wait() watchers of s
+#endif
 
 //-----------------------------------------------------------------------------
 // Wait Queue Helpers (priority-ordered, highest priority at head)
@@ -69,6 +72,9 @@ static sema_t *sema_init(sema_t *sem, uint32_t initial_count, uint32_t limit) {
   sem->tail = NULL;
   atomic_set(&sem->count, initial_count);
   atomic_set(&sem->limit, limit);
+#if VAIOS_IPC_FD
+  sem->observers = NULL;
+#endif
   return sem;
 }
 
@@ -334,6 +340,9 @@ static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
   }
 
   atomic_inc(&s->count);
+#if VAIOS_IPC_FD
+  mwait_wake_observers(s); // a take would now succeed: wake v_wait() watchers
+#endif
   EXIT_CRITICAL_FROM_ISR(isr_state);
   return VA_PASS;
 }
@@ -556,27 +565,131 @@ int v_sem_poll(int fd) {
   return atomic_get(&ns->sem.count) > 0 ? 1 : 0;
 }
 
-// Wait until any of nfds sem fds is ready (a take would not block), or the
-// timeout elapses. Returns the INDEX into fds[] of a ready descriptor, or -1 on
-// timeout / bad args. Non-consuming: the caller then v_sem_take()s that fd.
+// --- multi-fd wait (v_wait): O(1) blocking on a set of sem fds --------------
+// A v_wait()ing task links a wnode into each watched sem's observer list and
+// blocks on blocked_list with a deadline. When any watched sem's count goes
+// positive, the give path calls mwait_wake_observers to wake every registered
+// task; the woken task unlinks its nodes and reports which fd is ready. Blocking
+// and timeout reuse the sem_take machinery: the SysTick scan ejects a timed-out
+// waiter (wake_up_delayed_tasks_isr, which clears in_multiwait), and the wake
+// result is delivered through the same deferred-result path. No polling.
 //
-// A poll-loop primitive: it probes readiness and, if none is ready, sleeps one
-// tick and retries — latency is bounded by one tick and a waiter wakes once per
-// tick. It composes syscalls (v_sem_poll + task_delay) so it runs entirely in
-// thread mode and needs no scheduler changes; a future O(1) blocking multi-wait
-// can replace the body without touching the interface. ticks == V_WAIT_FOREVER
-// waits indefinitely; ticks == 0 is a single non-blocking probe.
-int v_wait(const int *fds, int nfds, uint32_t ticks) {
-  if (!fds || nfds <= 0)
-    return -1;
-  for (uint32_t waited = 0;; waited++) {
-    for (int i = 0; i < nfds; i++)
-      if (v_sem_poll(fds[i]) > 0)
-        return i;
-    if (ticks != V_WAIT_FOREVER && waited >= ticks)
-      return -1; // timed out
-    task_delay(1); // yield ~one tick, then re-probe
+// Delivered result convention: SYS_wait returns a ready index >= 0 when a fd is
+// already ready (nothing armed), else it parks; the waker/timeout delivers a
+// NEGATIVE value, on which v_wait runs SYS_wait_disarm to unlink and report.
+#define V_MWAIT_WOKEN (-2) // "blocked then woken" — go disarm and re-check
+
+// Wake every task observing s. Called from give under the sem's critical
+// section, right after count goes positive. Leaves the woken tasks' nodes
+// linked (they unlink themselves in mwait_disarm); in_multiwait == 0 makes any
+// further give on another watched sem skip an already-woken task.
+static void mwait_wake_observers(sema_t *s) {
+  for (v_wnode *n = s->observers; n; n = n->next) {
+    TCB *t = n->owner;
+    if (!t->in_multiwait)
+      continue;
+    t->in_multiwait = 0;
+    t->delay_ticks = 0; // cancel the timeout deadline
+    remove_from_blocked_list(t);
+    t->status = TASK_READY;
+    add_to_ready_list(t);
+#if VAIOS_SYSCALL_SVC
+    v_syscall_wake_result(t, V_MWAIT_WOKEN);
+#endif
   }
+}
+
+// Unlink all of t's armed nodes and return the index of the first watched sem
+// that is ready now (count > 0), or -1 if none (timeout / already consumed).
+static int mwait_disarm(TCB *t) {
+  int ready = -1;
+  ENTER_CRITICAL();
+  for (int i = 0; i < t->narm; i++) {
+    v_wnode *node = &t->wnodes[i];
+    sema_t *s = (sema_t *)node->sem;
+    if (s) {
+      v_wnode **pp = &s->observers; // unlink node from s->observers
+      while (*pp && *pp != node)
+        pp = &(*pp)->next;
+      if (*pp)
+        *pp = node->next;
+      if (ready < 0 && atomic_get(&s->count) > 0)
+        ready = node->idx;
+    }
+    node->sem = NULL;
+    node->next = NULL;
+  }
+  t->narm = 0;
+  EXIT_CRITICAL();
+  return ready;
+}
+
+// SYS_wait body (handler mode on the syscall path). Returns a ready fds[] index
+// immediately if one is ready (nothing armed), -1 for a non-blocking probe with
+// nothing ready, or V_SYSCALL_BLOCKED after arming observers and parking.
+int32_t v_wait_block_impl(const int *fds, int nfds, uint32_t ticks) {
+  TCB *cur = get_current_task();
+  ENTER_CRITICAL();
+  // Readiness scan first: a ready fd needs neither blocking nor registration.
+  for (int i = 0; i < nfds; i++) {
+    named_sem_t *ns = (named_sem_t *)v_fd_obj(fds[i], &ipc_sem_ops);
+    if (ns && atomic_get(&ns->sem.count) > 0) {
+      EXIT_CRITICAL();
+      return i;
+    }
+  }
+  if (ticks == 0) {
+    EXIT_CRITICAL();
+    return -1; // non-blocking probe, nothing ready
+  }
+  // Arm: link a node into each valid sem's observer list.
+  int k = 0;
+  for (int i = 0; i < nfds; i++) {
+    named_sem_t *ns = (named_sem_t *)v_fd_obj(fds[i], &ipc_sem_ops);
+    if (!ns)
+      continue; // skip bad fds
+    v_wnode *node = &cur->wnodes[k++];
+    node->sem = &ns->sem;
+    node->owner = cur;
+    node->idx = i;
+    node->next = ns->sem.observers;
+    ns->sem.observers = node;
+  }
+  cur->narm = (uint8_t)k;
+  if (k == 0) { // no valid fds
+    EXIT_CRITICAL();
+    return -1;
+  }
+  cur->in_multiwait = 1;
+  cur->status = TASK_BLOCKED;
+  cur->delay_ticks = (ticks == V_WAIT_FOREVER) ? 0u : v_get_ticks() + ticks;
+  add_to_blocked_list(cur);
+  EXIT_CRITICAL();
+  v_port_trigger_pendsv();
+
+#if VAIOS_SYSCALL_SVC
+  if (!v_in_thread_mode())
+    return V_SYSCALL_BLOCKED; // deferred: disarm + result handled after resume
+#endif
+  return V_MWAIT_WOKEN; // SVC-off fallback: switch already happened
+}
+
+// SYS_wait_disarm body: unlink this task's nodes, return the ready index.
+int32_t v_wait_disarm_impl(void) {
+  return mwait_disarm(get_current_task());
+}
+
+// Block until any of nfds sem fds is ready (a take would not block) or the
+// timeout elapses. Returns the fds[] index of a ready descriptor, or -1 on
+// timeout / bad args. Non-consuming: the caller then v_sem_take()s that fd.
+// ticks == V_WAIT_FOREVER waits indefinitely; ticks == 0 is a single probe.
+int v_wait(const int *fds, int nfds, uint32_t ticks) {
+  if (!fds || nfds <= 0 || nfds > VAIOS_MAX_FDS)
+    return -1;
+  int r = v_svc3(SYS_wait, (uint32_t)(uintptr_t)fds, (uint32_t)nfds, ticks);
+  if (r >= 0)
+    return r;                   // a fd was already ready (nothing was armed)
+  return v_svc0(SYS_wait_disarm); // blocked-then-woken / timeout: unlink + report
 }
 #endif // VAIOS_IPC_FD
 
