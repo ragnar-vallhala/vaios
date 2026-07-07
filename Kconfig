@@ -204,6 +204,20 @@ config VAIOS_MPU_NULL_GUARD
       NULL write traps with MMFSR DACCVIOL at addr 0x0).
 endmenu
 
+menu "Kernel/user separation (Phase 3)"
+config VAIOS_SYSCALL_SVC
+    bool "Route kernel entry through SVC syscalls"
+    depends on VAIOS_MPU_ENABLE
+    default n
+    help
+      Phase 3, Stage 1: generalise SVCall_Handler into a syscall dispatch and
+      route selected kernel entry points (task_yield, task_delay) through
+      `svc 1` instead of calling the kernel directly. Tasks stay PRIVILEGED, so
+      this only validates the SVC mechanism/ABI (number in r12, args in r0-r3,
+      negative-errno in r0) with zero isolation risk; the unprivileged flip and
+      pointer validation land in later stages. Off by default.
+endmenu
+
 menu "IPC"
 config MAX_SEMAPHORE_COUNT
     hex "Maximum counting-semaphore value"

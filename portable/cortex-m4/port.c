@@ -1,4 +1,5 @@
 #include "port.h"
+#include "syscall.h"
 #include "task.h"
 #include "utils.h"
 #include <stdint.h>
@@ -186,11 +187,18 @@ void DebugMon_Handler(void) {
 #define SCB_ICSR (*(volatile uint32_t *)0xE000ED04)
 #define PENDSVSET (1U << 28)
 void task_yield(void) {
+#if VAIOS_SYSCALL_SVC
+  /* Task-facing: trap into the kernel. Kernel-internal callers pend PendSV
+     directly via v_port_trigger_pendsv() — issuing svc from a handler / while
+     BASEPRI-masked would HardFault. */
+  v_svc0(SYS_yield);
+#else
   SCB_ICSR |= PENDSVSET;
 
   /* Data/Instruction barriers manually */
   asm volatile("dsb");
   asm volatile("isb");
+#endif
 }
 
 __attribute__((naked)) void scheduler_start(void) {
@@ -299,7 +307,56 @@ __attribute__((naked)) void PendSV_Handler(void) {
       : "r0", "r1", "r2", "r3");
 }
 
+/* SVCall_Handler. `svc 0` is the first-task launch trampoline (scheduler_start):
+   it loads the first task's saved context and returns onto PSP. When
+   VAIOS_SYSCALL_SVC is on, `svc 1` is a syscall: the number is the stacked r12,
+   arguments are the stacked r0-r3, and the result is written back into the
+   stacked r0 (see include/syscall.h, kernel/syscall.c). */
 __attribute__((naked)) void SVCall_Handler(void) {
+#if VAIOS_SYSCALL_SVC
+  __asm volatile(
+      /* Locate the exception frame: EXC_RETURN bit 2 selects PSP (1) vs MSP (0). */
+      "   mrs r2, msp                     \n"
+      "   tst lr, #4                      \n"
+      "   beq 20f                         \n"
+      "   mrs r2, psp                     \n"
+      "20:                                \n"
+      /* Frame = {r0,r1,r2,r3,r12,lr,pc,xpsr}. Read the svc immediate from the
+         halfword just before the stacked PC (offset 24). 0 = launch, else svc. */
+      "   ldr r1, [r2, #24]               \n"
+      "   ldrb r1, [r1, #-2]              \n"
+      "   cmp r1, #0                      \n"
+      "   bne 30f                         \n"
+      /* ---- svc 0: first-task launch (unchanged) ---- */
+      "   ldr r3, =current_task           \n"
+      "   ldr r1, [r3]                    \n"
+      "   ldr r0, [r1]                    \n"
+      "   ldmia r0!, {r4-r11,r14}        \n"
+#ifdef _FPU_ENABLED
+      "   tst r14, #0x10                  \n"
+      "   it eq                           \n"
+      "   vldmiaeq r0!, {s16-s31}         \n"
+#endif
+      "   msr psp, r0                     \n"
+      "   ldr r0, =0xE000E010             \n" /* SysTick CSR: enable ENABLE|TICKINT */
+      "   ldr r1, [r0]                    \n"
+      "   orr r1, r1, #3                  \n"
+      "   str r1, [r0]                    \n"
+      "   isb                             \n"
+      "   mov r0, #0                      \n"
+      "   msr basepri, r0                 \n"
+      "   bx r14                          \n"
+      /* ---- svc 1: syscall dispatch. r0=number (stacked r12), r1=frame ptr ---- */
+      "30:                                \n"
+      "   ldr r0, [r2, #16]               \n"
+      "   mov r1, r2                      \n"
+      "   push {r2, lr}                   \n"
+      "   bl v_syscall_dispatch           \n"
+      "   pop {r2, lr}                    \n"
+      "   str r0, [r2, #0]               \n" /* result -> stacked r0 */
+      "   bx lr                           \n"
+      "   .ltorg                          \n");
+#else
   __asm volatile(
       "   ldr r3, =current_task           \n" /* Restore the context. */
       "   ldr r1, [r3]                    \n" /* Get the pxCurrentTCB address.
@@ -330,6 +387,7 @@ __attribute__((naked)) void SVCall_Handler(void) {
       "   bx r14                          \n"
       "                                   \n"
       "   .ltorg                          \n");
+#endif
 }
 
 // Task stack initialization
