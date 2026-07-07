@@ -174,15 +174,15 @@ config VAIOS_MPU_GUARD_SIZE
 config VAIOS_MPU_STATIC_PROTECT
     bool "Static kernel/peripheral protection (Phase 2)"
     depends on VAIOS_MPU_ENABLE
-    default n
+    default y
     help
       Phase 2: program a static background MPU map that bites even while tasks
       are still privileged (PRIVDEFENA's privileged default is otherwise RWX
       everywhere). Safe core: SRAM execute-never (W^X, catches execute-from-RAM)
       and peripherals privileged-only device+XN. The per-task stack guard moves
-      to the top region so it still wins on overlap. Off until Renode/hardware
-      fault-injection validated. See docs/plan/MPU_CACHE_INTEGRATION_PLAN.md
-      Phase 2.
+      to the top region so it still wins on overlap. On by default when the MPU
+      is enabled (hardware fault-injection validated on the Nucleo-F401RE). See
+      docs/plan/MPU_CACHE_INTEGRATION_PLAN.md Phase 2.
 config VAIOS_MPU_FLASH_RO
     bool "Mark flash read-only (catch code/const corruption)"
     depends on VAIOS_MPU_STATIC_PROTECT
@@ -195,12 +195,13 @@ config VAIOS_MPU_FLASH_RO
 config VAIOS_MPU_NULL_GUARD
     bool "NULL / low-alias no-access trap (catch NULL derefs)"
     depends on VAIOS_MPU_STATIC_PROTECT
-    default n
+    default y
     help
       Add a no-access region at [0, 1 MB) to trap NULL and near-NULL derefs.
-      HAZARD: safe only if the startup sets SCB->VTOR to the flash vector table
-      (0x08000000). With VTOR=0 the exception vector fetch aliases to 0x0 and
-      this region faults every interrupt. Confirm VTOR before enabling.
+      v_port_mpu_init relocates SCB->VTOR to the flash vector table (0x08000000)
+      before arming this region, so exception vector fetches do not alias into
+      it. Hardware-validated on the Nucleo-F401RE (boots with the guard armed; a
+      NULL write traps with MMFSR DACCVIOL at addr 0x0).
 endmenu
 
 menu "IPC"
