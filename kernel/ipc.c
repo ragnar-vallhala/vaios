@@ -4,6 +4,7 @@
 #include "perf_hooks.h"
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL[_FROM_ISR]
 #include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
+#include "vfile.h" // fd table (VAIOS_IPC_FD)
 #include "task.h"
 #include "utils.h"
 
@@ -331,6 +332,107 @@ int v_semaphore_give(SemaphoreHandle_t sem) {
     return VA_FAIL;
   return semaphore_give_common((sema_t *)sem, NULL);
 }
+
+#if VAIOS_IPC_FD
+// --- fd-typed named semaphores (Stage 3) ------------------------------------
+// A named sem lives in this kernel table; tasks reference it by a per-task fd
+// (allocated in the fd table with ipc_sem_ops). Sharing is by name: each task
+// v_sem_open()s the same name and gets its own fd to the same object.
+#define MAX_NAMED_SEMS 8
+typedef struct {
+  char name[16];
+  sema_t sem;
+  int refcount;
+  uint8_t used;
+} named_sem_t;
+static named_sem_t named_sems[MAX_NAMED_SEMS];
+
+static int sname_eq(const char *a, const char *b) {
+  int i = 0;
+  while (a[i] && a[i] == b[i])
+    i++;
+  return a[i] == b[i];
+}
+static named_sem_t *named_sem_find(const char *name) {
+  for (int i = 0; i < MAX_NAMED_SEMS; i++)
+    if (named_sems[i].used && sname_eq(named_sems[i].name, name))
+      return &named_sems[i];
+  return NULL;
+}
+
+// fd close op: drop a reference; reclaim the named sem at refcount 0.
+static int ipc_sem_close(void *priv) {
+  named_sem_t *ns = (named_sem_t *)priv;
+  uint32_t st = ENTER_CRITICAL_FROM_ISR();
+  if (ns->refcount > 0 && --ns->refcount == 0)
+    ns->used = 0;
+  EXIT_CRITICAL_FROM_ISR(st);
+  return 0;
+}
+static const v_file_ops ipc_sem_ops = {
+    .read = NULL, .write = NULL, .close = ipc_sem_close};
+
+int v_sem_open(const char *name, int flags) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_sem_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
+#endif
+  ENTER_CRITICAL();
+  named_sem_t *ns = named_sem_find(name);
+  if (!ns) {
+    if (!(flags & V_IPC_CREATE)) {
+      EXIT_CRITICAL();
+      return -1;
+    }
+    for (int i = 0; i < MAX_NAMED_SEMS; i++)
+      if (!named_sems[i].used) {
+        ns = &named_sems[i];
+        break;
+      }
+    if (!ns) {
+      EXIT_CRITICAL();
+      return -1;
+    }
+    int j = 0;
+    while (name[j] && j < 15) {
+      ns->name[j] = name[j];
+      j++;
+    }
+    ns->name[j] = '\0';
+    sema_init(&ns->sem, 0, 1); // binary
+    ns->refcount = 0;
+    ns->used = 1;
+  }
+  ns->refcount++;
+  EXIT_CRITICAL();
+  int fd = v_fd_alloc(&ipc_sem_ops, ns);
+  if (fd < 0)
+    ipc_sem_close(ns); // undo the ref we took
+  return fd;
+}
+
+int v_sem_take(int fd, uint32_t ticks_to_wait) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_sem_take_fd, (uint32_t)fd, ticks_to_wait);
+#endif
+  named_sem_t *ns = (named_sem_t *)v_fd_obj(fd, &ipc_sem_ops);
+  if (!ns)
+    return VA_FAIL;
+  return semaphore_take_common(&ns->sem, ticks_to_wait);
+}
+
+int v_sem_give(int fd) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc1(SYS_sem_give_fd, (uint32_t)fd);
+#endif
+  named_sem_t *ns = (named_sem_t *)v_fd_obj(fd, &ipc_sem_ops);
+  if (!ns)
+    return VA_FAIL;
+  return semaphore_give_common(&ns->sem, NULL);
+}
+#endif // VAIOS_IPC_FD
 
 int vaios_isr_priority_is_safe(uint32_t vectactive, uint32_t irq_prio) {
   if (vectactive < 16u)

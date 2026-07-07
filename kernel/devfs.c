@@ -78,6 +78,24 @@ static v_fd_entry *fd_lookup(int fd) {
   return e->ops ? e : NULL;
 }
 
+int v_fd_alloc(const v_file_ops *ops, void *priv) {
+  for (int fd = 0; fd < VAIOS_MAX_FDS; fd++) {
+    if (current_task->fds[fd].ops == NULL) {
+      current_task->fds[fd].ops = ops;
+      current_task->fds[fd].priv = priv;
+      return fd;
+    }
+  }
+  return -1; // no free descriptor
+}
+
+void *v_fd_obj(int fd, const v_file_ops *ops) {
+  v_fd_entry *e = fd_lookup(fd);
+  if (!e || e->ops != ops) // type check: must be exactly this kind of object
+    return NULL;
+  return e->priv;
+}
+
 // --- file API (trap-once: task traps via svc; dispatch runs the body) -------
 int v_file_open(const char *path, int flags) {
 #if VAIOS_SYSCALL_SVC
@@ -88,14 +106,7 @@ int v_file_open(const char *path, int flags) {
   dev_node_t *node = dev_find(path);
   if (!node)
     return -1; // no such device
-  for (int fd = 0; fd < VAIOS_MAX_FDS; fd++) {
-    if (current_task->fds[fd].ops == NULL) {
-      current_task->fds[fd].ops = node->ops;
-      current_task->fds[fd].priv = node->priv;
-      return fd;
-    }
-  }
-  return -1; // no free descriptor
+  return v_fd_alloc(node->ops, node->priv);
 }
 
 int v_file_write(int fd, const void *buf, uint32_t len) {

@@ -60,6 +60,19 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
   case SYS_close:
     return v_file_close((int)args[0]);
 #endif
+#if VAIOS_IPC_FD
+  case SYS_sem_open:
+    /* find-or-create a named sem, allocate an fd in the caller's table.
+       args[0] = name, args[1] = flags. */
+    return v_sem_open((const char *)(uintptr_t)args[0], (int)args[1]);
+  case SYS_sem_take_fd:
+    /* Blocking, deferred-result (like SYS_sem_take). args[0] = fd,
+       args[1] = ticks. */
+    return v_sem_take((int)args[0], args[1]);
+  case SYS_sem_give_fd:
+    /* Non-blocking. args[0] = fd. */
+    return v_sem_give((int)args[0]);
+#endif
   default:
     return -1; /* unknown syscall */
   }

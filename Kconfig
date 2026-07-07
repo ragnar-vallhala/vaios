@@ -230,6 +230,17 @@ config VAIOS_MAX_FDS
     int "File descriptors per task"
     depends on VAIOS_DEVFS
     default 8
+config VAIOS_IPC_FD
+    bool "fd-typed IPC (named semaphores on the fd table)"
+    depends on VAIOS_DEVFS
+    default n
+    help
+      Phase 3, Stage 3: IPC objects live on the per-task fd table. A named
+      semaphore is opened with v_sem_open("/sem/name", flags) -> a per-task fd;
+      v_sem_take(fd)/v_sem_give(fd) are typed syscalls that resolve fd -> object;
+      close(fd) drops the reference (object destroyed at refcount 0). This
+      removes the raw kernel pointer from user handles and gives per-task
+      capability isolation. The pointer-based v_semaphore_* API still exists.
 endmenu
 
 menu "IPC"

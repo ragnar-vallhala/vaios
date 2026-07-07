@@ -49,6 +49,14 @@ int v_file_read(int fd, void *buf, uint32_t len);
 int v_file_write(int fd, const void *buf, uint32_t len);
 int v_file_close(int fd);
 
+// Allocate an fd in the current task's table for (ops, priv). Returns the fd or
+// a negative error. Used by open() and by fd-typed IPC (v_sem_open).
+int v_fd_alloc(const v_file_ops *ops, void *priv);
+
+// Return the private data of `fd` if its op-table is exactly `ops` (a type
+// check, so a sem fd can't be used as a console fd), else NULL.
+void *v_fd_obj(int fd, const v_file_ops *ops);
+
 // Initialise a task's fd table (all slots free). Called from task creation.
 void v_fd_table_init(struct Task_Control_Block *t);
 
