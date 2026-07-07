@@ -146,6 +146,16 @@ config VAIOS_HEAP_ALGO_SEGLIST
 config VAIOS_HEAP_ALGO_TLSF
     bool "TLSF (O(1) worst-case malloc + free, bounded fragmentation)"
 endchoice
+
+config VAIOS_TASK_ARENA
+    bool "Per-task private heap arena"
+    default n
+    help
+      Phase 3, Stage 4: each task can carve a private heap arena from the kernel
+      heap with v_task_arena_create(size). v_task_malloc/v_task_free then serve
+      that task from its own arena only — no sharing, no kernel free-list walk.
+      The arena is a contiguous owned region: the substrate the unprivileged flip
+      (Stage 5) makes the task's sole writable heap under the MPU.
 endmenu
 
 menu "Memory protection (MPU)"

@@ -92,6 +92,13 @@ typedef struct Task_Control_Block {
 #if VAIOS_DEVFS
   v_fd_entry fds[VAIOS_MAX_FDS]; // per-task file-descriptor table (Stage 2)
 #endif
+#if VAIOS_TASK_ARENA
+  // Private heap arena (Stage 4). A contiguous region carved from the kernel
+  // heap by v_task_arena_create; v_task_malloc/free serve this task from here
+  // only. NULL base = no arena. Stage 5 makes this the task's writable heap.
+  void *arena_base;
+  uint32_t arena_size;
+#endif
 #if VAIOS_IPC_FD
   // Multi-fd wait (v_wait). While blocked in v_wait, in_multiwait == 1 and
   // wnodes[0..narm) are linked into the watched sems' observer lists; the give

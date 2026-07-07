@@ -250,6 +250,10 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->in_multiwait = 0; // not in v_wait()
   task->narm = 0;
 #endif
+#if VAIOS_TASK_ARENA
+  task->arena_base = NULL; // no private arena until v_task_arena_create()
+  task->arena_size = 0;
+#endif
   init_task_stack(task);
 
   ENTER_CRITICAL();
@@ -409,6 +413,12 @@ void idle_task_function(void *arg) {
           v_free(to_free->mem_block);
           to_free->mem_block = NULL;
         }
+#if VAIOS_TASK_ARENA
+        if (to_free->arena_base) {
+          v_free(to_free->arena_base); // return the arena to the kernel heap
+          to_free->arena_base = NULL;
+        }
+#endif
         v_free(to_free);
       }
     }
