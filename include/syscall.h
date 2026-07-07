@@ -28,9 +28,7 @@ typedef enum {
   SYS_yield = 1,
   SYS_delay = 2,
   SYS_sem_give = 3,
-  /* SYS_sem_take (blocking) is deferred: its result depends on post-wake state,
-     which needs deferred-result delivery (the switch is deferred to handler
-     return, so an inline resume-check would spuriously time out). */
+  SYS_sem_take = 4,
   SYS_MAX
 } v_syscall_t;
 
@@ -38,6 +36,22 @@ typedef enum {
 // `args` points at the task's stacked {r0,r1,r2,r3}; the return value is written
 // back into args[0] by the handler.
 int32_t v_syscall_dispatch(uint32_t num, uint32_t *args);
+
+// --- Deferred-result blocking ------------------------------------------------
+// A blocking syscall (sem_take, mutex_lock) can't return its result inline: the
+// context switch is deferred to SVCall return, so the outcome (granted vs
+// timeout) isn't known when the handler runs. The blocking primitive returns
+// V_SYSCALL_BLOCKED (a placeholder, overwritten later); the waker stashes the
+// real result in the TCB via v_syscall_wake_result(); and PendSV writes it into
+// the resumed task's stacked r0 via v_syscall_deliver_result() at schedule-in
+// (sp is stable then, so there is no race with the block-then-switch window).
+#define V_SYSCALL_BLOCKED 0x7FFF0000 /* placeholder r0; replaced on resume */
+
+struct Task_Control_Block;
+// Waker: stash `result` to hand to blocked task `t` when it next runs.
+void v_syscall_wake_result(struct Task_Control_Block *t, int32_t result);
+// PendSV hook: deliver any pending result into the incoming task's stacked r0.
+void v_syscall_deliver_result(void);
 
 #if VAIOS_SYSCALL_SVC
 
@@ -64,6 +78,14 @@ __attribute__((always_inline)) static inline int32_t v_svc1(uint32_t n,
   register uint32_t r12 __asm__("r12") = n;
   register uint32_t r0 __asm__("r0") = a0;
   __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12) : "memory");
+  return (int32_t)r0;
+}
+__attribute__((always_inline)) static inline int32_t
+v_svc2(uint32_t n, uint32_t a0, uint32_t a1) {
+  register uint32_t r12 __asm__("r12") = n;
+  register uint32_t r0 __asm__("r0") = a0;
+  register uint32_t r1 __asm__("r1") = a1;
+  __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1) : "memory");
   return (int32_t)r0;
 }
 

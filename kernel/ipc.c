@@ -183,9 +183,18 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   EXIT_CRITICAL();
   v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 
-  // On resume: semaphore_give clears wait_sem → VA_PASS (slot granted)
-  //            wake_up_delayed_tasks() ejects us with wait_sem still set →
-  //            VA_FAIL (timeout)
+#if VAIOS_SYSCALL_SVC
+  if (!v_in_thread_mode()) {
+    // Reached via a syscall (handler mode): the switch is deferred to SVCall
+    // return, so we cannot resume-check inline (wait_sem is still set). Return a
+    // placeholder; the waker (give / timeout) stashes the real result and PendSV
+    // delivers it into our stacked r0 when we are next scheduled in.
+    return V_SYSCALL_BLOCKED;
+  }
+#endif
+  // Thread-mode (direct call) or SVC off: the switch already happened, so resume
+  // here. semaphore_give cleared wait_sem → VA_PASS; a timeout left it set →
+  // VA_FAIL.
   if (current->wait_sem != NULL) {
     current->wait_sem = NULL;
     PERF_IPC_TIMEOUT();
@@ -195,6 +204,10 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
 }
 
 int v_semaphore_take(SemaphoreHandle_t sem, uint32_t ticks_to_wait) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc2(SYS_sem_take, (uint32_t)(uintptr_t)sem, ticks_to_wait);
+#endif
   if (!sem)
     return VA_FAIL;
   return semaphore_take_common((sema_t *)sem, ticks_to_wait);
@@ -270,6 +283,10 @@ static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
     remove_from_blocked_list(to_unblock);
     to_unblock->status = TASK_READY;
     add_to_ready_list(to_unblock);
+#if VAIOS_SYSCALL_SVC
+    // Deliver VA_PASS to a syscall-blocked take() when it next runs.
+    v_syscall_wake_result(to_unblock, VA_PASS);
+#endif
 
     if (pxHigherPriorityTaskWoken &&
         to_unblock->priority > get_current_task()->priority)

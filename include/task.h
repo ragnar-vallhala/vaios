@@ -66,6 +66,13 @@ typedef struct Task_Control_Block {
   uint32_t mpu_guard[2];
   uint8_t mpu_guard_valid;
 #endif
+#if VAIOS_SYSCALL_SVC
+  // Deferred blocking-syscall result: set by the waker (v_syscall_wake_result)
+  // and written into this task's stacked r0 by PendSV (v_syscall_deliver_result)
+  // when it is next scheduled in, so a blocked sem_take/mutex_lock returns it.
+  int32_t syscall_result;
+  uint8_t has_syscall_result;
+#endif
   uint32_t magic; // Sanity check (must be TCB_MAGIC)
 } TCB;
 

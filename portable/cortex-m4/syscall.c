@@ -35,9 +35,41 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
     /* Non-blocking: signal + maybe wake a waiter (result known immediately).
        args[0] = semaphore handle. */
     return v_semaphore_give((SemaphoreHandle_t)(uintptr_t)args[0]);
+  case SYS_sem_take:
+    /* Blocking: the body runs in handler mode; if it blocks it returns
+       V_SYSCALL_BLOCKED and the real result (VA_PASS/VA_FAIL) is delivered on
+       resume. args[0] = handle, args[1] = ticks. */
+    return v_semaphore_take((SemaphoreHandle_t)(uintptr_t)args[0], args[1]);
   default:
     return -1; /* unknown syscall */
   }
+}
+
+/* --- Deferred blocking-syscall result delivery --------------------------- */
+extern TCB *current_task;
+
+void v_syscall_wake_result(TCB *t, int32_t result) {
+  t->syscall_result = result;
+  t->has_syscall_result = 1;
+}
+
+/* Called from PendSV after set_next_task, before the register restore. If the
+   incoming task has a pending blocking-syscall result, write it into its
+   hardware-stacked r0 (the syscall's return value). Layout from task->sp:
+   [r4-r11, r14=EXC_RETURN] (9 words), [s16-s31 if FPU], then the HW frame
+   {r0,r1,r2,r3,r12,lr,pc,xpsr}. */
+void v_syscall_deliver_result(void) {
+  TCB *t = current_task;
+  if (!t || !t->has_syscall_result)
+    return;
+  uint32_t *sp = t->sp;
+  uint32_t off = 9u; /* r4-r11, r14 */
+#ifdef _FPU_ENABLED
+  if (!(sp[8] & 0x10u)) /* EXC_RETURN bit4 == 0: FPU context was stacked */
+    off += 16u;
+#endif
+  sp[off] = (uint32_t)t->syscall_result; /* hardware-frame r0 */
+  t->has_syscall_result = 0;
 }
 
 #endif /* VAIOS_SYSCALL_SVC */

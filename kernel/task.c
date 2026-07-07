@@ -558,6 +558,10 @@ int wake_up_delayed_tasks_isr(void) {
       task->delay_ticks = 0;
       task->status = TASK_READY;
       add_to_ready_list(task);
+#if VAIOS_SYSCALL_SVC
+      // Deliver VA_FAIL to a syscall-blocked take() that timed out.
+      v_syscall_wake_result(task, VA_FAIL);
+#endif
       if (current_task && task->priority > current_task->priority)
         higher_woken = 1;
     }

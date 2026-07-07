@@ -277,6 +277,9 @@ __attribute__((naked)) void PendSV_Handler(void) {
       "   isb                                 \n"
       "   bl set_next_task                    \n"
       "   bl v_port_apply_current_mpu         \n" /* swap task MPU regions */
+#if VAIOS_SYSCALL_SVC
+      "   bl v_syscall_deliver_result         \n" /* deliver blocked syscall r0 */
+#endif
       "   mov r0, #0                          \n"
       "   msr basepri, r0                     \n"
       "ldr r3, =current_task\n"
