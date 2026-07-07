@@ -14,6 +14,13 @@ set(CMAKE_OBJCOPY ${TOOLCHAIN_PREFIX}objcopy)
 set(CMAKE_BINARY_SIZE ${TOOLCHAIN_PREFIX}size)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
+
+# Enable $<LINK_GROUP:RESCAN,...> for C (GNU ld --start-group/--end-group). Used
+# to resolve the static-lib cycle between the kernel (vaios) and portable libs
+# introduced by the SVC syscall dispatch. Not predefined for the bare 'C'
+# language, so define it here.
+set(CMAKE_C_LINK_GROUP_USING_RESCAN_SUPPORTED TRUE)
+set(CMAKE_C_LINK_GROUP_USING_RESCAN "LINKER:--start-group" "LINKER:--end-group")
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(vaios C ASM)
 else()

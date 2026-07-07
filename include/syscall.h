@@ -31,6 +31,10 @@ typedef enum {
   SYS_sem_take = 4,
   SYS_mutex_lock = 5,
   SYS_mutex_unlock = 6,
+  SYS_open = 7,
+  SYS_write = 8,
+  SYS_read = 9,
+  SYS_close = 10,
   SYS_MAX
 } v_syscall_t;
 
@@ -89,6 +93,15 @@ v_svc2(uint32_t n, uint32_t a0, uint32_t a1) {
   register uint32_t r0 __asm__("r0") = a0;
   register uint32_t r1 __asm__("r1") = a1;
   __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1) : "memory");
+  return (int32_t)r0;
+}
+__attribute__((always_inline)) static inline int32_t
+v_svc3(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
+  register uint32_t r12 __asm__("r12") = n;
+  register uint32_t r0 __asm__("r0") = a0;
+  register uint32_t r1 __asm__("r1") = a1;
+  register uint32_t r2 __asm__("r2") = a2;
+  __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1), "r"(r2) : "memory");
   return (int32_t)r0;
 }
 
