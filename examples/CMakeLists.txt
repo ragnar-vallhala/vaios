@@ -37,6 +37,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "STACK_OVERFLOW")
   add_executable(main stack_overflow.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "MPU_FAULT")
   add_executable(main mpu_fault.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "DEVFS_TEST")
+  add_executable(main devfs_test.c ${STARTUP_FILE})
   # Probe select: 0=W^X (default), 1=NULL guard, 2=flash-RO. -DMPU_FAULT_MODE=N
   if(DEFINED MPU_FAULT_MODE)
     target_compile_definitions(main PRIVATE MPU_FAULT_MODE=${MPU_FAULT_MODE})
@@ -79,19 +81,15 @@ elseif(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
 endif()
 
 if(TARGET main)
-  if(NAVHAL)
-    target_link_libraries(main PRIVATE
-        -lgcc
-        -lm
-        vaios
-    )
-  else()
-    target_link_libraries(main PRIVATE
-        -lgcc
-        -lm
-        vaios
-    )
-  endif()
+  # The SVC dispatch (portable/syscall.c) calls kernel functions (ipc, devfs),
+  # and the kernel calls back into portable — a static-lib cycle. RESCAN so the
+  # linker resolves the cross-references regardless of order, even for examples
+  # that don't otherwise pull a syscall's target (e.g. MULTI_TASK vs sems).
+  target_link_libraries(main PRIVATE
+      -lgcc
+      -lm
+      "$<LINK_GROUP:RESCAN,vaios,portable>"
+  )
 
   add_custom_target(flash
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:main> ${CMAKE_CURRENT_BINARY_DIR}/main.bin

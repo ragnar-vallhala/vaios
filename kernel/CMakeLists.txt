@@ -1,4 +1,4 @@
-FILE(GLOB_RECURSE VAIOS_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/*.c)
+FILE(GLOB_RECURSE VAIOS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.c)
 
 # Arch/hardware backends (semihosting, the QEMU interrupt shim) now live in
 # portable/cortex-m4/ behind the port facade — the kernel proper is
@@ -10,7 +10,8 @@ if(NOT VAIOS_MODULE_TERMINAL)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "terminal\\.c$")
 endif()
 if(NOT VAIOS_MODULE_VFS)
-  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "vfs\\.c$")
+  # Anchor to the filename (leading /) so this does not also drop devfs.c.
+  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "/vfs\\.c$")
 endif()
 if(NOT VAIOS_MODULE_FIFO)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "structure\\.c$")
