@@ -41,6 +41,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "DEVFS_TEST")
   add_executable(main devfs_test.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "FD_IPC_TEST")
   add_executable(main fd_ipc_test.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "FD_WAIT_TEST")
+  add_executable(main fd_wait_test.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "KMSG_TEST")
   add_executable(main kmsg_test.c ${STARTUP_FILE})
   # Probe select: 0=W^X (default), 1=NULL guard, 2=flash-RO. -DMPU_FAULT_MODE=N
