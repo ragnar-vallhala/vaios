@@ -8,6 +8,11 @@
 #include "task.h"
 #include "utils.h"
 
+// Mutex acquire/release cores (defined below): shared by the pointer API and,
+// under VAIOS_IPC_FD, the fd-typed API, which is defined earlier in the file.
+static int mutex_lock_common(rmutex_t *rm, uint32_t ticks_to_wait);
+static int mutex_unlock_common(rmutex_t *rm);
+
 //-----------------------------------------------------------------------------
 // Wait Queue Helpers (priority-ordered, highest priority at head)
 //-----------------------------------------------------------------------------
@@ -224,14 +229,10 @@ static uint32_t mutex_top_waiter_prio(rmutex_t *rm) {
   return rm->base.wait_q ? rm->base.wait_q->priority : 0;
 }
 
-int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
-  if (!mtx)
-    return VA_FAIL;
-#if VAIOS_SYSCALL_SVC
-  if (v_in_thread_mode()) // task-facing: trap into the kernel
-    return v_svc2(SYS_mutex_lock, (uint32_t)(uintptr_t)mtx, ticks_to_wait);
-#endif
-  rmutex_t *rm = (rmutex_t *)mtx;
+// Core mutex acquire (no trap guard): shared by the pointer API (v_mutex_lock)
+// and the fd API (v_mtx_lock). Runs privileged, in handler mode on the syscall
+// path. Returns VA_PASS / VA_FAIL, or V_SYSCALL_BLOCKED when it deferred.
+static int mutex_lock_common(rmutex_t *rm, uint32_t ticks_to_wait) {
   TCB *current = get_current_task();
 
   ENTER_CRITICAL();
@@ -283,6 +284,16 @@ int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   }
   EXIT_CRITICAL();
   return res;
+}
+
+int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
+  if (!mtx)
+    return VA_FAIL;
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc2(SYS_mutex_lock, (uint32_t)(uintptr_t)mtx, ticks_to_wait);
+#endif
+  return mutex_lock_common((rmutex_t *)mtx, ticks_to_wait);
 }
 
 static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
@@ -436,6 +447,137 @@ int v_sem_give(int fd) {
     return VA_FAIL;
   return semaphore_give_common(&ns->sem, NULL);
 }
+
+// --- fd-typed named mutexes -------------------------------------------------
+// Same model as named semaphores, but the object is a priority-inheriting
+// mutex. Lock/unlock resolve fd -> rmutex_t and reuse the pointer API's cores.
+#define MAX_NAMED_MTXS 8
+typedef struct {
+  char name[16];
+  rmutex_t mtx;
+  int refcount;
+  uint8_t used;
+} named_mtx_t;
+static named_mtx_t named_mtxs[MAX_NAMED_MTXS];
+
+static named_mtx_t *named_mtx_find(const char *name) {
+  for (int i = 0; i < MAX_NAMED_MTXS; i++)
+    if (named_mtxs[i].used && sname_eq(named_mtxs[i].name, name))
+      return &named_mtxs[i];
+  return NULL;
+}
+
+static int ipc_mtx_close(void *priv) {
+  named_mtx_t *nm = (named_mtx_t *)priv;
+  uint32_t st = ENTER_CRITICAL_FROM_ISR();
+  if (nm->refcount > 0 && --nm->refcount == 0)
+    nm->used = 0;
+  EXIT_CRITICAL_FROM_ISR(st);
+  return 0;
+}
+static const v_file_ops ipc_mtx_ops = {
+    .read = NULL, .write = NULL, .close = ipc_mtx_close};
+
+int v_mtx_open(const char *name, int flags) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_mtx_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
+#endif
+  ENTER_CRITICAL();
+  named_mtx_t *nm = named_mtx_find(name);
+  if (!nm) {
+    if (!(flags & V_IPC_CREATE)) {
+      EXIT_CRITICAL();
+      return -1;
+    }
+    for (int i = 0; i < MAX_NAMED_MTXS; i++)
+      if (!named_mtxs[i].used) {
+        nm = &named_mtxs[i];
+        break;
+      }
+    if (!nm) {
+      EXIT_CRITICAL();
+      return -1;
+    }
+    int j = 0;
+    while (name[j] && j < 15) {
+      nm->name[j] = name[j];
+      j++;
+    }
+    nm->name[j] = '\0';
+    sema_init(&nm->mtx.base, 1, 1); // mutex: initially available
+    nm->mtx.owner = NULL;
+    nm->mtx.recursion_count = 0;
+    nm->mtx.next_held = NULL;
+    nm->refcount = 0;
+    nm->used = 1;
+  }
+  nm->refcount++;
+  EXIT_CRITICAL();
+  int fd = v_fd_alloc(&ipc_mtx_ops, nm);
+  if (fd < 0)
+    ipc_mtx_close(nm); // undo the ref we took
+  return fd;
+}
+
+int v_mtx_lock(int fd, uint32_t ticks_to_wait) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_mtx_lock_fd, (uint32_t)fd, ticks_to_wait);
+#endif
+  named_mtx_t *nm = (named_mtx_t *)v_fd_obj(fd, &ipc_mtx_ops);
+  if (!nm)
+    return VA_FAIL;
+  return mutex_lock_common(&nm->mtx, ticks_to_wait);
+}
+
+int v_mtx_unlock(int fd) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc1(SYS_mtx_unlock_fd, (uint32_t)fd);
+#endif
+  named_mtx_t *nm = (named_mtx_t *)v_fd_obj(fd, &ipc_mtx_ops);
+  if (!nm)
+    return VA_FAIL;
+  return mutex_unlock_common(&nm->mtx);
+}
+
+// --- v_sem_poll / v_wait ----------------------------------------------------
+// Non-consuming readiness probe: 1 if a v_sem_take(fd) would succeed right now
+// (the named sem has a pending give), 0 if it would block, negative on bad fd.
+int v_sem_poll(int fd) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc1(SYS_sem_poll, (uint32_t)fd);
+#endif
+  named_sem_t *ns = (named_sem_t *)v_fd_obj(fd, &ipc_sem_ops);
+  if (!ns)
+    return -1;
+  return atomic_get(&ns->sem.count) > 0 ? 1 : 0;
+}
+
+// Wait until any of nfds sem fds is ready (a take would not block), or the
+// timeout elapses. Returns the INDEX into fds[] of a ready descriptor, or -1 on
+// timeout / bad args. Non-consuming: the caller then v_sem_take()s that fd.
+//
+// A poll-loop primitive: it probes readiness and, if none is ready, sleeps one
+// tick and retries — latency is bounded by one tick and a waiter wakes once per
+// tick. It composes syscalls (v_sem_poll + task_delay) so it runs entirely in
+// thread mode and needs no scheduler changes; a future O(1) blocking multi-wait
+// can replace the body without touching the interface. ticks == V_WAIT_FOREVER
+// waits indefinitely; ticks == 0 is a single non-blocking probe.
+int v_wait(const int *fds, int nfds, uint32_t ticks) {
+  if (!fds || nfds <= 0)
+    return -1;
+  for (uint32_t waited = 0;; waited++) {
+    for (int i = 0; i < nfds; i++)
+      if (v_sem_poll(fds[i]) > 0)
+        return i;
+    if (ticks != V_WAIT_FOREVER && waited >= ticks)
+      return -1; // timed out
+    task_delay(1); // yield ~one tick, then re-probe
+  }
+}
 #endif // VAIOS_IPC_FD
 
 int vaios_isr_priority_is_safe(uint32_t vectactive, uint32_t irq_prio) {
@@ -465,14 +607,8 @@ int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
   return semaphore_give_common((sema_t *)sem, pxHigherPriorityTaskWoken);
 }
 
-int v_mutex_unlock(MutexHandle_t mtx) {
-  if (!mtx)
-    return VA_FAIL;
-#if VAIOS_SYSCALL_SVC
-  if (v_in_thread_mode()) // task-facing: trap into the kernel
-    return v_svc1(SYS_mutex_unlock, (uint32_t)(uintptr_t)mtx);
-#endif
-  rmutex_t *rm = (rmutex_t *)mtx;
+// Core mutex release (no trap guard): shared by v_mutex_unlock and v_mtx_unlock.
+static int mutex_unlock_common(rmutex_t *rm) {
   TCB *current = get_current_task();
 
   ENTER_CRITICAL();
@@ -531,6 +667,16 @@ int v_mutex_unlock(MutexHandle_t mtx) {
   atomic_inc(&rm->base.count);
   EXIT_CRITICAL();
   return VA_PASS;
+}
+
+int v_mutex_unlock(MutexHandle_t mtx) {
+  if (!mtx)
+    return VA_FAIL;
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc1(SYS_mutex_unlock, (uint32_t)(uintptr_t)mtx);
+#endif
+  return mutex_unlock_common((rmutex_t *)mtx);
 }
 
 int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait) {

@@ -77,6 +77,18 @@ int v_semaphore_give(SemaphoreHandle_t sem);
 int v_sem_open(const char *name, int flags);
 int v_sem_take(int fd, uint32_t ticks_to_wait);
 int v_sem_give(int fd);
+
+// fd-typed named mutexes (priority-inheriting). Same open-by-name model.
+int v_mtx_open(const char *name, int flags);
+int v_mtx_lock(int fd, uint32_t ticks_to_wait);
+int v_mtx_unlock(int fd);
+
+// Readiness probe + multi-fd wait. v_sem_poll returns 1 if a take on that fd
+// would succeed now, 0 if it would block, negative on a bad fd (non-consuming).
+// v_wait blocks until any of nfds sem fds is ready or the timeout elapses,
+// returning the index into fds[] of a ready descriptor, or -1 on timeout.
+int v_sem_poll(int fd);
+int v_wait(const int *fds, int nfds, uint32_t ticks);
 #endif
 
 // ISR-safe give

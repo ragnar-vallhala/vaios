@@ -38,6 +38,10 @@ typedef enum {
   SYS_sem_open = 11,     // fd-typed IPC (VAIOS_IPC_FD)
   SYS_sem_take_fd = 12,
   SYS_sem_give_fd = 13,
+  SYS_mtx_open = 14,
+  SYS_mtx_lock_fd = 15,
+  SYS_mtx_unlock_fd = 16,
+  SYS_sem_poll = 17,
   SYS_MAX
 } v_syscall_t;
 

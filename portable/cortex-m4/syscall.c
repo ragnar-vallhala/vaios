@@ -72,6 +72,18 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
   case SYS_sem_give_fd:
     /* Non-blocking. args[0] = fd. */
     return v_sem_give((int)args[0]);
+  case SYS_mtx_open:
+    /* find-or-create a named mutex, allocate an fd. args[0]=name, args[1]=flags. */
+    return v_mtx_open((const char *)(uintptr_t)args[0], (int)args[1]);
+  case SYS_mtx_lock_fd:
+    /* Blocking, deferred-result (like SYS_mutex_lock). args[0]=fd, args[1]=ticks. */
+    return v_mtx_lock((int)args[0], args[1]);
+  case SYS_mtx_unlock_fd:
+    /* Non-blocking direct handoff. args[0]=fd. */
+    return v_mtx_unlock((int)args[0]);
+  case SYS_sem_poll:
+    /* Non-consuming readiness probe. args[0]=fd. */
+    return v_sem_poll((int)args[0]);
 #endif
   default:
     return -1; /* unknown syscall */
