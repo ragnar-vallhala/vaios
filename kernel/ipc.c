@@ -163,9 +163,13 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
     return VA_FAIL; // would block
   }
 
-  // Block task and enqueue in semaphore wait queue
+  // Block task and enqueue in semaphore wait queue. V_WAIT_FOREVER parks the
+  // waiter with delay_ticks == 0, which the SysTick timeout scan treats as "no
+  // deadline" (it only ejects waiters with a nonzero, expired delay_ticks) — so
+  // the task waits until an explicit give/handoff, never a timeout.
   current->status = TASK_BLOCKED;
-  current->delay_ticks = v_get_ticks() + ticks_to_wait;
+  current->delay_ticks =
+      (ticks_to_wait == V_WAIT_FOREVER) ? 0u : v_get_ticks() + ticks_to_wait;
   current->wait_sem = s; // track which semaphore we are waiting on
   wait_q_enqueue(s, current);
   add_to_blocked_list(

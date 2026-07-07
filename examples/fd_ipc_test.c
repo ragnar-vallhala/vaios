@@ -15,12 +15,9 @@
  * If the named registry, fd allocation, fd->object resolution, and the blocking
  * deferred-result path all work, you get an alternating ping/pong on the UART.
  *
- * Note on the timeout: the kernel has no "wait forever" sentinel — ticks_to_wait
- * is a finite deadline (now + ticks), so 0xFFFFFFFF would overflow into the past
- * and time out immediately. The partner always replies promptly, so a generous
- * finite timeout blocks cleanly until the handshake completes.
+ * Each side blocks with V_WAIT_FOREVER — the handshake has no timeout, it just
+ * waits for the partner's signal.
  */
-#define WAIT_TICKS 5000u
 
 void pinger_task(void *arg) {
   (void)arg;
@@ -31,7 +28,7 @@ void pinger_task(void *arg) {
   for (int i = 0;; i++) {
     printk("[fd-ipc] ping %d\r\n", i);
     v_sem_give(ping);            // wake the ponger
-    v_sem_take(pong, WAIT_TICKS); // wait for its reply
+    v_sem_take(pong, V_WAIT_FOREVER); // wait for its reply
     v_delay(500);
   }
 }
@@ -43,7 +40,7 @@ void ponger_task(void *arg) {
   printk("[fd-ipc] ponger: ping=fd%d pong=fd%d\r\n", ping, pong);
 
   for (;;) {
-    v_sem_take(ping, WAIT_TICKS); // wait for a ping
+    v_sem_take(ping, V_WAIT_FOREVER); // wait for a ping
     printk("[fd-ipc]   pong\r\n");
     v_sem_give(pong);               // reply
   }

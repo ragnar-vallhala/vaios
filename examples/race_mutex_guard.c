@@ -38,7 +38,7 @@ static MutexHandle_t mtx;
 static void worker(void *arg) {
   uint32_t id = (uint32_t)(uintptr_t)arg;
   for (uint32_t i = 0; i < ITERS; i++) {
-    v_mutex_lock(mtx, 0xFFFFFFFFu);
+    v_mutex_lock(mtx, V_WAIT_FOREVER);
     uint32_t t = counter; /* read-modify-write — the lock makes it atomic versus */
     counter = t + 1u;     /* the other worker even if preemption lands in between */
     v_mutex_unlock(mtx);

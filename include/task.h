@@ -146,6 +146,16 @@ __attribute__((noreturn)) void task_exit(void);
 void idle_task_function(void *arg);
 
 //-----------------------------------------------------------------------------
+// Blocking-wait timeout sentinel
+//-----------------------------------------------------------------------------
+// Pass as the ticks_to_wait of a blocking wait (v_semaphore_take, v_mutex_lock,
+// v_sem_take, ...) to block until signalled with no timeout. Ordinary timeouts
+// are a `now + ticks` deadline, so a literal 0xFFFFFFFF would overflow into the
+// past and expire immediately; the kernel special-cases this value to park the
+// waiter with no deadline instead.
+#define V_WAIT_FOREVER 0xFFFFFFFFu
+
+//-----------------------------------------------------------------------------
 // Delayed Task Management
 //-----------------------------------------------------------------------------
 void add_to_delayed_list(TCB *task);
