@@ -222,6 +222,10 @@ static uint32_t mutex_top_waiter_prio(rmutex_t *rm) {
 int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   if (!mtx)
     return VA_FAIL;
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc2(SYS_mutex_lock, (uint32_t)(uintptr_t)mtx, ticks_to_wait);
+#endif
   rmutex_t *rm = (rmutex_t *)mtx;
   TCB *current = get_current_task();
 
@@ -251,9 +255,21 @@ int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
 
   int res = semaphore_take_common(&rm->base, ticks_to_wait);
 
+#if VAIOS_SYSCALL_SVC
+  if (res == V_SYSCALL_BLOCKED) {
+    // Blocked via syscall (handler mode). On grant, v_mutex_unlock's direct
+    // handoff already set ownership and cleared wait_mutex; on timeout the
+    // ejector clears both. The VA_PASS/VA_FAIL result reaches our stacked r0 on
+    // resume — nothing more to do here.
+    return res;
+  }
+#endif
+
   ENTER_CRITICAL();
   current->wait_mutex = NULL;
-  if (res == VA_PASS) {
+  // Set ownership only for an UNCONTENDED acquire; a contended-then-granted lock
+  // already had ownership handed to it by v_mutex_unlock's direct handoff.
+  if (res == VA_PASS && rm->owner != current) {
     rm->owner = current;
     rm->recursion_count = 1;
     // Track on the owner's held list for the unlock-time priority recompute.
@@ -346,6 +362,10 @@ int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
 int v_mutex_unlock(MutexHandle_t mtx) {
   if (!mtx)
     return VA_FAIL;
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc1(SYS_mutex_unlock, (uint32_t)(uintptr_t)mtx);
+#endif
   rmutex_t *rm = (rmutex_t *)mtx;
   TCB *current = get_current_task();
 
@@ -376,11 +396,35 @@ int v_mutex_unlock(MutexHandle_t mtx) {
   if (newp != current->priority)
     task_change_priority(current, newp);
 
+  // Direct handoff: transfer the mutex straight to the highest-priority waiter
+  // so it resumes already owning it (its lock post-process never runs on the
+  // syscall path — and on the thread path it sees rm->owner already == itself,
+  // so it skips). Clear the waiter's wait_sem/wait_mutex here (it is no longer
+  // blocked), keeping transitive-PI visibility correct until the actual grant.
+  TCB *w = wait_q_dequeue(&rm->base);
+  if (w) {
+    w->wait_sem = NULL;
+    w->wait_mutex = NULL;
+    remove_from_blocked_list(w);
+    w->status = TASK_READY;
+    add_to_ready_list(w);
+    rm->owner = w;
+    rm->recursion_count = 1;
+    rm->next_held = (rmutex_t *)w->held_mutexes;
+    w->held_mutexes = rm;
+#if VAIOS_SYSCALL_SVC
+    v_syscall_wake_result(w, VA_PASS); // deliver to the blocked lock()
+#endif
+    EXIT_CRITICAL();
+    return VA_PASS;
+  }
+
+  // No waiter: release the mutex (free the binary base slot).
   rm->owner = NULL;
   rm->recursion_count = 0;
+  atomic_inc(&rm->base.count);
   EXIT_CRITICAL();
-
-  return v_semaphore_give((SemaphoreHandle_t)&rm->base);
+  return VA_PASS;
 }
 
 int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait) {

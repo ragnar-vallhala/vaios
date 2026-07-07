@@ -29,6 +29,8 @@ typedef enum {
   SYS_delay = 2,
   SYS_sem_give = 3,
   SYS_sem_take = 4,
+  SYS_mutex_lock = 5,
+  SYS_mutex_unlock = 6,
   SYS_MAX
 } v_syscall_t;
 
@@ -44,7 +46,8 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args);
 // V_SYSCALL_BLOCKED (a placeholder, overwritten later); the waker stashes the
 // real result in the TCB via v_syscall_wake_result(); and PendSV writes it into
 // the resumed task's stacked r0 via v_syscall_deliver_result() at schedule-in
-// (sp is stable then, so there is no race with the block-then-switch window).
+// (sp is stable then, so there is no race with the window between blocking and
+// switching out).
 #define V_SYSCALL_BLOCKED 0x7FFF0000 /* placeholder r0; replaced on resume */
 
 struct Task_Control_Block;

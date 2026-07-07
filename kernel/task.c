@@ -558,8 +558,9 @@ int wake_up_delayed_tasks_isr(void) {
       task->delay_ticks = 0;
       task->status = TASK_READY;
       add_to_ready_list(task);
+      task->wait_mutex = NULL; // clear for a timed-out mutex waiter (no-op for sems)
 #if VAIOS_SYSCALL_SVC
-      // Deliver VA_FAIL to a syscall-blocked take() that timed out.
+      // Deliver VA_FAIL to a syscall-blocked take()/lock() that timed out.
       v_syscall_wake_result(task, VA_FAIL);
 #endif
       if (current_task && task->priority > current_task->priority)

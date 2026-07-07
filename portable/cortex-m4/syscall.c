@@ -40,6 +40,15 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
        V_SYSCALL_BLOCKED and the real result (VA_PASS/VA_FAIL) is delivered on
        resume. args[0] = handle, args[1] = ticks. */
     return v_semaphore_take((SemaphoreHandle_t)(uintptr_t)args[0], args[1]);
+  case SYS_mutex_lock:
+    /* Blocking, deferred-result (like sem_take). Ownership is handed over by
+       the unlocker; the lock body only sets it for an uncontended acquire.
+       args[0] = mutex handle, args[1] = ticks. */
+    return v_mutex_lock((MutexHandle_t)(uintptr_t)args[0], args[1]);
+  case SYS_mutex_unlock:
+    /* Non-blocking: direct handoff to the highest-priority waiter. args[0] =
+       mutex handle. */
+    return v_mutex_unlock((MutexHandle_t)(uintptr_t)args[0]);
   default:
     return -1; /* unknown syscall */
   }
