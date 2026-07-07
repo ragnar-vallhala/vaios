@@ -5,6 +5,7 @@
 #include "utils.h"
 #include "vaios_config.h"
 #if VAIOS_MODULE_VFS
+#include "vfile.h"
 #include "vfs.h"
 #endif
 #include "perf.h"
@@ -47,6 +48,9 @@ void v_system_init(vaios_init_config_t *cfg) {
   v_heap_memory_init();
   scheduler_init();
   v_perf_init();
+#if VAIOS_DEVFS
+  v_devfs_init(); // register /dev nodes (console) before any task is created
+#endif
 
   /* 3. Optional SD card + filesystem. v_port_hw_sdio_* return non-zero on
    * any backend without an SDIO peripheral (QEMU/host), so this block is a

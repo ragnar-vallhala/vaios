@@ -216,6 +216,20 @@ config VAIOS_SYSCALL_SVC
       this only validates the SVC mechanism/ABI (number in r12, args in r0-r3,
       negative-errno in r0) with zero isolation risk; the unprivileged flip and
       pointer validation land in later stages. Off by default.
+config VAIOS_DEVFS
+    bool "Everything-is-a-file device model (fd table + /dev)"
+    depends on VAIOS_SYSCALL_SVC
+    default n
+    help
+      Phase 3, Stage 2: a per-task file-descriptor table over a small object
+      model (v_file_ops: read/write/close). Devices are /dev nodes backed by a
+      driver op-table; open/read/write/close are syscalls. Wires /dev/console
+      and routes printf() through write(). Kernel printk() stays a separate,
+      direct, privileged path. Tasks stay privileged in this stage.
+config VAIOS_MAX_FDS
+    int "File descriptors per task"
+    depends on VAIOS_DEVFS
+    default 8
 endmenu
 
 menu "IPC"

@@ -16,6 +16,7 @@
 #include "ipc.h"
 #include "port.h"
 #include "task.h"
+#include "vfile.h"
 #include <stdint.h>
 
 int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
@@ -49,6 +50,16 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
     /* Non-blocking: direct handoff to the highest-priority waiter. args[0] =
        mutex handle. */
     return v_mutex_unlock((MutexHandle_t)(uintptr_t)args[0]);
+#if VAIOS_DEVFS
+  case SYS_open:
+    return v_file_open((const char *)(uintptr_t)args[0], (int)args[1]);
+  case SYS_write:
+    return v_file_write((int)args[0], (const void *)(uintptr_t)args[1], args[2]);
+  case SYS_read:
+    return v_file_read((int)args[0], (void *)(uintptr_t)args[1], args[2]);
+  case SYS_close:
+    return v_file_close((int)args[0]);
+#endif
   default:
     return -1; /* unknown syscall */
   }

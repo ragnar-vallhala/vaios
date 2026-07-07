@@ -7,6 +7,7 @@
 
 #include "vaios_config.h"
 #include "perf.h"
+#include "vfile.h" // v_fd_entry (per-task fd table)
 
 //-----------------------------------------------------------------------------
 // Architecture Validation
@@ -72,6 +73,9 @@ typedef struct Task_Control_Block {
   // when it is next scheduled in, so a blocked sem_take/mutex_lock returns it.
   int32_t syscall_result;
   uint8_t has_syscall_result;
+#endif
+#if VAIOS_DEVFS
+  v_fd_entry fds[VAIOS_MAX_FDS]; // per-task file-descriptor table (Stage 2)
 #endif
   uint32_t magic; // Sanity check (must be TCB_MAGIC)
 } TCB;

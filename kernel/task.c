@@ -243,6 +243,9 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
     task->mem_block[i] = V_PERF_STACK_FILL;
 #endif
   task->magic = TCB_MAGIC;
+#if VAIOS_DEVFS
+  v_fd_table_init(task); // fd 0/1/2 -> /dev/console
+#endif
   init_task_stack(task);
 
   ENTER_CRITICAL();
