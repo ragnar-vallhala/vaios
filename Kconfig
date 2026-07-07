@@ -148,6 +148,62 @@ config VAIOS_HEAP_ALGO_TLSF
 endchoice
 endmenu
 
+menu "Memory protection (MPU)"
+config VAIOS_MPU_ENABLE
+    bool "Enable the ARMv7-M MPU (hardware memory protection)"
+    default n
+    help
+      Program the MPU (via NavHAL hal_mpu) for hardware memory protection.
+      Requires a target with an MPU (checked at runtime with hal_mpu_present);
+      no effect on QEMU/host builds. Off until the region programming is
+      Renode-validated. See docs/plan/MPU_CACHE_INTEGRATION_PLAN.md.
+config VAIOS_MPU_STACK_GUARD
+    bool "Per-task stack-overflow guard region"
+    depends on VAIOS_MPU_ENABLE
+    default y
+    help
+      Place a no-access MPU region at the low end of each task stack so an
+      overflow traps into MemManage_Handler at the faulting store instead of
+      silently corrupting the neighbouring block. The stack base is aligned to
+      the guard size via v_memalign. Falls back to the software watermark on
+      MPU-less targets.
+config VAIOS_MPU_GUARD_SIZE
+    int "Stack guard region size (bytes, power of two >= 32)"
+    depends on VAIOS_MPU_STACK_GUARD
+    default 32
+config VAIOS_MPU_STATIC_PROTECT
+    bool "Static kernel/peripheral protection (Phase 2)"
+    depends on VAIOS_MPU_ENABLE
+    default y
+    help
+      Phase 2: program a static background MPU map that bites even while tasks
+      are still privileged (PRIVDEFENA's privileged default is otherwise RWX
+      everywhere). Safe core: SRAM execute-never (W^X, catches execute-from-RAM)
+      and peripherals privileged-only device+XN. The per-task stack guard moves
+      to the top region so it still wins on overlap. On by default when the MPU
+      is enabled (hardware fault-injection validated on the Nucleo-F401RE). See
+      docs/plan/MPU_CACHE_INTEGRATION_PLAN.md Phase 2.
+config VAIOS_MPU_FLASH_RO
+    bool "Mark flash read-only (catch code/const corruption)"
+    depends on VAIOS_MPU_STATIC_PROTECT
+    default n
+    help
+      Add a read-only region over flash. HAZARD: on-chip flash programming
+      writes the 0x08xxxxxx space directly, so this is incompatible with
+      hal_flash's key/value store — enable only when the KV store is unused (or
+      carve its sectors out via a subregion-disable mask).
+config VAIOS_MPU_NULL_GUARD
+    bool "NULL / low-alias no-access trap (catch NULL derefs)"
+    depends on VAIOS_MPU_STATIC_PROTECT
+    default y
+    help
+      Add a no-access region at [0, 1 MB) to trap NULL and near-NULL derefs.
+      v_port_mpu_init relocates SCB->VTOR to the flash vector table (0x08000000)
+      before arming this region, so exception vector fetches do not alias into
+      it. Hardware-validated on the Nucleo-F401RE (boots with the guard armed; a
+      NULL write traps with MMFSR DACCVIOL at addr 0x0).
+endmenu
+
 menu "IPC"
 config MAX_SEMAPHORE_COUNT
     hex "Maximum counting-semaphore value"

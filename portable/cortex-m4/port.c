@@ -139,18 +139,34 @@ void hardfault_handler_entry(uint32_t *stack_pointer, uint32_t exc_return,
  *
  * NavHAL's startup.s names these vectors and, under SUBMODULE, cedes them to
  * the OS: what a fault *means* (kill the task, panic, recover) is kernel policy,
- * not the HAL's to decide. These are minimal shims to satisfy the vector table
- * for now — behaviour is TBD. In particular MemManage_Handler becomes the MPU
- * stack-overflow trap in the MPU integration (see
- * docs/plan/MPU_CACHE_INTEGRATION_PLAN.md), and BusFault/UsageFault will route
- * into the CFSR + v_panic diagnostics like HardFault. Until then each traps the
- * core so a fault is caught rather than silently continued.
+ * not the HAL's to decide. NMI/BusFault/UsageFault/DebugMon are still minimal
+ * shims (behaviour TBD; BusFault/UsageFault will route into the CFSR + v_panic
+ * diagnostics like HardFault). MemManage_Handler is the MPU stack-overflow trap
+ * (docs/plan/MPU_CACHE_INTEGRATION_PLAN.md).
  * ------------------------------------------------------------------------- */
 void NMI_Handler(void) {
   for (;;) {
   }
 }
+
+// MPU violation. Phase 1: a task overran its stack into the no-access guard.
+// Phase 2 (VAIOS_MPU_STATIC_PROTECT) adds execute-from-RAM (W^X), flash-write,
+// NULL-deref, and bad-peripheral faults. Decode CFSR/MMFAR and panic with the
+// offending task + address. (Recovery/task-kill is a later phase.) MMFSR bits:
+// IACCVIOL(0) = instruction-fetch (XN) violation, DACCVIOL(1) = data AP.
+#define SCB_CFSR (*(volatile uint32_t *)0xE000ED28)
+#define SCB_MMFAR (*(volatile uint32_t *)0xE000ED34)
+#define MMFSR_MMARVALID (1u << 7)
 void MemManage_Handler(void) {
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_STATIC_PROTECT
+  extern TCB *current_task;
+  uint32_t mmfsr = SCB_CFSR & 0xFFu; /* MemManage status is CFSR[7:0] */
+  uint32_t addr = (mmfsr & MMFSR_MMARVALID) ? SCB_MMFAR : 0u;
+  uint32_t id = current_task ? current_task->task_id : 0u;
+  v_panic(__FILE__, __LINE__,
+          "MPU fault in task %u | fault addr 0x%x MMFSR 0x%x", (unsigned)id,
+          (unsigned)addr, (unsigned)mmfsr);
+#endif
   for (;;) {
   }
 }
@@ -252,6 +268,7 @@ __attribute__((naked)) void PendSV_Handler(void) {
       "   dsb                                 \n"
       "   isb                                 \n"
       "   bl set_next_task                    \n"
+      "   bl v_port_apply_current_mpu         \n" /* swap task MPU regions */
       "   mov r0, #0                          \n"
       "   msr basepri, r0                     \n"
       "ldr r3, =current_task\n"
@@ -349,6 +366,25 @@ void init_task_stack(TCB *task) {
   sp -= 8;
 
   task->sp = sp;
+
+#if VAIOS_MPU_STACK_GUARD
+  // Pre-encode the no-access guard region at the stack base (lowest address).
+  // Applied on every switch to this task; a store past the bottom traps into
+  // MemManage_Handler. Encode fails cleanly (invalid) on MPU-less targets.
+  task->mpu_guard_valid =
+      (v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE,
+                                 task->mpu_guard) == 0);
+#endif
+}
+
+// Apply the running task's MPU region set — the context-switch fast path, called
+// from PendSV/ISR switch after set_next_task updates current_task.
+void v_port_apply_current_mpu(void) {
+#if VAIOS_MPU_STACK_GUARD
+  extern TCB *current_task;
+  if (current_task && current_task->mpu_guard_valid)
+    v_port_mpu_apply(current_task->mpu_guard, 1);
+#endif
 }
 
 void load_next_task_from_isr(void) {
@@ -357,6 +393,7 @@ void load_next_task_from_isr(void) {
                  "   dsb                                 \n"
                  "   isb                                 \n"
                  "   bl set_next_task                    \n"
+                 "   bl v_port_apply_current_mpu         \n"
                  "   mov r0, #0                          \n"
                  "   msr basepri, r0                     \n" ::"i"(
                      MAX_SYSCALL_INTERRUPT_PRIORITY)
