@@ -337,7 +337,7 @@ __attribute__((noreturn)) void task_exit(void) {
   _terminated_count++;
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
   while (1)
     ;
 }
@@ -359,7 +359,7 @@ void task_exit_request(uint32_t task_id) {
   _terminated_count++;
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 //-----------------------------------------------------------------------------
 // Idle Task Function
@@ -470,7 +470,7 @@ void task_delay(uint32_t ticks) {
   add_to_delayed_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 
 bool task_delay_until(uint32_t *last_wake, uint32_t period) {
@@ -493,7 +493,7 @@ bool task_delay_until(uint32_t *last_wake, uint32_t period) {
   add_to_delayed_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
   return true;
 }
 
@@ -582,7 +582,7 @@ void task_block(void) {
   add_to_blocked_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 
 void add_to_blocked_list(TCB *task) {
@@ -608,7 +608,7 @@ void task_unblock(uint32_t task_id) {
   add_to_ready_list(task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 void task_change_priority(TCB *task, uint32_t new_priority) {
   if (!task || new_priority > MAX_PRIORITY)

@@ -180,7 +180,7 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   // failsafe. Confirmed on-target; the NavHAL maskable-IRQ-priority fix is the
   // real orphan-bug cure, so dropping the reorder is safe.
   EXIT_CRITICAL();
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 
   // On resume: semaphore_give clears wait_sem → VA_PASS (slot granted)
   //            wake_up_delayed_tasks() ejects us with wait_sem still set →
