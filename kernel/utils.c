@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "atomic.h"
+#include "vfile.h" // v_file_write (task printf routing), VAIOS_DEVFS
 #include "memory.h"
 #include "perf_hooks.h"
 #include "port.h"
@@ -84,8 +85,54 @@ float v_atof(const char *s) {
 
   return res * (float)sign;
 }
+#if VAIOS_DEVFS
+// --- Kernel log ring for /dev/kmsg ------------------------------------------
+// The kernel printk path (v_print / direct_dma_print) mirrors its console
+// output into this ring; a task drains it by read()ing /dev/kmsg. Single
+// logical reader (drain-on-read); oldest bytes are overwritten when full.
+#define KMSG_RING_SIZE 1024
+static char kmsg_ring[KMSG_RING_SIZE];
+static volatile uint32_t kmsg_head, kmsg_tail;
+
+void v_kmsg_append(const char *buf, uint32_t len) {
+  uint32_t st = ENTER_CRITICAL_FROM_ISR();
+  for (uint32_t i = 0; i < len; i++) {
+    kmsg_ring[kmsg_head % KMSG_RING_SIZE] = buf[i];
+    kmsg_head++;
+    if (kmsg_head - kmsg_tail > KMSG_RING_SIZE)
+      kmsg_tail = kmsg_head - KMSG_RING_SIZE; // overwrite oldest
+  }
+  EXIT_CRITICAL_FROM_ISR(st);
+}
+
+int v_kmsg_read(char *out, uint32_t len) {
+  uint32_t st = ENTER_CRITICAL_FROM_ISR();
+  uint32_t n = 0;
+  while (n < len && kmsg_tail != kmsg_head)
+    out[n++] = kmsg_ring[kmsg_tail++ % KMSG_RING_SIZE];
+  EXIT_CRITICAL_FROM_ISR(st);
+  return (int)n;
+}
+
+// Task-facing printf: format, then write to stdout (fd 1) via the file syscall.
+// Distinct from the kernel printk path (print/print_fmt), which writes directly.
+int v_printf(const char *fmt, ...) {
+  char buf[128];
+  va_list args;
+  va_start(args, fmt);
+  int n = vaprint_fmt_buf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  if (n > 0)
+    v_file_write(1, buf, (uint32_t)n);
+  return n;
+}
+#endif // VAIOS_DEVFS
+
 // Use safely only if DMA is enabled and you know what you are doing
 void direct_dma_print(const uint8_t *bytes, uint32_t len) {
+#if VAIOS_DEVFS
+  v_kmsg_append((const char *)bytes, len); // capture kernel log for /dev/kmsg
+#endif
   v_port_hw_console_write_dma(bytes, len);
 }
 
@@ -96,8 +143,17 @@ void dma_tx_complete_callback(void) {
 #endif
 }
 
-// Basic print function (routed to the console by the port facade)
-void v_print(const char *str) { v_port_hw_console_write_string(str); }
+// Basic print function — the kernel printk path (direct, privileged). Also
+// mirrors its output into the /dev/kmsg ring.
+void v_print(const char *str) {
+#if VAIOS_DEVFS
+  uint32_t n = 0;
+  while (str[n])
+    n++;
+  v_kmsg_append(str, n);
+#endif
+  v_port_hw_console_write_string(str);
+}
 
 // Basic print function (to UART or semihosting)
 void print(const char *str) { v_print(str); }

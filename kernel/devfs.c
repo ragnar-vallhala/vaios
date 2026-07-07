@@ -17,6 +17,7 @@
 #include "port.h"
 #include "syscall.h"
 #include "task.h"
+#include "utils.h" // v_kmsg_read (/dev/kmsg backing ring)
 
 // --- device registry --------------------------------------------------------
 #define MAX_DEV_NODES 8
@@ -169,6 +170,21 @@ static const v_file_ops console_ops = {
     .close = NULL,
 };
 
-void v_devfs_init(void) { v_devfs_register("/dev/console", &console_ops, NULL); }
+// --- /dev/kmsg (read-only kernel log ring) ----------------------------------
+static int kmsg_dev_read(void *priv, void *buf, uint32_t len) {
+  (void)priv;
+  return v_kmsg_read((char *)buf, len); // non-blocking: 0 if nothing new
+}
+
+static const v_file_ops kmsg_ops = {
+    .read = kmsg_dev_read,
+    .write = NULL, // read-only
+    .close = NULL,
+};
+
+void v_devfs_init(void) {
+  v_devfs_register("/dev/console", &console_ops, NULL);
+  v_devfs_register("/dev/kmsg", &kmsg_ops, NULL);
+}
 
 #endif // VAIOS_DEVFS
