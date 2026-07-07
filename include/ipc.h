@@ -18,6 +18,9 @@ typedef struct {
   _wait_q *tail; // For mutexes
   atomic_t count;
   atomic_t limit;
+#if VAIOS_IPC_FD
+  v_wnode *observers; // multi-fd waiters (v_wait) to wake when count goes > 0
+#endif
 } sema_t;
 
 typedef struct rmutex {
@@ -89,6 +92,12 @@ int v_mtx_unlock(int fd);
 // returning the index into fds[] of a ready descriptor, or -1 on timeout.
 int v_sem_poll(int fd);
 int v_wait(const int *fds, int nfds, uint32_t ticks);
+
+// Syscall bodies behind v_wait (dispatched from the SVCall handler, not called
+// directly by tasks). SYS_wait arms observers + blocks; SYS_wait_disarm unlinks
+// and returns the ready fds[] index.
+int32_t v_wait_block_impl(const int *fds, int nfds, uint32_t ticks);
+int32_t v_wait_disarm_impl(void);
 #endif
 
 // ISR-safe give

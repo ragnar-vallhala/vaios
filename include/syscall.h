@@ -42,6 +42,8 @@ typedef enum {
   SYS_mtx_lock_fd = 15,
   SYS_mtx_unlock_fd = 16,
   SYS_sem_poll = 17,
+  SYS_wait = 18,        // multi-fd wait: arm observers + block
+  SYS_wait_disarm = 19, // unlink observers + report ready index
   SYS_MAX
 } v_syscall_t;
 

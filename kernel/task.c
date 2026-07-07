@@ -246,6 +246,10 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
 #if VAIOS_DEVFS
   v_fd_table_init(task); // fd 0/1/2 -> /dev/console
 #endif
+#if VAIOS_IPC_FD
+  task->in_multiwait = 0; // not in v_wait()
+  task->narm = 0;
+#endif
   init_task_stack(task);
 
   ENTER_CRITICAL();
@@ -569,6 +573,26 @@ int wake_up_delayed_tasks_isr(void) {
       if (current_task && task->priority > current_task->priority)
         higher_woken = 1;
     }
+#if VAIOS_IPC_FD
+    // 2b. Eject a v_wait() multi-waiter whose timeout expired. Its observer
+    // nodes are unlinked later by mwait_disarm (thread mode); clearing
+    // in_multiwait makes any give on a watched sem skip it in the meantime. The
+    // result must be negative (not VA_FAIL/0, which is a valid ready index) so
+    // v_wait treats it as "timed out" and its disarm reports no ready fd.
+    else if (task->in_multiwait && task->delay_ticks != 0 &&
+             task->delay_ticks < now) {
+      task->in_multiwait = 0;
+      remove_from_blocked_list(task);
+      task->delay_ticks = 0;
+      task->status = TASK_READY;
+      add_to_ready_list(task);
+#if VAIOS_SYSCALL_SVC
+      v_syscall_wake_result(task, -1);
+#endif
+      if (current_task && task->priority > current_task->priority)
+        higher_woken = 1;
+    }
+#endif
     task = next;
   }
 

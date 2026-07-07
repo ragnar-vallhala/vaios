@@ -84,6 +84,14 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
   case SYS_sem_poll:
     /* Non-consuming readiness probe. args[0]=fd. */
     return v_sem_poll((int)args[0]);
+  case SYS_wait:
+    /* Multi-fd wait: ready index, or V_SYSCALL_BLOCKED after arming + parking.
+       args[0]=fds, args[1]=nfds, args[2]=ticks. */
+    return v_wait_block_impl((const int *)(uintptr_t)args[0], (int)args[1],
+                             args[2]);
+  case SYS_wait_disarm:
+    /* Unlink this task's wait observers and report the ready index. */
+    return v_wait_disarm_impl();
 #endif
   default:
     return -1; /* unknown syscall */

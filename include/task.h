@@ -32,6 +32,21 @@ typedef enum {
 //-----------------------------------------------------------------------------
 // Task Control Block (TCB) Structure
 //-----------------------------------------------------------------------------
+#if VAIOS_IPC_FD
+// One multi-wait registration: a v_wait()ing task links a node into each
+// watched semaphore's observer list. When that sem becomes ready (count goes
+// positive) the give path walks the list and wakes each node's owner. `sem` is
+// the sema_t the node is linked into (opaque here); `idx` is unused by the
+// kernel but kept for symmetry with the fds[] the caller passed.
+struct Task_Control_Block;
+typedef struct v_wnode {
+  struct v_wnode *next; // next observer in the sem's list
+  void *sem;            // sema_t this node is linked into
+  struct Task_Control_Block *owner;
+  int32_t idx;
+} v_wnode;
+#endif
+
 typedef struct Task_Control_Block {
   uint32_t *sp;           // Current stack pointer (PSP)
   uint32_t *mem_block;    // Base of allocated stack memory
@@ -76,6 +91,16 @@ typedef struct Task_Control_Block {
 #endif
 #if VAIOS_DEVFS
   v_fd_entry fds[VAIOS_MAX_FDS]; // per-task file-descriptor table (Stage 2)
+#endif
+#if VAIOS_IPC_FD
+  // Multi-fd wait (v_wait). While blocked in v_wait, in_multiwait == 1 and
+  // wnodes[0..narm) are linked into the watched sems' observer lists; the give
+  // path or the timeout scan clears in_multiwait and wakes the task, which then
+  // unlinks the nodes. Bounded by the fd-table size (can't watch more fds than
+  // it holds).
+  v_wnode wnodes[VAIOS_MAX_FDS];
+  uint8_t in_multiwait;
+  uint8_t narm; // number of currently armed wnodes
 #endif
   uint32_t magic; // Sanity check (must be TCB_MAGIC)
 } TCB;
