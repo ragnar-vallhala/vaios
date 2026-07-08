@@ -92,6 +92,15 @@ typedef struct Task_Control_Block {
 #if VAIOS_DEVFS
   v_fd_entry fds[VAIOS_MAX_FDS]; // per-task file-descriptor table (Stage 2)
 #endif
+#if VAIOS_TASK_HEAP
+  // Per-task heap (Stage 4). The heap lives at the LOW end of this task's own
+  // mem_block (just above the stack guard) and grows UP; the stack grows down
+  // from the top of the same block. heap_base is fixed (block base + guard);
+  // heap_brk is the current top of the heap, bounded at malloc time by the live
+  // stack pointer. malloc/free/calloc/realloc (memory.c) operate here.
+  uint8_t *heap_base;
+  uint8_t *heap_brk;
+#endif
 #if VAIOS_IPC_FD
   // Multi-fd wait (v_wait). While blocked in v_wait, in_multiwait == 1 and
   // wnodes[0..narm) are linked into the watched sems' observer lists; the give
@@ -135,16 +144,15 @@ void init_task_stack(TCB *task); // Implemented in port.c
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
-uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
+uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority);
 // As task_create, but also tags the task with a human-readable name for
 // diagnostics (perf dumps, telemetry). `name` must point at storage that
 // outlives the task — typically a string literal in flash; the TCB keeps the
 // pointer, not a copy. Pass NULL or "" for an unnamed task. task_create() is a
 // thin wrapper over this with name = "".
-uint32_t task_create_named(void (*entry)(void *), void *arg,
-                           uint32_t stack_size, uint32_t priority,
-                           const char *name);
+uint32_t task_create_named(void (*entry)(void *), void *arg, uint32_t size,
+                           uint32_t priority, const char *name);
 // Tag an existing task by id (e.g. after task_create). `name` storage must
 // outlive the task (string literal in flash). No-op if the id is unknown.
 void task_set_name(uint32_t task_id, const char *name);

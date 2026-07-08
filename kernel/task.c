@@ -177,23 +177,23 @@ TCB *get_highest_priority_task(void) {
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
-uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
+uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority) {
-  return task_create_named(entry, arg, stack_size, priority, "");
+  return task_create_named(entry, arg, size, priority, "");
 }
 
 uint32_t task_create_named(void (*entry)(void *), void *arg,
-                           uint32_t stack_size, uint32_t priority,
+                           uint32_t size, uint32_t priority,
                            const char *name) {
   // MPU-backed stack protection maps each stack onto a single power-of-two MPU
   // region, so the requested size must be an exact power of two (>= 128 B to
   // hold the initial exception frame). Reject anything else outright: silently
   // rounding the size would desync the caller's view of the stack from the
   // actual region geometry, so fail the creation instead of hiding the change.
-  if (stack_size < 128 || (stack_size & (stack_size - 1)) != 0) {
+  if (size < 128 || (size & (size - 1)) != 0) {
     V_KLOG(LOG_ERROR,
-           "[TASK] stack_size %u is not a power of two >= 128; task not created",
-           (unsigned)stack_size);
+           "[TASK] size %u is not a power of two >= 128; task not created",
+           (unsigned)size);
     return 0;
   }
 
@@ -202,14 +202,14 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
     return 0;
   task->task_id = ++task_count;
   task->name = name ? name : "";
-  task->stack_size = stack_size;
+  task->stack_size = size;
 #if VAIOS_MPU_STACK_GUARD
   // The MPU stack-guard region sits at the stack base, so the base must land on
   // the guard's size boundary. v_memalign gives that; the no-access guard region
   // is encoded in init_task_stack.
-  task->mem_block = (uint32_t *)v_memalign(VAIOS_MPU_GUARD_SIZE, stack_size);
+  task->mem_block = (uint32_t *)v_memalign(VAIOS_MPU_GUARD_SIZE, size);
 #else
-  task->mem_block = (uint32_t *)v_malloc(stack_size);
+  task->mem_block = (uint32_t *)v_malloc(size);
 #endif
   if (!task->mem_block) {
     v_panic(__FILE__, __LINE__, "failed to allocate stack for task %u",
@@ -218,7 +218,7 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->ticks_run = 0;
   task->entry = entry;
   task->arg = arg;
-  task->sp = task->mem_block + (stack_size / sizeof(uint32_t));
+  task->sp = task->mem_block + (size / sizeof(uint32_t));
   task->priority = priority;
   task->base_priority = priority;
   task->delay_ticks = 0;
@@ -239,7 +239,7 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   /* Paint the whole stack so the high-water mark is measurable from the
    * untouched sentinel run. Done before init_task_stack lays the initial
    * frame at the top (that region then reads as "used"). */
-  for (uint32_t i = 0; i < stack_size / sizeof(uint32_t); i++)
+  for (uint32_t i = 0; i < size / sizeof(uint32_t); i++)
     task->mem_block[i] = V_PERF_STACK_FILL;
 #endif
   task->magic = TCB_MAGIC;
@@ -250,6 +250,19 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->in_multiwait = 0; // not in v_wait()
   task->narm = 0;
 #endif
+#if VAIOS_TASK_HEAP
+  // The heap sits at the LOW end of this task's block, just above the stack
+  // guard; it grows up while the stack grows down from the top of the same
+  // block. Empty until the first malloc.
+  {
+    uint32_t guard_off = 0;
+#if VAIOS_MPU_STACK_GUARD
+    guard_off = VAIOS_MPU_GUARD_SIZE;
+#endif
+    task->heap_base = (uint8_t *)task->mem_block + guard_off;
+    task->heap_brk = task->heap_base;
+  }
+#endif
   init_task_stack(task);
 
   ENTER_CRITICAL();
@@ -258,7 +271,7 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   V_KLOG(LOG_DEBUG,
         "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack "
         "size: 0x%x",
-        task->task_id, priority, task->mem_block, stack_size);
+        task->task_id, priority, task->mem_block, size);
   return task->task_id;
 }
 
@@ -409,6 +422,8 @@ void idle_task_function(void *arg) {
           v_free(to_free->mem_block);
           to_free->mem_block = NULL;
         }
+        // The per-task heap lives inside mem_block, so it was already freed
+        // above — no separate release needed.
         v_free(to_free);
       }
     }

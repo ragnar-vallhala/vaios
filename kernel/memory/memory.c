@@ -294,3 +294,176 @@ uint32_t v_get_heap_allocation_count(void) { return allocation_count; }
 uint32_t v_get_heap_allocation_size(void) {
   return allocation_size + sizeof(Heap_Mem_Block) * allocation_count;
 }
+
+#if VAIOS_TASK_HEAP
+// ============================================================================
+// Per-task heap (Phase 3, Stage 4). malloc/free/calloc/realloc serve the
+// CURRENT task out of its own block: a heap that grows UP from the low end
+// (just above the stack guard) while the stack grows DOWN from the top of the
+// same block. Same boundary-tag header as the kernel heap, but an implicit free
+// list (address-order walk) over the tiled region [heap_base, heap_brk), and a
+// break that grows toward the live stack pointer. A task only allocates from
+// its own heap, so there is no shared state; the kernel keeps v_malloc/v_free.
+// Not for kernel use — these read the live PSP to bound growth, valid only in
+// task (thread-mode) context.
+// ============================================================================
+#include "task.h"
+
+#define THDR ((uint32_t)sizeof(Heap_Mem_Block))
+// Cushion between a grown heap and the live stack, so the current call chain
+// (and an exception frame pushed onto PSP) keeps room.
+#define TASK_HEAP_STACK_MARGIN 256u
+
+extern TCB *current_task;
+
+// Live stack pointer of the running task (PSP in thread mode). Host builds have
+// no real bound, so the collision check is a no-op there.
+static inline uint8_t *task_live_sp(void) {
+#if defined(__arm__) || defined(__thumb__) || defined(__thumb2__)
+  void *sp;
+  __asm volatile("mov %0, sp" : "=r"(sp));
+  return (uint8_t *)sp;
+#else
+  return (uint8_t *)UINTPTR_MAX;
+#endif
+}
+
+// Repoint the physically-following block's prev link after blk->size changed.
+static inline void theap_fixup_next(TCB *t, Heap_Mem_Block *blk) {
+  Heap_Mem_Block *after = (Heap_Mem_Block *)((uint8_t *)blk + THDR + blk->size);
+  if ((uint8_t *)after < t->heap_brk &&
+      after->magic_number == SANITY_MAGIC_NUMBER)
+    after->prev = blk;
+}
+
+void *malloc(size_t size) {
+  TCB *t = current_task;
+  if (!t || !t->heap_base || size == 0)
+    return NULL;
+  uint32_t need =
+      (uint32_t)((size + (VHEAP_ALIGN - 1)) & ~(size_t)(VHEAP_ALIGN - 1));
+  if (need < VHEAP_MIN_PAYLOAD)
+    need = VHEAP_MIN_PAYLOAD;
+
+  ENTER_CRITICAL();
+  // First-fit over the tiled region [heap_base, heap_brk).
+  Heap_Mem_Block *last = NULL;
+  for (Heap_Mem_Block *b = (Heap_Mem_Block *)t->heap_base;
+       (uint8_t *)b < t->heap_brk;) {
+    if (b->magic_number != SANITY_MAGIC_NUMBER)
+      break; // corruption: stop walking
+    if (b->status == MEM_FREE && b->size >= need) {
+      if (b->size >= need + THDR + VHEAP_MIN_PAYLOAD) {
+        Heap_Mem_Block *res = (Heap_Mem_Block *)((uint8_t *)b + THDR + need);
+        res->magic_number = SANITY_MAGIC_NUMBER;
+        res->status = MEM_FREE;
+        res->size = b->size - need - THDR;
+        res->prev = b;
+        theap_fixup_next(t, res);
+        b->size = need;
+      }
+      b->status = MEM_ALOC;
+      EXIT_CRITICAL();
+      return (uint8_t *)b + THDR;
+    }
+    last = b;
+    b = (Heap_Mem_Block *)((uint8_t *)b + THDR + b->size);
+  }
+  // No free block fits: grow the break, bounded by the live stack pointer.
+  uint8_t *nb = t->heap_brk;
+  uint8_t *new_brk = nb + THDR + need;
+  if (new_brk > task_live_sp() - TASK_HEAP_STACK_MARGIN) {
+    EXIT_CRITICAL();
+    return NULL; // would collide with the stack — region too small
+  }
+  Heap_Mem_Block *blk = (Heap_Mem_Block *)nb;
+  blk->magic_number = SANITY_MAGIC_NUMBER;
+  blk->status = MEM_ALOC;
+  blk->size = need;
+  blk->prev = last;
+  t->heap_brk = new_brk;
+  EXIT_CRITICAL();
+  return (uint8_t *)blk + THDR;
+}
+
+void free(void *ptr) {
+  TCB *t = current_task;
+  if (!t || !ptr)
+    return;
+  Heap_Mem_Block *blk = (Heap_Mem_Block *)((uint8_t *)ptr - THDR);
+  ENTER_CRITICAL();
+  if ((uint8_t *)blk < t->heap_base || (uint8_t *)blk >= t->heap_brk ||
+      blk->magic_number != SANITY_MAGIC_NUMBER || blk->status != MEM_ALOC) {
+    EXIT_CRITICAL();
+    return; // foreign / corrupt / double free
+  }
+  blk->status = MEM_FREE;
+  // Coalesce forward.
+  Heap_Mem_Block *next = (Heap_Mem_Block *)((uint8_t *)blk + THDR + blk->size);
+  if ((uint8_t *)next < t->heap_brk &&
+      next->magic_number == SANITY_MAGIC_NUMBER && next->status == MEM_FREE) {
+    blk->size += THDR + next->size;
+    theap_fixup_next(t, blk);
+  }
+  // Coalesce backward.
+  Heap_Mem_Block *prev = blk->prev;
+  if (prev && prev->magic_number == SANITY_MAGIC_NUMBER &&
+      prev->status == MEM_FREE) {
+    prev->size += THDR + blk->size;
+    theap_fixup_next(t, prev);
+    blk = prev;
+  }
+  // If the freed block now reaches the break, lower it — hand the space back to
+  // the shared middle so the stack and future allocs can use it.
+  if ((uint8_t *)blk + THDR + blk->size == t->heap_brk)
+    t->heap_brk = (uint8_t *)blk;
+  EXIT_CRITICAL();
+}
+
+void *calloc(size_t nmemb, size_t size) {
+  if (nmemb && size > (size_t)-1 / nmemb)
+    return NULL; // multiply overflow
+  size_t total = nmemb * size;
+  void *p = malloc(total);
+  if (p)
+    v_memset(p, 0, total);
+  return p;
+}
+
+void *realloc(void *ptr, size_t size) {
+  if (!ptr)
+    return malloc(size);
+  if (size == 0) {
+    free(ptr);
+    return NULL;
+  }
+  Heap_Mem_Block *blk = (Heap_Mem_Block *)((uint8_t *)ptr - THDR);
+  uint32_t need =
+      (uint32_t)((size + (VHEAP_ALIGN - 1)) & ~(size_t)(VHEAP_ALIGN - 1));
+  // Fits in place: keep it (no shrink-split, for simplicity).
+  if (blk->magic_number == SANITY_MAGIC_NUMBER && blk->size >= need)
+    return ptr;
+  void *np = malloc(size);
+  if (!np)
+    return NULL; // original left intact
+  uint32_t old = (blk->magic_number == SANITY_MAGIC_NUMBER) ? blk->size : 0;
+  v_memcpy(np, ptr, old < size ? old : size);
+  free(ptr);
+  return np;
+}
+
+uint32_t v_task_heap_used(void) {
+  TCB *t = current_task;
+  if (!t || !t->heap_base)
+    return 0;
+  uint32_t used = 0;
+  ENTER_CRITICAL();
+  for (Heap_Mem_Block *b = (Heap_Mem_Block *)t->heap_base;
+       (uint8_t *)b < t->heap_brk && b->magic_number == SANITY_MAGIC_NUMBER;
+       b = (Heap_Mem_Block *)((uint8_t *)b + THDR + b->size))
+    if (b->status == MEM_ALOC)
+      used += b->size;
+  EXIT_CRITICAL();
+  return used;
+}
+#endif // VAIOS_TASK_HEAP
