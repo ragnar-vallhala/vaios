@@ -1,5 +1,6 @@
 #include "ipc.h"
 #include "memory.h"
+#include "perf.h"
 #include "task.h"
 #include "utils.h"
 #include "vaios.h"
@@ -23,7 +24,7 @@ static MutexHandle_t g_log;
     v_mutex_unlock(g_log);                                                     \
   } while (0)
 
-static void heap_task(const char *tag) {
+static void heap_task(const char *tag, int dump) {
   for (int r = 0;; r++) {
     void *a = malloc(64);
     void *b = malloc(128);
@@ -39,12 +40,19 @@ static void heap_task(const char *tag) {
     free(d);
     LOG("[heap] %s r%d: all freed, used=%u (expect 0)\r\n", tag, r,
         (unsigned)v_task_heap_used());
+    // Dump perf once the heaps have been exercised: the [tasks] lines now carry
+    // stack=/heap=/total= (peak footprint, heap included).
+    if (dump && r == 2) {
+      v_mutex_lock(g_log, V_WAIT_FOREVER);
+      v_perf_dump();
+      v_mutex_unlock(g_log);
+    }
     v_delay(700);
   }
 }
 
-void heap_a_task(void *arg) { (void)arg; heap_task("A"); }
-void heap_b_task(void *arg) { (void)arg; heap_task("B"); }
+void heap_a_task(void *arg) { (void)arg; heap_task("A", 1); }
+void heap_b_task(void *arg) { (void)arg; heap_task("B", 0); }
 
 int main(void) {
   vaios_init_config_t cfg = {.internal_clock_setup = 1,

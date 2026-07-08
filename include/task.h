@@ -100,6 +100,7 @@ typedef struct Task_Control_Block {
   // stack pointer. malloc/free/calloc/realloc (memory.c) operate here.
   uint8_t *heap_base;
   uint8_t *heap_brk;
+  uint8_t *heap_peak_brk; // highest heap_brk ever reached (peak footprint)
 #endif
 #if VAIOS_IPC_FD
   // Multi-fd wait (v_wait). While blocked in v_wait, in_multiwait == 1 and

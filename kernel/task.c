@@ -261,6 +261,7 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
 #endif
     task->heap_base = (uint8_t *)task->mem_block + guard_off;
     task->heap_brk = task->heap_base;
+    task->heap_peak_brk = task->heap_base;
   }
 #endif
   init_task_stack(task);

@@ -382,6 +382,8 @@ void *malloc(size_t size) {
   blk->size = need;
   blk->prev = last;
   t->heap_brk = new_brk;
+  if (t->heap_brk > t->heap_peak_brk)
+    t->heap_peak_brk = t->heap_brk; // track peak footprint for perf
   EXIT_CRITICAL();
   return (uint8_t *)blk + THDR;
 }
