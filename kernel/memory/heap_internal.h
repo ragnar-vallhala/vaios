@@ -81,7 +81,7 @@ const char *vheap_index_name(void);
 // difference. Segregated-fit reports its first-fit walk length (grows as free
 // lists lengthen under fragmentation); TLSF reports a small constant (1, or 2
 // when it climbs one level), since its lookup is O(1). Defined by the facade,
-// written by the backend, read by profiling code (examples/mem_stress.c).
+// written by the backend, read by profiling code (examples/16_mem_stress.c).
 extern uint32_t vheap_find_probes;
 
 #endif // VAIOS_HEAP_INTERNAL_H

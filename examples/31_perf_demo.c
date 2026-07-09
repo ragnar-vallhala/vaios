@@ -1,5 +1,5 @@
 /*
- * examples/perf_demo.c — full end-to-end exercise of the perf module.
+ * examples/31_perf_demo.c — full end-to-end exercise of the perf module.
  *
  * A self-contained workload that touches every observability surface, then a
  * reporter loops a v_perf_dump() over the console (USART2 @ 115200 on the

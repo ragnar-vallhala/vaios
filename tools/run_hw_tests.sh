@@ -210,7 +210,7 @@ run_example IPC_TEST \
   "Task 2: Timeout waiting for binary semaphore"
 
 # On-target (PIL) unit tests: the host suites run against the real kernel +
-# port (real heap / IPC / formatter). See examples/unit_tests.c.
+# port (real heap / IPC / formatter). See examples/99_unit_tests.c.
 run_example UNIT_TESTS \
   "=== Suite: Memory Allocator ===" \
   "=== Suite: Structure" \

@@ -317,7 +317,7 @@ void v_perf_snapshot(v_perf_snapshot_t *out) {
  * the two on the same UART corrupts both streams byte-by-byte. Callers
  * that want an "announcement" line immediately before the snapshot
  * should use print_fmt for that line too — not v_log. See
- * examples/perf_example.c for the pattern.
+ * examples/30_perf_example.c for the pattern.
  */
 void v_perf_dump(void) {
   v_perf_snapshot_t s;
