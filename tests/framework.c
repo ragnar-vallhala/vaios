@@ -5,7 +5,7 @@
  * The analogue of NavHAL's navtest_state.c: owns the global pass/fail counters
  * and the two suite walkers declared in framework.h. Output is plain printf so
  * it works both on the host (libc stdout) and on target (newlib retargeted to
- * the UART console by examples/unit_tests.c).
+ * the UART console by examples/99_unit_tests.c).
  *
  * The per-case line format —
  *     "  <case_name><pad>PASS (n)"   /   "FAIL (p/t)"

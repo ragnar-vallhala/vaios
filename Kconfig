@@ -146,6 +146,18 @@ config VAIOS_HEAP_ALGO_SEGLIST
 config VAIOS_HEAP_ALGO_TLSF
     bool "TLSF (O(1) worst-case malloc + free, bounded fragmentation)"
 endchoice
+
+config VAIOS_TASK_HEAP
+    bool "Per-task heap (malloc/free out of the task's own region)"
+    default n
+    help
+      Phase 3, Stage 4: a task's stack block doubles as its heap. The stack grows
+      down from the top; malloc grows a heap up from just above the stack guard,
+      the two sharing the free middle (bidirectional). This gives tasks the
+      familiar malloc/free/calloc/realloc backed by their OWN region — the kernel
+      keeps v_malloc/v_free for its own allocations. malloc returns NULL when the
+      heap would meet the live stack (sizing the region is the caller's job). The
+      substrate the unprivileged flip (Stage 5) makes the task's writable heap.
 endmenu
 
 menu "Memory protection (MPU)"

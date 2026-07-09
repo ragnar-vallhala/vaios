@@ -5,7 +5,7 @@
  * One `extern const test_suite_t` per suite (defined in the matching
  * test_*.c). Runners include this header and pick the suites they want into a
  * `const test_suite_t *const[]` — the host runner takes them all, the
- * on-target runner (examples/unit_tests.c) takes a curated subset.
+ * on-target runner (examples/99_unit_tests.c) takes a curated subset.
  *
  * Adding a suite: define its `test_suite_t` in a test_*.c, declare it here,
  * and add `&its_suite` to the runner array(s) that should include it. That is

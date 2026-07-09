@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parse mem_stress UART logs and plot an A/B allocator comparison.
 
-The MEM_STRESS example (examples/mem_stress.c) streams one CSV row per heap
+The MEM_STRESS example (examples/16_mem_stress.c) streams one CSV row per heap
 operation, embedded in ordinary log lines:
 
     ... @MS,<seq>,<A|F|O>,<size>,<cycles>,<probes>,<live>,<bytes_in_use>

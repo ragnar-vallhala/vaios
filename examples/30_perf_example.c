@@ -1,5 +1,5 @@
 /*
- * examples/perf_example.c
+ * examples/30_perf_example.c
  *
  * Demonstrates the optional perf module (see kernel/perf.c and
  * docs/perf/IMPLEMENTATION_PLAN.md).
