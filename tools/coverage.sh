@@ -44,6 +44,7 @@ cmake --build "$BUILD_DIR" --parallel >/dev/null 2>&1 || { echo "build failed" >
 echo "=== running test binaries (generating .gcda) ==="
 "$BUILD_DIR/vaios_tests"        >/dev/null 2>&1 || echo "  warning: vaios_tests exited non-zero" >&2
 "$BUILD_DIR/vaios_utils_tests"  >/dev/null 2>&1 || echo "  warning: vaios_utils_tests exited non-zero" >&2
+"$BUILD_DIR/vaios_devfs_tests"  >/dev/null 2>&1 || echo "  warning: vaios_devfs_tests exited non-zero" >&2
 
 # --- parse one gcov run for a given source path ------------------------------
 # Echoes: "<linepct> <linetotal> <brpct> <brtotal>" or nothing if not found.
