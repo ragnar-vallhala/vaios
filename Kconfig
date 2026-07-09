@@ -325,6 +325,13 @@ config TERMINAL_TASK_STACK_SIZE
     default 1024
 endmenu
 
+# Per-example feature overlay: EXAMPLE_<TOKEN> entries whose `select`s pull in
+# the Kconfig features a given example needs, activated by the generator's
+# --example-override (from -DVAIOS_EXAMPLE). rsource (not source) so the path
+# resolves against this Kconfig's dir, not $srctree (which points at NavHAL under
+# NAVHAL=ON).
+rsource "examples/Kconfig"
+
 # When building against NavHAL, pull its entire option tree into this same
 # menu/.config so there is a single source of truth. Driven by the NAVHAL_KCONFIG
 # env var, NOT an `if` block: kconfiglib processes `source` at parse time

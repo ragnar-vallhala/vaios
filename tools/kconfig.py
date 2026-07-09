@@ -51,6 +51,10 @@ def parse_args():
     p.add_argument("--header-out", default=None, help="Output vaios_autoconf.h")
     p.add_argument("--cmake-out", default=None, help="Output config.cmake")
     p.add_argument("--menuconfig", action="store_true", help="Interactive menuconfig")
+    p.add_argument("--example-override", default=None,
+                   help="Activate examples/Kconfig's EXAMPLE_<TOKEN> entry (fires "
+                        "its selects) after loading .config. No-op if the example "
+                        "has no entry. Mirrors NavHAL's --sample-override.")
     return p.parse_args()
 
 
@@ -110,6 +114,25 @@ def run_menuconfig(kconfig_file, config_file):
     except ImportError:
         print("Error: 'kconfiglib' is required for menuconfig.", file=sys.stderr)
         sys.exit(1)
+
+
+def apply_example_override(kb, token):
+    """Activate examples/Kconfig's EXAMPLE_<TOKEN> choice entry so its `select`s
+    cascade into the effective config. Applied AFTER load_config and transiently
+    (never written back to .config), so the base .config stays a clean defconfig
+    expansion while the example's feature closure is layered on for this build
+    only. Mirrors NavHAL's --sample-override.
+
+    Examples that need no non-default features have no EXAMPLE_ entry -> no-op."""
+    token = (token or "").strip()
+    if not token:
+        return
+    name = "EXAMPLE_" + token.upper()
+    sym = kb.syms.get(name)
+    if sym is None:
+        return  # example has no examples/Kconfig entry; base config applies as-is
+    sym.set_value("y")  # choice member -> becomes the choice selection; selects fire
+    print(f"Example override: {name}=y (selects cascaded)")
 
 
 def load_kconfig(kconfig_path, config_path):
@@ -211,6 +234,7 @@ def main():
         print("No output paths specified.")
         return
     kb = load_kconfig(args.kconfig, args.config)
+    apply_example_override(kb, args.example_override)
     if args.header_out:
         print(f"Generating C header -> '{args.header_out}'")
         generate_header(kb, args.header_out)

@@ -1,0 +1,68 @@
+# Per-example feature config (Tier 1). Mirrors NavHAL's samples/Kconfig.
+#
+# The example being built is passed to the Kconfig generator via
+# --example-override (from -DVAIOS_EXAMPLE, see the top-level CMakeLists), which
+# activates the matching `config EXAMPLE_<TOKEN>` below; its `select`s then pull
+# in exactly the Kconfig features that example needs. The effect is layered
+# transiently on top of the base .config and never written back.
+#
+# Only examples that need NON-DEFAULT features have an entry here — every other
+# example builds fine against the base .config, so the override is a silent
+# no-op for it. <TOKEN> is the -DVAIOS_EXAMPLE=<TOKEN> string (see
+# examples/CMakeLists.txt), uppercased.
+#
+# Note on `select`: fd IPC / devfs / SVC / the MPU form a `depends on` chain, and
+# Kconfig `select` does NOT pull a target's own dependencies. So each entry
+# selects the WHOLE closure it needs (the same way a NavHAL sample selects its
+# full driver set), not just the leaf symbol.
+
+choice
+	prompt "Example application (config overlay)"
+	default EXAMPLE_NONE
+	help
+	  Auto-driven by the build from -DVAIOS_EXAMPLE via the generator's
+	  --example-override; you normally do not set this by hand. Examples with
+	  no extra feature needs stay on EXAMPLE_NONE.
+
+config EXAMPLE_NONE
+	bool "None / example needs no extra config"
+
+config EXAMPLE_TASK_HEAP_TEST
+	bool "task_heap_test"
+	select VAIOS_TASK_HEAP
+
+config EXAMPLE_FD_IPC_TEST
+	bool "fd_ipc_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_IPC_FD
+
+config EXAMPLE_FD_WAIT_TEST
+	bool "fd_wait_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_IPC_FD
+
+config EXAMPLE_DEVFS_TEST
+	bool "devfs_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+
+config EXAMPLE_KMSG_TEST
+	bool "kmsg_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+
+config EXAMPLE_MPU_FAULT
+	bool "mpu_fault"
+	select VAIOS_MPU_ENABLE
+
+config EXAMPLE_STACK_OVERFLOW
+	bool "stack_overflow"
+	select VAIOS_MPU_ENABLE
+
+endchoice
