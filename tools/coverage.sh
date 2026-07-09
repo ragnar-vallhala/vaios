@@ -72,7 +72,7 @@ for gcda in $(find "$BUILD_DIR" -path '*/kernel/*.c.gcda' | sort); do
 
   best_lp=0; best_lt=0; best_bp=0; best_bt=0; best_cov=-1; best_g=""
   # A source may exist in several binaries; pick the run covering the most lines.
-  for g in $(find "$BUILD_DIR" -path "*/kernel/$base.c.gcda"); do
+  for g in $(find "$BUILD_DIR" -path '*/kernel/*' -name "$base.c.gcda"); do
     read -r lp lt bp bt < <(cov_for "$g" "$base.c")
     [ -z "${lp:-}" ] && continue
     cov=$(awk -v p="$lp" -v t="$lt" 'BEGIN{printf "%d", (p*t)/100 + 0.5}')
