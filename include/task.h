@@ -188,12 +188,11 @@ __attribute__((noreturn)) void task_exit(void);
 // Privileged terminate-self body (runs from the SYS_exit dispatch, or directly
 // when the flip is off). Returns; task_exit is the noreturn entry point.
 void v_task_exit_impl(void);
-#if VAIOS_MPU_USER_SEPARATION
 // Syscall-boundary pointer validation (5c): is [p, p+len) within the current
-// task's own block? v_strnlen_user bounds a user C string to the block.
+// task's own block? v_strnlen_user bounds a user C string to the block. Always
+// available (pure); the syscall dispatch only calls them under the flip.
 int v_access_ok(const void *p, uint32_t len, int write);
 long v_strnlen_user(const char *s, uint32_t max);
-#endif
 
 //-----------------------------------------------------------------------------
 // Idle Task

@@ -391,8 +391,9 @@ __attribute__((noreturn)) void task_exit(void) {
     ;
 }
 
-#if VAIOS_MPU_USER_SEPARATION
 // --- Syscall-boundary pointer validation (Stage 5, 5c) ----------------------
+// Always compiled (pure, host-testable); only the USE in the syscall dispatch is
+// gated on VAIOS_MPU_USER_SEPARATION.
 // A user pointer is valid only if [p, p+len) lies wholly within the calling
 // task's own block [mem_block, mem_block+stack_size). Overflow-safe. `write` is
 // a hook for a future finer split; the whole block is RW today.
@@ -428,7 +429,6 @@ long v_strnlen_user(const char *s, uint32_t max) {
       return (long)i;
   return -1; // unterminated within bounds
 }
-#endif
 void task_exit_request(uint32_t task_id) {
   TCB *task = get_task_by_id(task_id);
   if (!task || task->status == TASK_TERMINATED)
