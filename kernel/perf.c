@@ -250,7 +250,7 @@ void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out) {
    * but the high-water only grows so a stale read is safe; scanned outside the
    * critical section to keep it short. */
   out->stack_size = t->stack_size;
-  out->stack_peak = 0;
+  out->stack_peak = t->stack_size; /* default (e.g. NULL mem_block): assume fully used */
   out->heap_peak = 0;
   out->total_peak = 0;
   if (t->mem_block && t->stack_size) {
