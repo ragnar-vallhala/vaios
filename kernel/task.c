@@ -227,6 +227,12 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->sp = task->mem_block + (size / sizeof(uint32_t));
   task->priority = priority;
   task->base_priority = priority;
+#if VAIOS_MPU_USER_SEPARATION
+  // User tasks run unprivileged by default (the flip). scheduler_init raises the
+  // idle task back to privileged; a privileged system task would set this after
+  // create.
+  task->privileged = 0;
+#endif
   task->delay_ticks = 0;
   task->next = NULL;
   task->prev = NULL;
@@ -358,17 +364,71 @@ void set_next_task(void) {
     v_panic(__FILE__, __LINE__, "current_task is NULL");
 }
 
-__attribute__((noreturn)) void task_exit(void) {
+// Privileged body: mark the caller terminated, park it for the idle GC, and pend
+// the switch. RETURNS to its caller (the SVC dispatch or task_exit's spin), which
+// is why task_exit — not this — is the noreturn entry.
+void v_task_exit_impl(void) {
   ENTER_CRITICAL();
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
   EXIT_CRITICAL();
-
   v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
+}
+
+// A task's function-return LR. Under the unprivileged flip the body touches
+// kernel state (ready lists, ICSR), so an unprivileged task must trap; the
+// dispatch runs v_task_exit_impl privileged. Flag off (or privileged), run it
+// directly. Either way we never return — PendSV switches the terminated task out.
+__attribute__((noreturn)) void task_exit(void) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    v_svc0(SYS_exit); // traps; kernel terminates us; we never resume
+  else
+#endif
+    v_task_exit_impl();
   while (1)
     ;
 }
+
+#if VAIOS_MPU_USER_SEPARATION
+// --- Syscall-boundary pointer validation (Stage 5, 5c) ----------------------
+// A user pointer is valid only if [p, p+len) lies wholly within the calling
+// task's own block [mem_block, mem_block+stack_size). Overflow-safe. `write` is
+// a hook for a future finer split; the whole block is RW today.
+int v_access_ok(const void *p, uint32_t len, int write) {
+  (void)write;
+  TCB *t = current_task;
+  if (!t || !t->mem_block)
+    return 0;
+  uintptr_t base = (uintptr_t)t->mem_block;
+  uintptr_t end = base + t->stack_size;
+  uintptr_t a = (uintptr_t)p;
+  if (a < base || a > end)
+    return 0;
+  return len <= (uint32_t)(end - a); // a+len <= end, no wrap (a<=end already)
+}
+
+// Bounded NUL scan for a user string, never reading past the caller's block.
+// Returns the length (excluding NUL), or -1 if the pointer is out of bounds or
+// no NUL is found within `max` / the block.
+long v_strnlen_user(const char *s, uint32_t max) {
+  TCB *t = current_task;
+  if (!t || !t->mem_block)
+    return -1;
+  uintptr_t base = (uintptr_t)t->mem_block;
+  uintptr_t end = base + t->stack_size;
+  uintptr_t a = (uintptr_t)s;
+  if (a < base || a >= end)
+    return -1;
+  uint32_t avail = (uint32_t)(end - a);
+  uint32_t limit = avail < max ? avail : max;
+  for (uint32_t i = 0; i < limit; i++)
+    if (s[i] == '\0')
+      return (long)i;
+  return -1; // unterminated within bounds
+}
+#endif
 void task_exit_request(uint32_t task_id) {
   TCB *task = get_task_by_id(task_id);
   if (!task || task->status == TASK_TERMINATED)
@@ -703,6 +763,11 @@ void scheduler_init(void) {
   scheduler_running = 0;
   task_create(idle_task_function, NULL, IDLE_TASK_STACK_SIZE, 0);
   idle_task = ready_lists[0];
+#if VAIOS_MPU_USER_SEPARATION
+  // The idle task runs kernel housekeeping (log flush, dead-task GC), so it must
+  // stay privileged even though task_create defaults new tasks to unprivileged.
+  idle_task->privileged = 1;
+#endif
   current_task = idle_task;
 }
 

@@ -210,6 +210,8 @@ int v_port_hw_sdio_card_init(void) {
  * ------------------------------------------------------------------------- */
 #define SCB_SHCSR (*(volatile uint32_t *)0xE000ED24)
 #define SHCSR_MEMFAULTENA (1u << 16)
+#define SHCSR_BUSFAULTENA (1u << 17)
+#define SHCSR_USGFAULTENA (1u << 18)
 #define SCB_VTOR (*(volatile uint32_t *)0xE000ED08u)
 /* Top region on the F401 (8 regions, 0..7). Higher number wins on overlap, so
  * the guard overrides the Phase 2 SRAM region at the stack base. */
@@ -303,8 +305,11 @@ void v_port_mpu_init(void) {
 #if VAIOS_MPU_STATIC_PROTECT
   v_mpu_static_protect(); /* program the static background map before enabling */
 #endif
-  SCB_SHCSR |= SHCSR_MEMFAULTENA; /* MPU violations trap to MemManage_Handler */
-  hal_mpu_enable(true);           /* PRIVDEFENA: default map for uncovered addrs */
+  /* MPU violations -> MemManage. Also enable Bus/Usage faults so an unprivileged
+   * task's stray bus access or privileged-instruction attempt reports cleanly
+   * (via their decoded handlers) instead of escalating straight to HardFault. */
+  SCB_SHCSR |= SHCSR_MEMFAULTENA | SHCSR_BUSFAULTENA | SHCSR_USGFAULTENA;
+  hal_mpu_enable(true); /* PRIVDEFENA: default map for uncovered addrs */
 }
 
 int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {

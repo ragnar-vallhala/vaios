@@ -89,6 +89,10 @@ typedef struct Task_Control_Block {
   // the base. Valid only when mpu_block_valid != 0.
   uint32_t mpu_block[2];
   uint8_t mpu_block_valid;
+  // Privilege of this task's thread-mode execution: 0 = unprivileged (the
+  // default for user tasks), 1 = privileged. Applied to CONTROL.nPRIV on
+  // switch-in. The idle task is privileged (it does kernel housekeeping).
+  uint8_t privileged;
 #endif
 #if VAIOS_SYSCALL_SVC
   // Deferred blocking-syscall result: set by the waker (v_syscall_wake_result)
@@ -181,6 +185,15 @@ void load_next_task_from_isr(void); // ISR-safe trigger to switch
 void task_yield(void);              // Voluntary yield (port.c)
 void task_change_priority(TCB *task, uint32_t new_priority);
 __attribute__((noreturn)) void task_exit(void);
+// Privileged terminate-self body (runs from the SYS_exit dispatch, or directly
+// when the flip is off). Returns; task_exit is the noreturn entry point.
+void v_task_exit_impl(void);
+#if VAIOS_MPU_USER_SEPARATION
+// Syscall-boundary pointer validation (5c): is [p, p+len) within the current
+// task's own block? v_strnlen_user bounds a user C string to the block.
+int v_access_ok(const void *p, uint32_t len, int write);
+long v_strnlen_user(const char *s, uint32_t max);
+#endif
 
 //-----------------------------------------------------------------------------
 // Idle Task
