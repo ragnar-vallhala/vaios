@@ -86,6 +86,7 @@ elseif(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_memory.c
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_structure.c
       ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_utils.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/../tests/test_uaccess.c
       ${STARTUP_FILE})
   target_include_directories(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../tests)
 endif()
