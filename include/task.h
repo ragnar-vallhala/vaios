@@ -82,6 +82,14 @@ typedef struct Task_Control_Block {
   uint32_t mpu_guard[2];
   uint8_t mpu_guard_valid;
 #endif
+#if VAIOS_MPU_USER_SEPARATION
+  // Pre-encoded per-task RW-unprivileged region over the WHOLE block, applied on
+  // context switch alongside the guard. Grants the running (unprivileged) task
+  // access to only its own stack+heap; the higher-numbered guard still wins at
+  // the base. Valid only when mpu_block_valid != 0.
+  uint32_t mpu_block[2];
+  uint8_t mpu_block_valid;
+#endif
 #if VAIOS_SYSCALL_SVC
   // Deferred blocking-syscall result: set by the waker (v_syscall_wake_result)
   // and written into this task's stacked r0 by PendSV (v_syscall_deliver_result)

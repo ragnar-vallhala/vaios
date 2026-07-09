@@ -436,15 +436,46 @@ void init_task_stack(TCB *task) {
       (v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE,
                                  task->mpu_guard) == 0);
 #endif
+#if VAIOS_MPU_USER_SEPARATION
+  // Pre-encode the RW-unprivileged region over the whole block. Applied with the
+  // guard on switch-in; grants the (unprivileged) task access to only its own
+  // stack+heap. Base is size-aligned by task_create.
+  task->mpu_block_valid =
+      (v_port_task_region_encode(task->mem_block, task->stack_size,
+                                 task->mpu_block) == 0);
+#endif
 }
 
 // Apply the running task's MPU region set — the context-switch fast path, called
 // from PendSV/ISR switch after set_next_task updates current_task.
 void v_port_apply_current_mpu(void) {
-#if VAIOS_MPU_STACK_GUARD
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
   extern TCB *current_task;
-  if (current_task && current_task->mpu_guard_valid)
-    v_port_mpu_apply(current_task->mpu_guard, 1);
+  TCB *t = current_task;
+  if (!t)
+    return;
+  // Assemble this task's region set into one contiguous array and program it in
+  // a single hal_mpu_apply (one barrier). Each encoded pair carries its own
+  // region number in RBAR, so order is irrelevant; the guard (region 7) wins on
+  // overlap with the block region (region 4) at the base regardless.
+  uint32_t set[4];
+  uint32_t count = 0;
+#if VAIOS_MPU_USER_SEPARATION
+  if (t->mpu_block_valid) {
+    set[count * 2] = t->mpu_block[0];
+    set[count * 2 + 1] = t->mpu_block[1];
+    count++;
+  }
+#endif
+#if VAIOS_MPU_STACK_GUARD
+  if (t->mpu_guard_valid) {
+    set[count * 2] = t->mpu_guard[0];
+    set[count * 2 + 1] = t->mpu_guard[1];
+    count++;
+  }
+#endif
+  if (count)
+    v_port_mpu_apply(set, count);
 #endif
 }
 

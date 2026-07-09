@@ -203,7 +203,13 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->task_id = ++task_count;
   task->name = name ? name : "";
   task->stack_size = size;
-#if VAIOS_MPU_STACK_GUARD
+#if VAIOS_MPU_USER_SEPARATION
+  // The per-task RW-unprivileged region covers the WHOLE block as one MPU region,
+  // which needs a size-aligned, power-of-two base. Align the block to its own
+  // size (size is already required power-of-two). The guard at the base stays
+  // size-aligned trivially. Encoded in init_task_stack.
+  task->mem_block = (uint32_t *)v_memalign(size, size);
+#elif VAIOS_MPU_STACK_GUARD
   // The MPU stack-guard region sits at the stack base, so the base must land on
   // the guard's size boundary. v_memalign gives that; the no-access guard region
   // is encoded in init_task_stack.

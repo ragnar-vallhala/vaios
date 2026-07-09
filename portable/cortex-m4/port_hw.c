@@ -214,6 +214,10 @@ int v_port_hw_sdio_card_init(void) {
 /* Top region on the F401 (8 regions, 0..7). Higher number wins on overlap, so
  * the guard overrides the Phase 2 SRAM region at the stack base. */
 #define VAIOS_MPU_GUARD_REGION 7u
+/* Per-task RW-unprivileged region over the whole block (Stage 5). Above the
+ * static SRAM region 0 (so it grants the task its own block) and below the guard
+ * region 7 (so the guard still wins at the base). Regions 5,6 stay free. */
+#define VAIOS_MPU_USER_REGION 4u
 
 #if defined(NAVHAL) && VAIOS_MPU_ENABLE
 /* hal_mpu_size_t encodes SIZE as log2(bytes) - 1. */
@@ -231,7 +235,15 @@ static void v_mpu_static_protect(void) {
    *    wholly from flash (no ramfuncs), so XN on RAM catches execute-from-stack/
    *    heap without breaking anything. */
   static const hal_mpu_region_t sram = {
-      .base = 0x20000000u, .size = HAL_MPU_SIZE_128KB, .ap = HAL_MPU_AP_RW,
+      .base = 0x20000000u, .size = HAL_MPU_SIZE_128KB,
+#if VAIOS_MPU_USER_SEPARATION
+      /* Kernel-only: unprivileged tasks reach only their own block, granted by
+       * the higher-numbered per-task region (VAIOS_MPU_USER_REGION) on switch-in.
+       * Privileged code (kernel + still-privileged tasks) keeps RW. */
+      .ap = HAL_MPU_AP_PRIV_RW,
+#else
+      .ap = HAL_MPU_AP_RW,
+#endif
       .mem = HAL_MPU_MEM_NORMAL_WB, .executable = false,
       .shareable = false, .srd_mask = 0};
   hal_mpu_configure_region(0u, &sram);
@@ -246,13 +258,23 @@ static void v_mpu_static_protect(void) {
       .shareable = true, .srd_mask = 0};
   hal_mpu_configure_region(1u, &mmio);
 
-#if VAIOS_MPU_FLASH_RO
-  /* 2: Flash code+rodata (512 KB): read-only, executable. Catches code/const
-   *    corruption. HAZARD: on-chip flash programming writes the 0x08xxxxxx space
-   *    directly, so this is INCOMPATIBLE with hal_flash's key/value store —
-   *    enable only when the KV store is unused (or carve its sectors out via SRD). */
+#if VAIOS_MPU_FLASH_RO || VAIOS_MPU_USER_SEPARATION
+  /* 2: Flash code+rodata (512 KB), executable. Needed under USER_SEPARATION so an
+   *    unprivileged task can still fetch instructions and read .rodata (the
+   *    PRIVDEFENA background map does not cover unprivileged code). AP:
+   *      - FLASH_RO: AP_RO — read-only for privileged too, to catch code/const
+   *        corruption. HAZARD: incompatible with hal_flash's KV store, which
+   *        writes 0x08xxxxxx directly (enable only when the KV store is unused).
+   *      - else (USER_SEPARATION only): AP_PRIV_RW_UNPRIV_RO — unprivileged tasks
+   *        read+execute but cannot write flash; privileged code is unrestricted,
+   *        so the KV store keeps working. */
   static const hal_mpu_region_t flash = {
-      .base = 0x08000000u, .size = HAL_MPU_SIZE_512KB, .ap = HAL_MPU_AP_RO,
+      .base = 0x08000000u, .size = HAL_MPU_SIZE_512KB,
+#if VAIOS_MPU_FLASH_RO
+      .ap = HAL_MPU_AP_RO,
+#else
+      .ap = HAL_MPU_AP_PRIV_RW_UNPRIV_RO,
+#endif
       .mem = HAL_MPU_MEM_NORMAL_WT, .executable = true,
       .shareable = false, .srd_mask = 0};
   hal_mpu_configure_region(2u, &flash);
@@ -305,6 +327,31 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
   return 0;
 }
 
+#if VAIOS_MPU_USER_SEPARATION
+/* Encode the per-task RW-unprivileged region covering the whole block. base must
+ * be size-aligned (task_create aligns to `size`). W^X: not executable, so code
+ * can't run from stack/heap. */
+int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  if (!hal_mpu_present())
+    return -1;
+  hal_mpu_region_t r = {
+      .base = (uint32_t)base,
+      .size = v_mpu_size_enum(size),
+      .ap = HAL_MPU_AP_RW, /* unprivileged RW to the task's own block */
+      .mem = HAL_MPU_MEM_NORMAL_WB,
+      .executable = false,
+      .shareable = false,
+      .srd_mask = 0,
+  };
+  hal_mpu_encoded_t enc;
+  if (hal_mpu_encode(VAIOS_MPU_USER_REGION, &r, &enc) != HAL_OK)
+    return -1;
+  out[0] = enc.rbar;
+  out[1] = enc.rasr;
+  return 0;
+}
+#endif
+
 void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
   if (count == 0 || !hal_mpu_present())
     return;
@@ -318,6 +365,14 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)out;
   return -1;
 }
+#if VAIOS_MPU_USER_SEPARATION
+int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  (void)base;
+  (void)size;
+  (void)out;
+  return -1;
+}
+#endif
 void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
   (void)enc;
   (void)count;

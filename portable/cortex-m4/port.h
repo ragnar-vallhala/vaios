@@ -85,6 +85,11 @@ void v_port_mpu_init(void);
 // Pre-encode a no-access stack-guard region of `size` bytes at `base` into the
 // two-word RBAR/RASR pair `out`. Returns 0 on success, non-zero if unavailable.
 int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]);
+#if VAIOS_MPU_USER_SEPARATION
+// Pre-encode the per-task RW-unprivileged region over the whole `size`-byte
+// block at `base` (Stage 5). Returns 0 on success, non-zero if unavailable.
+int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]);
+#endif
 // Apply a pre-encoded region pair to the hardware (context-switch fast path).
 void v_port_mpu_apply(const uint32_t enc[2], uint32_t count);
 
