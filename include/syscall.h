@@ -44,6 +44,11 @@ typedef enum {
   SYS_sem_poll = 17,
   SYS_wait = 18,        // multi-fd wait: arm observers + block
   SYS_wait_disarm = 19, // unlink observers + report ready index
+  SYS_malloc = 20,      // per-task heap (VAIOS_TASK_HEAP + VAIOS_MPU_USER_SEPARATION):
+  SYS_free = 21,        //   routed through SVC so the allocator runs privileged
+  SYS_calloc = 22,      //   (reads current_task / the task block) once tasks are
+  SYS_realloc = 23,     //   unprivileged and can no longer reach them directly.
+  SYS_heap_used = 24,
   SYS_MAX
 } v_syscall_t;
 

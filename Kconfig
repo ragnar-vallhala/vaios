@@ -214,6 +214,21 @@ config VAIOS_MPU_NULL_GUARD
       before arming this region, so exception vector fetches do not alias into
       it. Hardware-validated on the Nucleo-F401RE (boots with the guard armed; a
       NULL write traps with MMFSR DACCVIOL at addr 0x0).
+config VAIOS_MPU_USER_SEPARATION
+    bool "Unprivileged tasks + per-task MPU isolation (Phase 3, Stage 5)"
+    depends on VAIOS_SYSCALL_SVC && VAIOS_MPU_STATIC_PROTECT
+    default n
+    help
+      Phase 3, Stage 5 — the unprivileged flip: run tasks with CONTROL.nPRIV=1,
+      grant each task an MPU region over only its own block, validate user
+      pointers at the syscall boundary, and gate the raw-handle (non-fd) IPC
+      syscalls to privileged callers. See docs/plan/PHASE3_STAGE5_UNPRIV_PLAN.md.
+
+      WORK IN PROGRESS — being built up sub-stage by sub-stage. Currently
+      implemented behind this symbol: the per-task heap allocator
+      (malloc/free/calloc/realloc) routes through SVC so it keeps working once a
+      task can no longer reach current_task directly. The MPU region set and the
+      nPRIV flip itself land in follow-up commits. Off until complete.
 endmenu
 
 menu "Kernel/user separation (Phase 3)"
