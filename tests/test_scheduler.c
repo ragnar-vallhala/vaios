@@ -421,9 +421,90 @@ static void test_task_delay_until(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * task_block / task_exit_request / v_task_exit_impl + run-time getters
+ * (previously 0-call in coverage)
+ * ---------------------------------------------------------------------- */
+extern uint32_t get_task_run_time(TCB *task);
+extern void reset_task_run_time(TCB *task);
+extern void reset_idle_task_timer(void);
+
+static void test_task_run_time_getset(void) {
+  TCB t = {0};
+  t.ticks_run = 42;
+  TEST_ASSERT_EQ(get_task_run_time(&t), 42u);
+  reset_task_run_time(&t);
+  TEST_ASSERT_EQ(get_task_run_time(&t), 0u);
+  TEST_ASSERT_EQ(get_task_run_time(NULL), 0u); /* NULL-safe */
+  reset_task_run_time(NULL);                   /* no crash */
+  TEST_ASSERT(1);
+}
+
+static void test_idle_tick_getset(void) {
+  full_reset();
+  scheduler_init();
+  idle_task->ticks_run = 7;
+  TEST_ASSERT_EQ(get_idle_tick_count(), 7u);
+  reset_idle_task_timer();
+  TEST_ASSERT_EQ(get_idle_tick_count(), 0u);
+}
+
+static void test_task_block_blocks_current(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t id = task_create(dummy_task, NULL, 512, 1);
+  TEST_ASSERT(id != 0);
+  TCB *t = ready_lists[1];
+  TEST_ASSERT_NOT_NULL(t);
+  current_task = t;
+  task_block();
+  TEST_ASSERT_EQ(t->status, TASK_BLOCKED);
+  task_block(); /* already blocked -> no-op */
+  TEST_ASSERT_EQ(t->status, TASK_BLOCKED);
+}
+
+static void test_task_block_idle_is_noop(void) {
+  full_reset();
+  scheduler_init();
+  current_task = idle_task;
+  int before = current_task->status;
+  task_block();
+  TEST_ASSERT_EQ(current_task->status, before); /* idle cannot block */
+}
+
+static void test_task_exit_request_terminates(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t id = task_create(dummy_task, NULL, 512, 1);
+  TCB *t = ready_lists[1];
+  TEST_ASSERT_NOT_NULL(t);
+  task_exit_request(id);
+  TEST_ASSERT_EQ(t->status, TASK_TERMINATED);
+  task_exit_request(id);     /* already terminated -> no-op */
+  TEST_ASSERT_EQ(t->status, TASK_TERMINATED);
+  task_exit_request(999999); /* unknown id -> no crash */
+  TEST_ASSERT(1);
+}
+
+static void test_v_task_exit_impl_terminates_current(void) {
+  full_reset();
+  scheduler_init();
+  TCB t = {0};
+  t.magic = TCB_MAGIC;
+  current_task = &t;
+  v_task_exit_impl(); /* Stage-5 SYS_exit body */
+  TEST_ASSERT_EQ(t.status, TASK_TERMINATED);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 static const test_case_t scheduler_cases[] = {
+    TEST_CASE(test_task_run_time_getset),
+    TEST_CASE(test_idle_tick_getset),
+    TEST_CASE(test_task_block_blocks_current),
+    TEST_CASE(test_task_block_idle_is_noop),
+    TEST_CASE(test_task_exit_request_terminates),
+    TEST_CASE(test_v_task_exit_impl_terminates_current),
     TEST_CASE(test_task_delay_until),
     TEST_CASE(test_task_naming),
     TEST_CASE(test_task_snapshot_list_covers_all_once),
