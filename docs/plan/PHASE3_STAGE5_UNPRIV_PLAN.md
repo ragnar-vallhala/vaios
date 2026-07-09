@@ -1,9 +1,15 @@
 # Phase 3, Stage 5 — The Unprivileged Flip (design plan)
 
-> Status: **design draft, not started.** This is the last item of Phase 3
+> Status: **implemented and HW-validated** behind `VAIOS_MPU_USER_SEPARATION`
+> (5a via PR #29; 5b–5e in this series). This is the last item of Phase 3
 > (kernel/user separation). It turns the *mechanism* built in Stages 1–4 and MPU
 > Phases 1–2 into *enforced* isolation. Supersedes/expands §3 of
-> `MPU_CACHE_INTEGRATION_PLAN.md`.
+> `MPU_CACHE_INTEGRATION_PLAN.md`. Validated on the STM32F401RE via the
+> `mpu_user_demo` example: an unprivileged task (nPRIV=1) does console I/O +
+> malloc/free/delay through syscalls, and a deliberate kernel access traps with a
+> clean panic. Follow-up (not in this stage): fault *recovery* (kill the faulting
+> task and reschedule) — see §6; and a sweep of any remaining task-facing APIs
+> that read kernel globals before trapping (v_delay was the first found/fixed).
 
 ## 0. Where we start from (ground truth)
 
