@@ -25,21 +25,25 @@ static int _is_cmd_running = 0;
   v_log(TERMINAL_LOG_LEVEL, "[TERM] " fmt, ##__VA_ARGS__)
 #endif
 
-static Command_t *_find_command(const char *cmd) {
+Command_t *terminal_find_command(const char *cmd) {
   char buf[CMD_BUFFER_SIZE];
   uint8_t pre_flag = 1;
-  int i = 0;
-  for (i = 0; i < CMD_BUFFER_SIZE; i++) {
+  int w = 0; // write index — separate from the read index so skipped leading
+             // spaces don't leave gaps in buf (the old code reused one index and
+             // wrote the token at its ORIGINAL offset, so "  ls" never matched).
+  for (int i = 0; i < CMD_BUFFER_SIZE; i++) {
     if (cmd[i] == ' ' && pre_flag)
-      continue;
+      continue; // skip leading whitespace
     pre_flag = 0;
     if (cmd[i] == '\0' || cmd[i] == ' ')
-      break;
-    buf[i] = cmd[i];
+      break; // end of the first token
+    if (w >= CMD_BUFFER_SIZE - 1)
+      return NULL; // token too long to hold + NUL
+    buf[w++] = cmd[i];
   }
-  if (i == CMD_BUFFER_SIZE)
-    return NULL;
-  buf[i] = '\0';
+  buf[w] = '\0';
+  if (w == 0)
+    return NULL; // empty / whitespace-only input
   for (int i = 0; i < _cmd_count_idx; i++) {
     if (v_strcmp(_commands[i].command, buf) == 0)
       return &_commands[i];
@@ -201,7 +205,7 @@ void terminal_run(void *args) {
       const char *cmd_str =
           _term_history[(_current_command_count_idx - 1 + CMD_BUFFER_SIZE) %
                         CMD_BUFFER_SIZE];
-      Command_t *cmd = _find_command(cmd_str);
+      Command_t *cmd = terminal_find_command(cmd_str);
       if (cmd) {
         _running_cmd_id = task_create(cmd->callback, (void *)cmd_str, 1024, 0);
         if (_running_cmd_id != 0)
