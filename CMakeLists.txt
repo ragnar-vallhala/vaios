@@ -142,32 +142,23 @@ endif()
 # ---------------------------------------------------------------------------
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(VAIOS_AUTOCONF "${CMAKE_BINARY_DIR}/vaios_autoconf.h")
-# Which Kconfig .config the build reads. The config is NOT bound to the build
-# dir — each example carries its own persistent, checked-in config. Precedence:
-#   1. -DVAIOS_CONFIG=<path>              explicit override, always wins
-#   2. examples/configs/<EXAMPLE>.config  per-example config (checked in),
-#                                         auto-selected from VAIOS_EXAMPLE
-#   3. <build>/.config                    build-local artifact, seeded from
-#                                         defconfig (the historical default)
-# This makes each example self-configuring: an example that needs non-default
-# Kconfig features (fd IPC, per-task heap, ...) ships its own committed .config,
-# and a plain -DVAIOS_EXAMPLE=<X> picks it up — no build-local hand-editing, no
-# per-build divergence. The seed-source defconfig is overridable too.
-set(VAIOS_CONFIG "" CACHE FILEPATH
-    "Explicit Kconfig .config path (overrides per-example auto-selection)")
+# Which Kconfig .config the build reads. Default is a build-local artifact
+# (gitignored), seeded once from defconfig; -DVAIOS_CONFIG=<path> overrides it to
+# a shared/checked-in config. The config is NOT bound to the build dir.
+#
+# Per-example feature needs (fd IPC, the per-task heap, devfs, the MPU faults)
+# are NOT separate .config files: each such example is a `config EXAMPLE_<TOKEN>`
+# entry in examples/Kconfig whose `select`s pull in the feature closure it needs.
+# The generator is told which example is being built (--example-override below),
+# activates that choice, and the selects cascade — layered transiently on top of
+# the base .config, never written back. So a plain -DVAIOS_EXAMPLE=<X> builds
+# with the right features and examples with no special needs are a no-op. This
+# mirrors NavHAL's samples/Kconfig SAMPLE_* / --sample-override mechanism.
+set(VAIOS_CONFIG "${CMAKE_BINARY_DIR}/.config" CACHE FILEPATH
+    "Kconfig .config the build reads (build-local artifact by default)")
 set(VAIOS_DEFCONFIG "${CMAKE_CURRENT_SOURCE_DIR}/defconfig" CACHE FILEPATH
-    "Kconfig defconfig used to seed a build-local .config when nothing else applies")
-set(_vaios_example_cfg "${CMAKE_CURRENT_SOURCE_DIR}/examples/configs/${VAIOS_EXAMPLE}.config")
-if(VAIOS_CONFIG)
-  set(_vaios_dotconfig "${VAIOS_CONFIG}")
-  message(STATUS "VAIOS config: explicit -DVAIOS_CONFIG=${_vaios_dotconfig}")
-elseif(VAIOS_EXAMPLE AND EXISTS "${_vaios_example_cfg}")
-  set(_vaios_dotconfig "${_vaios_example_cfg}")
-  message(STATUS "VAIOS config: per-example examples/configs/${VAIOS_EXAMPLE}.config")
-else()
-  set(_vaios_dotconfig "${CMAKE_BINARY_DIR}/.config")
-  message(STATUS "VAIOS config: build-local .config (seeded from defconfig)")
-endif()
+    "Kconfig defconfig used to seed VAIOS_CONFIG on first configure")
+set(_vaios_dotconfig "${VAIOS_CONFIG}")
 # Env the generator needs to pull NavHAL's tree in: NAVHAL_KCONFIG names the file
 # to osource (unset -> standalone, sources nothing); srctree roots NavHAL's own
 # `source "src/..."` lines. Standalone builds set neither.
@@ -197,6 +188,7 @@ execute_process(
           --config "${_vaios_dotconfig}"
           --header-out "${VAIOS_AUTOCONF}"
           --cmake-out "${CMAKE_BINARY_DIR}/vaios_config.cmake"
+          --example-override "${VAIOS_EXAMPLE}"
   RESULT_VARIABLE _vaios_kconfig_rc)
 if(NOT _vaios_kconfig_rc EQUAL 0)
   message(FATAL_ERROR "vaios Kconfig generation failed (rc=${_vaios_kconfig_rc})")
