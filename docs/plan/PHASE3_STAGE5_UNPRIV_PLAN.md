@@ -157,7 +157,7 @@ clear `CONTROL.nPRIV`, so it still holds the *caller's* value inside the handler
 `v_syscall_dispatch` reads it (`mrs <r>, control` via a small helper) and returns
 `-EPERM` for cases 3–6 when `nPRIV=1`. No per-task flag needed for the gate. This
 gate is a **no-op today** (all callers privileged) and activates at 5e — so it
-lands here as dormant, unit-tested prep.
+lands as dormant, compile-checked prep, validated once nPRIV goes live.
 
 *Validate (still privileged):* validation logic exercised by host unit tests
 (craft in/out-of-block pointers against a synthetic TCB); privileged tasks pass

@@ -307,6 +307,7 @@ uint32_t v_get_heap_allocation_size(void) {
 // Not for kernel use — these read the live PSP to bound growth, valid only in
 // task (thread-mode) context.
 // ============================================================================
+#include "syscall.h"
 #include "task.h"
 
 #define THDR ((uint32_t)sizeof(Heap_Mem_Block))
@@ -316,12 +317,16 @@ uint32_t v_get_heap_allocation_size(void) {
 
 extern TCB *current_task;
 
-// Live stack pointer of the running task (PSP in thread mode). Host builds have
-// no real bound, so the collision check is a no-op there.
+// Live stack pointer of the running task. Read PSP explicitly rather than the
+// current SP: tasks run on PSP, and under VAIOS_MPU_USER_SEPARATION these
+// allocators run inside the SVCall handler (handler mode uses MSP), so `mov sp`
+// would read the kernel stack. PSP holds the task's stack in BOTH modes — in a
+// syscall it sits one exception frame below the task's pre-call SP, a safe,
+// slightly conservative bound. Host builds have no PSP, so the check is a no-op.
 static inline uint8_t *task_live_sp(void) {
 #if defined(__arm__) || defined(__thumb__) || defined(__thumb2__)
   void *sp;
-  __asm volatile("mov %0, sp" : "=r"(sp));
+  __asm volatile("mrs %0, psp" : "=r"(sp));
   return (uint8_t *)sp;
 #else
   return (uint8_t *)UINTPTR_MAX;
@@ -337,6 +342,13 @@ static inline void theap_fixup_next(TCB *t, Heap_Mem_Block *blk) {
 }
 
 void *malloc(size_t size) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  // Unprivileged tasks can't reach current_task / their block directly: trap so
+  // the allocator runs privileged. Reached again from the dispatch in handler
+  // mode, v_in_thread_mode() is false and the body below runs.
+  if (v_in_thread_mode())
+    return (void *)(uintptr_t)v_svc1(SYS_malloc, (uint32_t)size);
+#endif
   TCB *t = current_task;
   if (!t || !t->heap_base || size == 0)
     return NULL;
@@ -389,6 +401,12 @@ void *malloc(size_t size) {
 }
 
 void free(void *ptr) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) {
+    v_svc1(SYS_free, (uint32_t)(uintptr_t)ptr);
+    return;
+  }
+#endif
   TCB *t = current_task;
   if (!t || !ptr)
     return;
@@ -423,6 +441,10 @@ void free(void *ptr) {
 }
 
 void *calloc(size_t nmemb, size_t size) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (void *)(uintptr_t)v_svc2(SYS_calloc, (uint32_t)nmemb, (uint32_t)size);
+#endif
   if (nmemb && size > (size_t)-1 / nmemb)
     return NULL; // multiply overflow
   size_t total = nmemb * size;
@@ -433,6 +455,11 @@ void *calloc(size_t nmemb, size_t size) {
 }
 
 void *realloc(void *ptr, size_t size) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (void *)(uintptr_t)v_svc2(SYS_realloc, (uint32_t)(uintptr_t)ptr,
+                                     (uint32_t)size);
+#endif
   if (!ptr)
     return malloc(size);
   if (size == 0) {
@@ -455,6 +482,10 @@ void *realloc(void *ptr, size_t size) {
 }
 
 uint32_t v_task_heap_used(void) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (uint32_t)v_svc0(SYS_heap_used);
+#endif
   TCB *t = current_task;
   if (!t || !t->heap_base)
     return 0;

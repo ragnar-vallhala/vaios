@@ -14,12 +14,38 @@
 #if VAIOS_SYSCALL_SVC
 
 #include "ipc.h"
+#include "memory.h"
 #include "port.h"
 #include "task.h"
 #include "vfile.h"
 #include <stdint.h>
 
+#if VAIOS_MPU_USER_SEPARATION
+// Caller's CONTROL.nPRIV (bit 0). Exception entry does not modify CONTROL.nPRIV,
+// so inside the SVCall handler this still reflects the trapping thread's
+// privilege. Handler mode reads it fine (SPSEL is what's forced there, not nPRIV).
+static inline int v_caller_unprivileged(void) {
+  uint32_t control;
+  __asm__ volatile("mrs %0, control" : "=r"(control));
+  return (control & 1u) != 0u;
+}
+// The raw-handle (non-fd) IPC syscalls dereference a user-supplied kernel object
+// pointer (args[0] -> sema_t*/rmutex_t*), which can't be bounds-checked. Under
+// the unprivileged flip they are privileged-only; unprivileged tasks use the
+// fd-typed IPC (SYS_sem_open ... SYS_wait). Pure predicate — host-testable.
+static inline int v_syscall_privileged_only(uint32_t num) {
+  return num == SYS_sem_give || num == SYS_sem_take || num == SYS_mutex_lock ||
+         num == SYS_mutex_unlock;
+}
+#endif
+
 int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
+#if VAIOS_MPU_USER_SEPARATION
+  // I-handle: reject raw kernel-pointer syscalls from unprivileged callers.
+  // Dormant until the nPRIV flip (all callers privileged today -> never taken).
+  if (v_caller_unprivileged() && v_syscall_privileged_only(num))
+    return -1; /* -EPERM: use the fd-typed IPC instead */
+#endif
   switch (num) {
   case SYS_yield:
     /* Pend a context switch. PendSV is lower priority than SVCall, so the
@@ -92,6 +118,23 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
   case SYS_wait_disarm:
     /* Unlink this task's wait observers and report the ready index. */
     return v_wait_disarm_impl();
+#endif
+#if VAIOS_TASK_HEAP && VAIOS_MPU_USER_SEPARATION
+  /* Per-task heap. Reached in handler mode, so the allocator bodies run
+     privileged (their thread-mode trap guard falls through) and read
+     current_task / the task block directly. Pointers round-trip through r0. */
+  case SYS_malloc:
+    return (int32_t)(uintptr_t)malloc((size_t)args[0]);
+  case SYS_free:
+    free((void *)(uintptr_t)args[0]);
+    return 0;
+  case SYS_calloc:
+    return (int32_t)(uintptr_t)calloc((size_t)args[0], (size_t)args[1]);
+  case SYS_realloc:
+    return (int32_t)(uintptr_t)realloc((void *)(uintptr_t)args[0],
+                                       (size_t)args[1]);
+  case SYS_heap_used:
+    return (int32_t)v_task_heap_used();
 #endif
   default:
     return -1; /* unknown syscall */
