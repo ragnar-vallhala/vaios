@@ -157,7 +157,9 @@ void NMI_Handler(void) {
 // IACCVIOL(0) = instruction-fetch (XN) violation, DACCVIOL(1) = data AP.
 #define SCB_CFSR (*(volatile uint32_t *)0xE000ED28)
 #define SCB_MMFAR (*(volatile uint32_t *)0xE000ED34)
+#define SCB_BFAR (*(volatile uint32_t *)0xE000ED38)
 #define MMFSR_MMARVALID (1u << 7)
+#define BFSR_BFARVALID (1u << 7)
 void MemManage_Handler(void) {
 #if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_STATIC_PROTECT
   extern TCB *current_task;
@@ -171,11 +173,30 @@ void MemManage_Handler(void) {
   for (;;) {
   }
 }
+// Bus fault. Enabled alongside MemManage under the MPU/user-separation config so
+// a stray bus access reports with its BFSR/BFAR instead of escalating silently.
 void BusFault_Handler(void) {
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_STATIC_PROTECT
+  extern TCB *current_task;
+  uint32_t bfsr = (SCB_CFSR >> 8) & 0xFFu;
+  uint32_t addr = (bfsr & BFSR_BFARVALID) ? SCB_BFAR : 0u;
+  uint32_t id = current_task ? current_task->task_id : 0u;
+  v_panic(__FILE__, __LINE__, "BusFault in task %u | BFSR 0x%x addr 0x%x",
+          (unsigned)id, (unsigned)bfsr, (unsigned)addr);
+#endif
   for (;;) {
   }
 }
+// Usage fault. Under the unprivileged flip this catches an unprivileged task
+// attempting a privileged instruction (UFSR INVSTATE/NOCP/UNDEFINSTR).
 void UsageFault_Handler(void) {
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_STATIC_PROTECT
+  extern TCB *current_task;
+  uint32_t ufsr = (SCB_CFSR >> 16) & 0xFFFFu;
+  uint32_t id = current_task ? current_task->task_id : 0u;
+  v_panic(__FILE__, __LINE__, "UsageFault in task %u | UFSR 0x%x", (unsigned)id,
+          (unsigned)ufsr);
+#endif
   for (;;) {
   }
 }
@@ -436,15 +457,61 @@ void init_task_stack(TCB *task) {
       (v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE,
                                  task->mpu_guard) == 0);
 #endif
+#if VAIOS_MPU_USER_SEPARATION
+  // Pre-encode the RW-unprivileged region over the whole block. Applied with the
+  // guard on switch-in; grants the (unprivileged) task access to only its own
+  // stack+heap. Base is size-aligned by task_create.
+  task->mpu_block_valid =
+      (v_port_task_region_encode(task->mem_block, task->stack_size,
+                                 task->mpu_block) == 0);
+#endif
 }
 
 // Apply the running task's MPU region set — the context-switch fast path, called
 // from PendSV/ISR switch after set_next_task updates current_task.
 void v_port_apply_current_mpu(void) {
-#if VAIOS_MPU_STACK_GUARD
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
   extern TCB *current_task;
-  if (current_task && current_task->mpu_guard_valid)
-    v_port_mpu_apply(current_task->mpu_guard, 1);
+  TCB *t = current_task;
+  if (!t)
+    return;
+  // Assemble this task's region set into one contiguous array and program it in
+  // a single hal_mpu_apply (one barrier). Each encoded pair carries its own
+  // region number in RBAR, so order is irrelevant; the guard (region 7) wins on
+  // overlap with the block region (region 4) at the base regardless.
+  uint32_t set[4];
+  uint32_t count = 0;
+#if VAIOS_MPU_USER_SEPARATION
+  if (t->mpu_block_valid) {
+    set[count * 2] = t->mpu_block[0];
+    set[count * 2 + 1] = t->mpu_block[1];
+    count++;
+  }
+#endif
+#if VAIOS_MPU_STACK_GUARD
+  if (t->mpu_guard_valid) {
+    set[count * 2] = t->mpu_guard[0];
+    set[count * 2 + 1] = t->mpu_guard[1];
+    count++;
+  }
+#endif
+  if (count)
+    v_port_mpu_apply(set, count);
+#if VAIOS_MPU_USER_SEPARATION
+  // Set thread-mode privilege (CONTROL.nPRIV, bit 0) for the incoming task.
+  // Written here in handler mode; it takes effect on exception return to thread.
+  // Handler mode itself is privileged regardless, so the rest of the switch is
+  // unaffected. Ordered after the MPU program so the region set and privilege
+  // change land together.
+  uint32_t control;
+  __asm volatile("mrs %0, control" : "=r"(control));
+  if (t->privileged)
+    control &= ~1u;
+  else
+    control |= 1u;
+  __asm volatile("msr control, %0" ::"r"(control) : "memory");
+  __asm volatile("isb");
+#endif
 #endif
 }
 

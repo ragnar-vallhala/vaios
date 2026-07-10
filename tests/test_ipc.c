@@ -336,6 +336,26 @@ static void test_mutex_recursive_lock_unlock(void) {
   TEST_ASSERT_NULL(rm->owner);
 }
 
+/* Same, but the static constructor v_mutex_create_recursive_static (was 0-call):
+ * builds the recursive mutex in a caller-provided buffer. */
+static void test_mutex_recursive_static_lock_unlock(void) {
+  full_reset();
+  StaticSemaphore_t buf;
+  MutexHandle_t mtx = v_mutex_create_recursive_static(&buf);
+  TEST_ASSERT_NOT_NULL(mtx);
+  rmutex_t *rm = (rmutex_t *)mtx;
+
+  TEST_ASSERT_EQ(v_mutex_lock_recursive(mtx, 0), VA_PASS);
+  TEST_ASSERT_EQ(rm->owner, current_task);
+  TEST_ASSERT_EQ(rm->recursion_count, 1u);
+  TEST_ASSERT_EQ(v_mutex_lock_recursive(mtx, 0), VA_PASS);
+  TEST_ASSERT_EQ(rm->recursion_count, 2u);
+  TEST_ASSERT_EQ(v_mutex_unlock_recursive(mtx), VA_PASS);
+  TEST_ASSERT_EQ(v_mutex_unlock_recursive(mtx), VA_PASS);
+  TEST_ASSERT_EQ(rm->recursion_count, 0u);
+  TEST_ASSERT_NULL(rm->owner);
+}
+
 /* -------------------------------------------------------------------------
  * Phase 3: tests for new IPC behaviour
  *   - B2: priority-ordered semaphore wait queues
@@ -522,6 +542,7 @@ static const test_case_t ipc_cases[] = {
     TEST_CASE(test_wait_queue_independent_of_blocked_list),
     TEST_CASE(test_sema_timeout_ejects_multiple_waiters),
     TEST_CASE(test_mutex_recursive_lock_unlock),
+    TEST_CASE(test_mutex_recursive_static_lock_unlock),
     /* Phase 3: new IPC behaviour */
     TEST_CASE(test_wait_queue_priority_order),
     TEST_CASE(test_pi_transitive_chain),

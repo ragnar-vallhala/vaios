@@ -31,6 +31,17 @@ config EXAMPLE_TASK_HEAP_TEST
 	bool "task_heap_test"
 	select VAIOS_TASK_HEAP
 
+config EXAMPLE_MPU_USER_DEMO
+	bool "mpu_user_demo"
+	# Stage 5: the unprivileged flip. Needs the isolation stack plus fd I/O and
+	# the per-task heap so a confined task can still do console output + malloc.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_TASK_HEAP
+	select VAIOS_MPU_USER_SEPARATION
+
 config EXAMPLE_FD_IPC_TEST
 	bool "fd_ipc_test"
 	select VAIOS_MPU_ENABLE

@@ -41,10 +41,42 @@ static inline int v_syscall_privileged_only(uint32_t num) {
 
 int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
 #if VAIOS_MPU_USER_SEPARATION
-  // I-handle: reject raw kernel-pointer syscalls from unprivileged callers.
-  // Dormant until the nPRIV flip (all callers privileged today -> never taken).
-  if (v_caller_unprivileged() && v_syscall_privileged_only(num))
-    return -1; /* -EPERM: use the fd-typed IPC instead */
+  // Everything below applies only to UNPRIVILEGED callers (user tasks). The
+  // kernel runs syscall bodies directly, never via svc; privileged tasks (flag
+  // off, or a privileged task) are trusted. Bound the string scans generously —
+  // the block bound in v_strnlen_user is the real limit.
+#define V_SYSCALL_STR_MAX 256u
+#define V_EPERM (-1)
+#define V_EFAULT (-14)
+  if (v_caller_unprivileged()) {
+    // I-handle: raw kernel-pointer IPC is privileged-only; use fd-typed IPC.
+    if (v_syscall_privileged_only(num))
+      return V_EPERM;
+    // I-ptr: validate any user pointer against the caller's own block.
+    switch (num) {
+    case SYS_open:
+    case SYS_sem_open:
+    case SYS_mtx_open:
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      break;
+    case SYS_write:
+      if (!v_access_ok((const void *)(uintptr_t)args[1], args[2], 0))
+        return V_EFAULT;
+      break;
+    case SYS_read:
+      if (!v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
+        return V_EFAULT;
+      break;
+    case SYS_wait:
+      if (!v_access_ok((const void *)(uintptr_t)args[0],
+                       args[1] * (uint32_t)sizeof(int), 0))
+        return V_EFAULT;
+      break;
+    default:
+      break;
+    }
+  }
 #endif
   switch (num) {
   case SYS_yield:
@@ -135,6 +167,14 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
                                        (size_t)args[1]);
   case SYS_heap_used:
     return (int32_t)v_task_heap_used();
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+  case SYS_exit:
+    /* Terminate the calling task + pend the switch, privileged. Returns here;
+       PendSV switches to the next task on SVCall return, and the terminated
+       task never resumes. */
+    v_task_exit_impl();
+    return 0;
 #endif
   default:
     return -1; /* unknown syscall */

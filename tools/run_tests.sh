@@ -42,6 +42,11 @@ echo "=== Running utils-only tests (separate binary) ==="
 "$BUILD_DIR/vaios_utils_tests" | tee "$LOG_DIR/utils.log"
 UTILS_EXIT=${PIPESTATUS[0]}
 
+echo ""
+echo "=== Running devfs tests (separate binary: DEVFS=1) ==="
+"$BUILD_DIR/vaios_devfs_tests" | tee "$LOG_DIR/devfs.log"
+DEVFS_EXIT=${PIPESTATUS[0]}
+
 # -----------------------------------------------------------------------------
 # Cross-binary summary table. Renderer is shared with tools/run_hw_tests.sh —
 # tools/lib/test_summary.awk owns the format. ANSI is stripped before awk
@@ -52,7 +57,7 @@ cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" \
   | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' \
   | awk -v title="HOST TEST SUMMARY" -f "$SCRIPT_DIR/lib/test_summary.awk"
 
-EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT ))
+EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT ))
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     echo -e "\033[1;32m=== ALL TESTS PASSED ===\033[0m"

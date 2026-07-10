@@ -112,7 +112,12 @@ run_sitl() {
   if ! cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build_pil" \
          -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=UNIT_TESTS >/tmp/all_sitl_cfg.log 2>&1 \
      || ! cmake --build "$ROOT_DIR/build_pil" >/tmp/all_sitl_bld.log 2>&1; then
-    STATUS[sitl]=FAIL; DETAIL[sitl]="build failed (see /tmp/all_sitl_bld.log)"; return
+    # Surface the actual error (configure or compile) so a CI failure is
+    # self-diagnosing instead of an opaque "build failed".
+    echo "  ---- last 25 lines of build output ----"
+    tail -n 25 /tmp/all_sitl_cfg.log /tmp/all_sitl_bld.log 2>/dev/null | sed 's/^/  | /'
+    echo "  ---------------------------------------"
+    STATUS[sitl]=FAIL; DETAIL[sitl]="build failed (see logs above)"; return
   fi
 
   # Detach stdin (</dev/null) so `--console` renode never tries to read from an

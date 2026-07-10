@@ -25,3 +25,42 @@ jobs:
 
       - name: Run host test suite
         run: bash tools/run_tests.sh
+
+  sitl:
+    name: On-target (Renode) tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SITL builds the real firmware (NAVHAL=ON), so the NavHAL submodule
+          # is required — unlike the host job, which stubs it.
+          submodules: recursive
+
+      - name: Install toolchain, Kconfig, and Renode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              gcc-arm-none-eabi libnewlib-arm-none-eabi \
+              cmake make python3 python3-pip curl \
+              libgtk-3-0 libgomp1
+          python3 -m pip install --break-system-packages kconfiglib
+          # Pinned Renode portable release (bundles its runtime); headless via
+          # --disable-xwt in tools/renode.resc. Pin the version so a Renode
+          # update cannot silently change CI behaviour.
+          RENODE_VER=1.16.1
+          curl -fsSL -o /tmp/renode.tar.gz \
+            "https://github.com/renode/renode/releases/download/v${RENODE_VER}/renode-${RENODE_VER}.linux-portable.tar.gz"
+          mkdir -p "$HOME/renode"
+          tar -xzf /tmp/renode.tar.gz -C "$HOME/renode" --strip-components=1
+          echo "$HOME/renode" >> "$GITHUB_PATH"
+
+      - name: Renode sanity
+        run: renode --version
+
+      - name: On-target unit suite (PIL) in Renode
+        run: |
+          export srctree="$PWD/extern/NavHAL"
+          bash tools/run_all_tests.sh sitl
+
+      - name: Stage-5 isolation regression in Renode
+        run: bash tools/renode_isolation.sh

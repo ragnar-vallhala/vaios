@@ -34,6 +34,7 @@ static const test_suite_t *const target_suites[] = {
     &memory_suite,
     &structure_suite,
     &utils_suite,
+    &uaccess_suite, /* pointer validators on 32-bit ARM (uintptr_t math) */
 };
 
 /* The single test-harness hook the curated suites depend on. On the host this

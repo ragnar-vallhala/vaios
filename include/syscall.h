@@ -49,6 +49,8 @@ typedef enum {
   SYS_calloc = 22,      //   (reads current_task / the task block) once tasks are
   SYS_realloc = 23,     //   unprivileged and can no longer reach them directly.
   SYS_heap_used = 24,
+  SYS_exit = 25,        // task_exit body (VAIOS_MPU_USER_SEPARATION): terminate
+                        //   the caller + reschedule, run privileged.
   SYS_MAX
 } v_syscall_t;
 

@@ -44,6 +44,7 @@ cmake --build "$BUILD_DIR" --parallel >/dev/null 2>&1 || { echo "build failed" >
 echo "=== running test binaries (generating .gcda) ==="
 "$BUILD_DIR/vaios_tests"        >/dev/null 2>&1 || echo "  warning: vaios_tests exited non-zero" >&2
 "$BUILD_DIR/vaios_utils_tests"  >/dev/null 2>&1 || echo "  warning: vaios_utils_tests exited non-zero" >&2
+"$BUILD_DIR/vaios_devfs_tests"  >/dev/null 2>&1 || echo "  warning: vaios_devfs_tests exited non-zero" >&2
 
 # --- parse one gcov run for a given source path ------------------------------
 # Echoes: "<linepct> <linetotal> <brpct> <brtotal>" or nothing if not found.
@@ -72,7 +73,7 @@ for gcda in $(find "$BUILD_DIR" -path '*/kernel/*.c.gcda' | sort); do
 
   best_lp=0; best_lt=0; best_bp=0; best_bt=0; best_cov=-1; best_g=""
   # A source may exist in several binaries; pick the run covering the most lines.
-  for g in $(find "$BUILD_DIR" -path "*/kernel/$base.c.gcda"); do
+  for g in $(find "$BUILD_DIR" -path '*/kernel/*' -name "$base.c.gcda"); do
     read -r lp lt bp bt < <(cov_for "$g" "$base.c")
     [ -z "${lp:-}" ] && continue
     cov=$(awk -v p="$lp" -v t="$lt" 'BEGIN{printf "%d", (p*t)/100 + 0.5}')

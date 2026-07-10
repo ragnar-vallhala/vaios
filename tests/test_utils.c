@@ -130,6 +130,53 @@ static void test_atof_leading_whitespace(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * v_memset / v_memcpy / v_strcmp / v_strncmp — pure mem/string helpers used
+ * across the kernel (previously 0-call in coverage).
+ * ---------------------------------------------------------------------- */
+
+static void test_memset_fills(void) {
+  unsigned char b[8];
+  void *r = v_memset(b, 0xAB, sizeof b);
+  TEST_ASSERT_EQ(r, (void *)b);
+  for (unsigned i = 0; i < sizeof b; i++)
+    TEST_ASSERT_EQ(b[i], 0xAB);
+}
+
+static void test_memset_zero_len(void) {
+  unsigned char b[4] = {1, 2, 3, 4};
+  v_memset(b, 0xFF, 0); /* no-op */
+  TEST_ASSERT_EQ(b[0], 1);
+}
+
+static void test_memcpy_copies(void) {
+  const char src[] = "abcdef";
+  char dst[8] = {0};
+  void *r = v_memcpy(dst, src, 7);
+  TEST_ASSERT_EQ(r, (void *)dst);
+  TEST_ASSERT(strcmp(dst, "abcdef") == 0);
+}
+
+static void test_memcpy_zero_len(void) {
+  char dst[4] = {'x', 'x', 'x', 'x'};
+  v_memcpy(dst, "yy", 0);
+  TEST_ASSERT_EQ(dst[0], 'x'); /* untouched */
+}
+
+static void test_strcmp_equal_and_order(void) {
+  TEST_ASSERT_EQ(v_strcmp("abc", "abc"), 0);
+  TEST_ASSERT(v_strcmp("abc", "abd") < 0);
+  TEST_ASSERT(v_strcmp("abd", "abc") > 0);
+  TEST_ASSERT(v_strcmp("ab", "abc") < 0); /* shorter prefix compares less */
+}
+
+static void test_strncmp_bounded(void) {
+  TEST_ASSERT_EQ(v_strncmp("abcXX", "abcYY", 3), 0); /* equal in first 3 */
+  TEST_ASSERT(v_strncmp("abc", "abd", 3) < 0);
+  TEST_ASSERT_EQ(v_strncmp("abc", "abd", 2), 0); /* equal in first 2 */
+  TEST_ASSERT_EQ(v_strncmp("", "", 5), 0);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
 static const test_case_t utils_cases[] = {
@@ -152,6 +199,13 @@ static const test_case_t utils_cases[] = {
     TEST_CASE(test_atof_negative),
     TEST_CASE(test_atof_zero),
     TEST_CASE(test_atof_leading_whitespace),
+    /* mem/string helpers */
+    TEST_CASE(test_memset_fills),
+    TEST_CASE(test_memset_zero_len),
+    TEST_CASE(test_memcpy_copies),
+    TEST_CASE(test_memcpy_zero_len),
+    TEST_CASE(test_strcmp_equal_and_order),
+    TEST_CASE(test_strncmp_bounded),
 };
 const test_suite_t utils_suite = {
     .name = "utils (print_fmt_buf + v_atof)",

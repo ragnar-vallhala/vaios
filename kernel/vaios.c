@@ -1,3 +1,4 @@
+#include "syscall.h"
 #include "vaios.h"
 #include "memory.h"
 #include "port.h" // v_port_hw_* — all hardware bring-up goes through here
@@ -86,6 +87,16 @@ void v_start(void) {
 extern uint8_t scheduler_running;
 void v_delay(uint32_t ms) {
   uint32_t delay_ticks = (ms * 1000) / SYSTICK_PERIOD;
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  // An unprivileged task cannot read scheduler_running / systick_count (kernel
+  // globals). It is always post-scheduler-start, so trap straight to the delay
+  // syscall via task_delay. The privileged pre-scheduler path (sensor init etc.)
+  // runs in handler/privileged context and falls through to the checks below.
+  if (v_in_thread_mode()) {
+    task_delay(delay_ticks);
+    return;
+  }
+#endif
   if (scheduler_running) {
     task_delay(delay_ticks);
   } else {

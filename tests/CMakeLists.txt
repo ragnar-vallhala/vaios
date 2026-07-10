@@ -93,6 +93,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vaios.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_perf.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_uaccess.c"
 )
 
 # -------------------------------------------------------------------------
@@ -168,5 +169,34 @@ target_compile_options(vaios_utils_tests PRIVATE
 )
 add_test(NAME vaios_utils_unit_tests COMMAND vaios_utils_tests)
 set_tests_properties(vaios_utils_unit_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+)
+
+# -------------------------------------------------------------------------
+# vaios_devfs_tests — third executable for kernel/devfs.c.
+#
+# devfs.c is #if VAIOS_DEVFS and ties into the per-task fd table in the TCB, so
+# it's built here in isolation with DEVFS forced on and SVC off (the trap-once
+# shims compile out; the bodies run directly). Doesn't link task.c — a synthetic
+# current_task (devfs_stubs.c) plus the console facade (port_hw_stub) suffice.
+# -------------------------------------------------------------------------
+add_executable(vaios_devfs_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/devfs_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_devfs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/devfs_stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # console facade
+    "${VAIOS_ROOT}/kernel/devfs.c"
+)
+target_include_directories(vaios_devfs_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_devfs_tests PRIVATE
+    CORTEX_M4 VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=0)
+target_compile_options(vaios_devfs_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_devfs_unit_tests COMMAND vaios_devfs_tests)
+set_tests_properties(vaios_devfs_unit_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
 )
