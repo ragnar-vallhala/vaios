@@ -331,3 +331,52 @@ set_tests_properties(vaios_syscall_unit_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
+
+# -------------------------------------------------------------------------
+# vaios_ipcfd_tests — sixth executable for the fd-typed IPC layer.
+#
+# DEVFS + IPC_FD on, SVC off (bodies run directly against a real current_task
+# built via task_create). Covers the teardown/name/recursion findings
+# (STAGE5_REVIEW_FINDINGS #4 named-object leak on exit, #7 over-long name,
+# #12 fd-mutex owner re-lock).
+# -------------------------------------------------------------------------
+add_executable(vaios_ipcfd_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/ipcfd_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_ipcfd.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/syscall_stubs.c"  # svc host hooks + perf/kmsg stubs
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
+    "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"          # v_wait etc. trap via svc
+    "${VAIOS_ROOT}/kernel/task.c"
+    "${VAIOS_ROOT}/kernel/ipc.c"
+    "${VAIOS_ROOT}/kernel/devfs.c"
+    "${VAIOS_ROOT}/kernel/memory/memory.c"
+    "${VAIOS_ROOT}/kernel/memory/seglist.c"
+    "${VAIOS_ROOT}/kernel/memory/tlsf.c"
+)
+target_include_directories(vaios_ipcfd_tests PRIVATE ${TEST_INCLUDE_DIRS})
+# IPC_FD implies SVC (the fd-IPC wrappers like v_wait trap unconditionally). SVC
+# on; MPU_USER off, so the dispatch routes straight to the bodies (no validation
+# switch). The test calls the public IPC API, which funnels through the dispatch.
+target_compile_definitions(vaios_ipcfd_tests PRIVATE
+    CORTEX_M4
+    VAIOS_HOST_TEST
+    VAIOS_SYSCALL_SVC=1
+    VAIOS_DEVFS=1
+    VAIOS_IPC_FD=1
+    VAIOS_MAX_FDS=8
+    VAIOS_MODULE_VFS=0
+    HEAP_WATERMARK_ENABLE=0
+    TASK_STACK_WATERMARK_ENABLE=0
+    STATIC_SEMAPHORE_SIZE=64)
+target_compile_options(vaios_ipcfd_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_ipcfd_unit_tests COMMAND vaios_ipcfd_tests)
+set_tests_properties(vaios_ipcfd_unit_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
+)

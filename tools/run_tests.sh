@@ -62,6 +62,11 @@ echo "=== Running syscall-dispatch tests (separate binary: SVC + MPU_USER) ==="
 "$BUILD_DIR/vaios_syscall_tests" | tee "$LOG_DIR/syscall.log"
 SYSCALL_EXIT=${PIPESTATUS[0]}
 
+echo ""
+echo "=== Running fd-typed IPC tests (separate binary: DEVFS + IPC_FD) ==="
+"$BUILD_DIR/vaios_ipcfd_tests" | tee "$LOG_DIR/ipcfd.log"
+IPCFD_EXIT=${PIPESTATUS[0]}
+
 # -----------------------------------------------------------------------------
 # Cross-binary summary table. Renderer is shared with tools/run_hw_tests.sh —
 # tools/lib/test_summary.awk owns the format. ANSI is stripped before awk
@@ -69,11 +74,11 @@ SYSCALL_EXIT=${PIPESTATUS[0]}
 # -----------------------------------------------------------------------------
 echo ""
 cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" "$LOG_DIR/devfs.log" \
-    "$LOG_DIR/taskheap.log" "$LOG_DIR/syscall.log" \
+    "$LOG_DIR/taskheap.log" "$LOG_DIR/syscall.log" "$LOG_DIR/ipcfd.log" \
   | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' \
   | awk -v title="HOST TEST SUMMARY" -f "$SCRIPT_DIR/lib/test_summary.awk"
 
-EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT | TASKHEAP_EXIT | SYSCALL_EXIT ))
+EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT | TASKHEAP_EXIT | SYSCALL_EXIT | IPCFD_EXIT ))
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     echo -e "\033[1;32m=== ALL TESTS PASSED ===\033[0m"
