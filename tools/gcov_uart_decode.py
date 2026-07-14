@@ -75,7 +75,7 @@ def main():
     written, errors, saw_dump = [], 0, False
     cur_path, cur_b64 = None, []
 
-    def flush():
+    def flush(expected_len):
         nonlocal errors
         if cur_path is None:
             return
@@ -83,6 +83,15 @@ def main():
             raw = base64.b64decode("".join(cur_b64), validate=True)
         except Exception as e:  # malformed base64 in the frame
             print(f"  ERROR decoding {cur_path}: {e}", file=sys.stderr)
+            errors += 1
+            return
+        # Integrity: the END marker carries the target's raw byte count. A UART
+        # line dropped mid-frame still base64-decodes to a multiple of 3 with the
+        # right magic, so without this check a short/lossy .gcda would look valid
+        # and gcov would report wrong counts silently. (finding #10)
+        if expected_len is not None and len(raw) != expected_len:
+            print(f"  ERROR {cur_path}: length mismatch (got {len(raw)}, "
+                  f"target said {expected_len}) — capture lossy", file=sys.stderr)
             errors += 1
             return
         if raw[:4] != GCDA_MAGIC:
@@ -114,7 +123,9 @@ def main():
             cur_path, cur_b64 = s[len(BEGIN):].strip(), []
             continue
         if s.startswith(END):
-            flush()
+            rest = s[len(END):].strip()
+            expected_len = int(rest) if rest.isdigit() else None
+            flush(expected_len)
             cur_path, cur_b64 = None, []
             continue
         if cur_path is not None:

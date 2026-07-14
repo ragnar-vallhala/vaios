@@ -69,10 +69,29 @@ extern void (*__init_array_end[])(void);
 #endif
 static const struct gcov_info *g_infos[VAIOS_GCOV_MAX_INFOS];
 static int g_n_infos;
+static int g_infos_dropped; /* registrations lost to a full table (finding #13) */
 
 void __gcov_init(struct gcov_info *info) {
-  if (info && g_n_infos < VAIOS_GCOV_MAX_INFOS)
+  if (!info)
+    return;
+  if (g_n_infos < VAIOS_GCOV_MAX_INFOS)
     g_infos[g_n_infos++] = info;
+  else
+    g_infos_dropped++; /* surfaced loudly at dump time, not silently missing */
+}
+
+/* Print an unsigned as decimal over the UART (no libc on target). */
+static void gcov_print_uint(unsigned v) {
+  char buf[11];
+  int i = (int)sizeof(buf) - 1;
+  buf[i--] = '\0';
+  if (v == 0)
+    buf[i--] = '0';
+  while (v) {
+    buf[i--] = (char)('0' + (v % 10u));
+    v /= 10u;
+  }
+  v_print(&buf[i + 1]);
 }
 
 /* The instrumented TUs' destructors reference __gcov_exit (the driver's file
@@ -164,10 +183,12 @@ static void b64_finish(b64_t *e) {
 #endif
 static unsigned char g_arena[VAIOS_GCOV_ARENA];
 static unsigned g_arena_off;
+static unsigned g_frame_bytes; /* raw .gcda bytes in the current frame (#10) */
 
 static void gcda_filename(const char *filename, void *arg) {
   (void)arg;
   g_arena_off = 0; /* reset scratch for this file */
+  g_frame_bytes = 0;
   b64_reset(&g_b64);
   v_print(GCDA_BEGIN);
   v_print(filename ? filename : "(null)");
@@ -177,6 +198,7 @@ static void gcda_filename(const char *filename, void *arg) {
 static void gcda_dump(const void *data, unsigned length, void *arg) {
   (void)arg;
   const uint8_t *p = (const uint8_t *)data;
+  g_frame_bytes += length;
   for (unsigned i = 0; i < length; ++i)
     b64_byte(&g_b64, p[i]);
 }
@@ -199,11 +221,22 @@ void vaios_gcov_dump(void) {
     (*ctor)();
 
   v_print("@@VAIOS_GCDA_DUMP_BEGIN\r\n");
+  if (g_infos_dropped > 0) {
+    /* Table overflowed at registration — some TUs' .gcda are missing. Say so
+     * (finding #13) instead of silently under-reporting coverage. */
+    v_print("@@VAIOS_GCDA_ERROR ");
+    gcov_print_uint((unsigned)g_infos_dropped);
+    v_print(" translation units dropped — raise VAIOS_GCOV_MAX_INFOS\r\n");
+  }
   for (int i = 0; i < g_n_infos; ++i) {
     __gcov_info_to_gcda(g_infos[i], gcda_filename, gcda_dump, gcda_allocate,
                         NULL);
     b64_finish(&g_b64);
-    v_print(GCDA_END "\r\n");
+    /* End marker carries the raw byte count so the host decoder can reject a
+     * frame that lost a UART line instead of writing a short .gcda (#10). */
+    v_print(GCDA_END " ");
+    gcov_print_uint(g_frame_bytes);
+    v_print("\r\n");
   }
   v_print("@@VAIOS_GCDA_DUMP_END\r\n");
 }

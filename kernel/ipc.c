@@ -175,6 +175,15 @@ MutexHandle_t v_mutex_create_recursive_static(StaticSemaphore_t *pxBuffer) {
 //-----------------------------------------------------------------------------
 // Semaphore / Mutex Operations
 //-----------------------------------------------------------------------------
+// Absolute wake deadline for a FINITE timeout. delay_ticks == 0 is the
+// "no deadline" (V_WAIT_FOREVER) sentinel, so a finite deadline that lands
+// exactly on 0 — the 32-bit tick counter summing past UINT32_MAX — is nudged to
+// 1. Otherwise a finite wait silently becomes infinite. (STAGE5_REVIEW #14.)
+static inline uint32_t v_wake_deadline(uint32_t ticks_to_wait) {
+  uint32_t d = v_get_ticks() + ticks_to_wait;
+  return d == 0u ? 1u : d;
+}
+
 static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   TCB *current = get_current_task();
   PERF_IPC_TAKE_ATTEMPT();
@@ -197,7 +206,7 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   // the task waits until an explicit give/handoff, never a timeout.
   current->status = TASK_BLOCKED;
   current->delay_ticks =
-      (ticks_to_wait == V_WAIT_FOREVER) ? 0u : v_get_ticks() + ticks_to_wait;
+      (ticks_to_wait == V_WAIT_FOREVER) ? 0u : v_wake_deadline(ticks_to_wait);
   current->wait_sem = s; // track which semaphore we are waiting on
   wait_q_enqueue(s, current);
   add_to_blocked_list(
@@ -703,7 +712,7 @@ int32_t v_wait_block_impl(const int *fds, int nfds, uint32_t ticks) {
   }
   cur->in_multiwait = 1;
   cur->status = TASK_BLOCKED;
-  cur->delay_ticks = (ticks == V_WAIT_FOREVER) ? 0u : v_get_ticks() + ticks;
+  cur->delay_ticks = (ticks == V_WAIT_FOREVER) ? 0u : v_wake_deadline(ticks);
   add_to_blocked_list(cur);
   EXIT_CRITICAL();
   v_port_trigger_pendsv();

@@ -404,7 +404,14 @@ int v_access_ok(const void *p, uint32_t len, int write) {
   if (!t || !t->mem_block)
     return 0;
   uintptr_t base = (uintptr_t)t->mem_block;
-  uintptr_t end = base + t->stack_size;
+#if VAIOS_MPU_STACK_GUARD
+  // The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack guard (MPU
+  // AP_NONE) — not readable/writable even by the kernel, and no user object
+  // lives there. Exclude it, or a pointer into the guard would pass validation
+  // and then fault the kernel's own copy. (STAGE5_REVIEW_FINDINGS #11.)
+  base += VAIOS_MPU_GUARD_SIZE;
+#endif
+  uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
   uintptr_t a = (uintptr_t)p;
   if (a < base || a > end)
     return 0;
@@ -419,7 +426,10 @@ long v_strnlen_user(const char *s, uint32_t max) {
   if (!t || !t->mem_block)
     return -1;
   uintptr_t base = (uintptr_t)t->mem_block;
-  uintptr_t end = base + t->stack_size;
+#if VAIOS_MPU_STACK_GUARD
+  base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (see v_access_ok)
+#endif
+  uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
   uintptr_t a = (uintptr_t)s;
   if (a < base || a >= end)
     return -1;
