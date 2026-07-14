@@ -701,12 +701,12 @@ void v_log(Log_Type type, const char *msg, ...) {
   if (scheduler_running && current_task && current_task->magic == TCB_MAGIC) {
     uint32_t psp = v_port_get_psp();
     // 300 bytes is safe for most panics, but let's be even safer with 320
-    if (psp != 0 && psp < (uint32_t)current_task->mem_block + 320) {
+    if (psp != 0 && psp < (uint32_t)(uintptr_t)current_task->mem_block + 320) {
       v_panic(__FILE__, __LINE__,
               "Stack overflow detected in task %u during log! SP: 0x%x, Limit: "
               "0x%x",
               (unsigned)current_task->task_id, (unsigned)psp,
-              (unsigned)((uint32_t)current_task->mem_block + 320));
+              (unsigned)((uint32_t)(uintptr_t)current_task->mem_block + 320));
     }
   }
 
