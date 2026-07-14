@@ -42,6 +42,12 @@ config EXAMPLE_MPU_USER_DEMO
 	select VAIOS_TASK_HEAP
 	select VAIOS_MPU_USER_SEPARATION
 
+config EXAMPLE_STAGE5_LIFECYCLE
+	bool "stage5_lifecycle"
+	# On-target task-teardown regression (mutex-held-on-exit, blocked-task
+	# termination) under the real scheduler. Plain kernel config — no MPU/SVC
+	# flip needed; raw mutexes/semaphores + task_exit_request.
+
 config EXAMPLE_COVERAGE_SCHED
 	bool "coverage_sched"
 	# Scheduler-exercising on-target gcov runner (build with -DVAIOS_GCOV=ON).

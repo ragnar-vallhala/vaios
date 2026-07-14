@@ -64,3 +64,6 @@ jobs:
 
       - name: Stage-5 isolation regression in Renode
         run: bash tools/renode_isolation.sh
+
+      - name: Stage-5 task-teardown regression in Renode
+        run: bash tools/renode_lifecycle.sh
