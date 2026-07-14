@@ -64,6 +64,23 @@ static TCB *wait_q_dequeue(sema_t *sem) {
   return task;
 }
 
+// Unlink an arbitrary task from the queue (used when a blocked task is
+// force-terminated, so a later give/handoff never touches a dead TCB).
+static void wait_q_remove(sema_t *sem, TCB *task) {
+  TCB **pp = &sem->wait_q;
+  TCB *prev = NULL;
+  while (*pp && *pp != task) {
+    prev = *pp;
+    pp = &(*pp)->wait_next;
+  }
+  if (!*pp)
+    return; // not queued here
+  *pp = task->wait_next;
+  if (sem->tail == task)
+    sem->tail = prev;
+  task->wait_next = NULL;
+}
+
 //-----------------------------------------------------------------------------
 // Semaphore / Mutex Creation
 //-----------------------------------------------------------------------------
@@ -628,6 +645,11 @@ static int mwait_disarm(TCB *t) {
 // immediately if one is ready (nothing armed), -1 for a non-blocking probe with
 // nothing ready, or V_SYSCALL_BLOCKED after arming observers and parking.
 int32_t v_wait_block_impl(const int *fds, int nfds, uint32_t ticks) {
+  // Security bound: the arm loop writes one cur->wnodes[] entry per valid fd, so
+  // nfds MUST be clamped to the array size here — not only in the v_wait()
+  // wrapper, which an unprivileged task bypasses by issuing the SVC directly.
+  if (nfds <= 0 || nfds > VAIOS_MAX_FDS)
+    return -1;
   TCB *cur = get_current_task();
   ENTER_CRITICAL();
   // Readiness scan first: a ready fd needs neither blocking nor registration.
@@ -780,6 +802,55 @@ static int mutex_unlock_common(rmutex_t *rm) {
   atomic_inc(&rm->base.count);
   EXIT_CRITICAL();
   return VA_PASS;
+}
+
+// Release everything a terminating task holds or waits on, so no later
+// give/unlock/wake dereferences its (soon-freed) TCB. Called from the task exit
+// paths (kernel/task.c) with the scheduler critical section already held, and
+// works whether or not `t` is the running task:
+//   - hands off every mutex t owns to its highest-priority waiter (or frees it),
+//   - unlinks t from the raw-semaphore wait queue it is parked on,
+//   - disarms its multi-fd wait observers.
+void v_ipc_task_teardown(TCB *t) {
+  // 1. Hand off / free every mutex t owns (mirror of mutex_unlock_common's
+  //    handoff, but for `t` rather than the current task — t's own priority is
+  //    irrelevant, it is terminating).
+  while (t->held_mutexes) {
+    rmutex_t *rm = (rmutex_t *)t->held_mutexes;
+    t->held_mutexes = rm->next_held;
+    rm->next_held = NULL;
+    TCB *w = wait_q_dequeue(&rm->base);
+    if (w) {
+      w->wait_sem = NULL;
+      w->wait_mutex = NULL;
+      remove_from_blocked_list(w);
+      w->status = TASK_READY;
+      add_to_ready_list(w);
+      rm->owner = w;
+      rm->recursion_count = 1;
+      rm->next_held = (rmutex_t *)w->held_mutexes;
+      w->held_mutexes = rm;
+#if VAIOS_SYSCALL_SVC
+      v_syscall_wake_result(w, VA_PASS);
+#endif
+    } else {
+      rm->owner = NULL;
+      rm->recursion_count = 0;
+      atomic_inc(&rm->base.count);
+    }
+  }
+  // 2. If parked on a raw semaphore/mutex wait queue, unlink so a later
+  //    give/handoff never wakes a dead task.
+  if (t->wait_sem) {
+    wait_q_remove(t->wait_sem, t);
+    t->wait_sem = NULL;
+  }
+  t->wait_mutex = NULL;
+#if VAIOS_IPC_FD
+  // 3. If in a multi-fd wait, unlink its observer nodes.
+  if (t->in_multiwait)
+    (void)mwait_disarm(t);
+#endif
 }
 
 int v_mutex_unlock(MutexHandle_t mtx) {

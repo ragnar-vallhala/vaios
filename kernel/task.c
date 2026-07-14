@@ -369,6 +369,7 @@ void set_next_task(void) {
 // is why task_exit — not this — is the noreturn entry.
 void v_task_exit_impl(void) {
   ENTER_CRITICAL();
+  v_ipc_task_teardown(current_task); // release held mutexes / wait memberships
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
@@ -441,6 +442,15 @@ void task_exit_request(uint32_t task_id) {
     remove_from_ready_list(task);
   else if (task->status == TASK_DELAYED)
     remove_from_delayed_list(task);
+  else if (task->status == TASK_BLOCKED)
+    // A blocked task already sits on blocked_list (via next/prev); unlink it
+    // before re-enqueuing below, or enqueue_task self-links the node and
+    // corrupts the list. Its wait-queue membership is cleared by the teardown.
+    remove_from_blocked_list(task);
+
+  // Release held mutexes and unlink any wait-queue memberships so a later
+  // give/unlock/wake never touches this soon-freed TCB.
+  v_ipc_task_teardown(task);
 
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);
