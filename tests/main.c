@@ -14,7 +14,7 @@ static const test_suite_t *const host_suites[] = {
     &memory_suite, &task_list_suite, &scheduler_suite,
     &ipc_suite,    &structure_suite, &vfs_suite,
     &vaios_suite,  &terminal_suite,  &perf_suite,
-    &uaccess_suite,
+    &uaccess_suite, &stage5_regress_suite,
 };
 
 int main(void) {

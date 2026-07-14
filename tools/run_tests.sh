@@ -68,7 +68,8 @@ SYSCALL_EXIT=${PIPESTATUS[0]}
 # so the parser only deals with plain text.
 # -----------------------------------------------------------------------------
 echo ""
-cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" \
+cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" "$LOG_DIR/devfs.log" \
+    "$LOG_DIR/taskheap.log" "$LOG_DIR/syscall.log" \
   | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' \
   | awk -v title="HOST TEST SUMMARY" -f "$SCRIPT_DIR/lib/test_summary.awk"
 

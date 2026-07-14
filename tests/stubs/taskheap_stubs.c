@@ -30,6 +30,18 @@ void taskheap_set_task(void *block, uint32_t size) {
 
 void taskheap_clear_task(void) { current_task = 0; }
 
+/* Two-task helpers for cross-task tests (finding #3): the caller owns the TCBs
+ * and blocks, and switches which one is "running". */
+void taskheap_init_task(TCB *t, void *block, uint32_t size) {
+  t->mem_block = (uint32_t *)block;
+  t->stack_size = size;
+  t->heap_base = (uint8_t *)block;
+  t->heap_brk = (uint8_t *)block;
+  t->heap_peak_brk = (uint8_t *)block;
+}
+
+void taskheap_use(TCB *t) { current_task = t; }
+
 /* memory.c's global allocator calls the perf accounting hooks (real home
  * kernel/perf.c, not linked here). No-ops for this binary. */
 void v_perf_on_heap_alloc(uint32_t size, int split) {

@@ -86,9 +86,26 @@ per-task-heap cases + 12 syscall-dispatch cases, all green under the sanitizers.
    **#3** and **#9**.
 
 The **HOST\*** tags below are now plain **HOST** — the binaries exist and the
-paths are reachable. Each finding's *regression* test (asserts the fixed
-contract; fails against today's buggy code) lands with its fix; the harness to
-run them is in place.
+paths are reachable.
+
+### Expected-fail regression tests (present now)
+
+Five findings have host regression tests that **fail today** and go green on
+fix. They fail *gracefully* (a state/return assertion, not a crash), so
+`tools/run_tests.sh` still prints its summary — look for the FAILs:
+
+| Finding | Test | Binary |
+|---|---|---|
+| #2 SYS_wait `nfds*sizeof` overflow | `test_bug2_wait_nfds_multiply_overflow` | `vaios_syscall_tests` |
+| #3 realloc foreign-pointer disclosure | `test_bug3_realloc_foreign_ptr_discloses` | `vaios_taskheap_tests` |
+| #5 blocked-task exit corrupts `blocked_list` | `test_bug5_blocked_task_exit_corrupts_blocked_list` | `vaios_tests` |
+| #6 mutex held on exit not released | `test_bug6_mutex_held_on_exit_not_released` | `vaios_tests` |
+| #9 per-task malloc no cap at block top | `test_bug9_malloc_past_block_top_returns_null` | `vaios_tests`→`vaios_taskheap_tests` |
+
+Not yet covered (need a build with `VAIOS_IPC_FD`, or would ASan-abort rather
+than assert): **#1** (wnodes overrun — needs the fd-IPC stack; the overrun is an
+OOB write that aborts under ASan), **#4/#7/#12** (fd-typed named objects), **#8**
+(v_memalign — needs a deterministic heap-address setup), **#10/#11/#13/#14**.
 
 **Genuinely target/Renode/HW-only (unchanged):** the enforcement proofs (unpriv
 actually traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.

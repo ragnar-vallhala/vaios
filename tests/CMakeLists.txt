@@ -118,6 +118,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_perf.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_uaccess.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_stage5_regress.c"  # expected-fail regressions
 )
 
 # -------------------------------------------------------------------------

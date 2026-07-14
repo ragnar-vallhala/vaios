@@ -31,6 +31,7 @@ extern const test_suite_t terminal_suite;
 extern const test_suite_t perf_suite;
 extern const test_suite_t utils_suite;
 extern const test_suite_t uaccess_suite;
+extern const test_suite_t stage5_regress_suite;
 
 #ifdef __cplusplus
 }

@@ -109,6 +109,24 @@ static void test_priv_caller_ipc_not_denied(void) {
   TEST_ASSERT_EQ(call(0xDEAD, 0, 0, 0), -1);
 }
 
+/* ===========================================================================
+ * Regression test for STAGE5_REVIEW_FINDINGS.md #2 — EXPECTED TO FAIL against
+ * the current code. Fails gracefully (a return-value assertion).
+ * =========================================================================== */
+
+/* Finding #2: the SYS_wait length check is `args[1] * sizeof(int)`, a 32-bit
+ * multiply. nfds = 0x40000000 makes the product wrap to 0, so v_access_ok(ptr,
+ * 0) passes for any in-block pointer and the oversize nfds slips through. A
+ * correct validator rejects an nfds that large (> VAIOS_MAX_FDS) with V_EFAULT.
+ * (IPC_FD is off in this binary, so a slipped-through SYS_wait falls to the
+ * dispatch default -1 rather than V_EFAULT — which is exactly the failure.) */
+static void test_bug2_wait_nfds_multiply_overflow(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, /*unpriv=*/1);
+  TEST_ASSERT(base != 0);
+  /* Valid in-block fds pointer, but a gigantic nfds whose *4 wraps to 0. */
+  TEST_ASSERT_EQ(call(SYS_wait, base, 0x40000000u, 1), T_EFAULT);
+}
+
 static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_sem_give_denied),
     TEST_CASE(test_unpriv_sem_take_denied),
@@ -121,6 +139,8 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_write_valid_ptr_passes),
     TEST_CASE(test_priv_caller_skips_validation),
     TEST_CASE(test_priv_caller_ipc_not_denied),
+    /* expected-fail regression test (see STAGE5_REVIEW_FINDINGS.md) */
+    TEST_CASE(test_bug2_wait_nfds_multiply_overflow),
 };
 
 const test_suite_t syscall_suite = {

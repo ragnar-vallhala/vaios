@@ -17,12 +17,15 @@
  */
 #include "framework.h"
 #include "memory.h"
+#include "task.h"
 #include <stdint.h>
 #include <string.h>
 
 /* From tests/stubs/taskheap_stubs.c */
 void taskheap_set_task(void *block, uint32_t size);
 void taskheap_clear_task(void);
+void taskheap_init_task(TCB *t, void *block, uint32_t size);
+void taskheap_use(TCB *t);
 
 /* The allocator's minimum alignment (kernel/memory/heap_internal.h VHEAP_ALIGN,
  * internal). Mirrored here so the test doesn't pull a private header. */
@@ -106,10 +109,67 @@ static void test_realloc_grow_preserves(void) {
   free(q);
 }
 
+/* ===========================================================================
+ * Regression tests for STAGE5_REVIEW_FINDINGS.md — these are EXPECTED TO FAIL
+ * against the current (unfixed) code; they assert the fixed contract. They fail
+ * gracefully (an assertion, not a crash) so the summary still prints.
+ * =========================================================================== */
+
+/* Finding #9: per-task malloc has no hard cap at the block top. task_live_sp()
+ * is UINTPTR_MAX on host, so the only growth guard never fires and malloc hands
+ * back memory past the end of the task's block instead of returning NULL.
+ * A request larger than the whole block must fail. */
+static uint8_t g_small[64] __attribute__((aligned(16)));
+static void test_bug9_malloc_past_block_top_returns_null(void) {
+  taskheap_set_task(g_small, sizeof g_small);
+  /* Larger than the block. malloc only writes a header at the base (in-block),
+   * so this doesn't itself corrupt — but it wrongly succeeds. The returned
+   * payload would run past g_small; we never write through it. */
+  void *p = malloc(sizeof g_small * 4);
+  TEST_ASSERT_NULL(p); /* FAILS today: returns non-NULL (grew past the block) */
+}
+
+/* Finding #3: realloc() dereferences the user pointer without the range check
+ * free() has, so a pointer into ANOTHER task's block is treated as a valid
+ * block and its contents are copied into the caller's heap — cross-task
+ * disclosure. Two tasks, each with its own block. */
+static uint8_t g_blockA[2048] __attribute__((aligned(16)));
+static uint8_t g_blockB[2048] __attribute__((aligned(16)));
+static TCB g_tA, g_tB;
+static void test_bug3_realloc_foreign_ptr_discloses(void) {
+  const uint8_t SECRET = 0x5A;
+  taskheap_init_task(&g_tA, g_blockA, sizeof g_blockA);
+  taskheap_init_task(&g_tB, g_blockB, sizeof g_blockB);
+
+  /* Task A allocates and fills a secret. */
+  taskheap_use(&g_tA);
+  uint8_t *a = (uint8_t *)malloc(64);
+  TEST_ASSERT_NOT_NULL(a);
+  memset(a, SECRET, 64);
+
+  /* Task B realloc()s A's pointer (foreign to B). A correct realloc rejects a
+   * pointer outside the caller's own heap (as free() does). The buggy one
+   * copies A's block into B's new buffer. */
+  taskheap_use(&g_tB);
+  uint8_t *nb = (uint8_t *)realloc(a, 128);
+
+  int disclosed = 0;
+  if (nb) {
+    for (int i = 0; i < 64; i++)
+      if (nb[i] == SECRET)
+        disclosed++;
+  }
+  /* FAILS today: nb holds A's secret bytes (disclosed == 64). */
+  TEST_ASSERT_EQ(disclosed, 0);
+}
+
 static const test_case_t taskheap_cases[] = {
     TEST_CASE(test_malloc_basic),      TEST_CASE(test_two_allocs_disjoint),
     TEST_CASE(test_free_then_reuse),   TEST_CASE(test_calloc_zeroes),
     TEST_CASE(test_realloc_edges),     TEST_CASE(test_realloc_grow_preserves),
+    /* expected-fail regression tests (see STAGE5_REVIEW_FINDINGS.md) */
+    TEST_CASE(test_bug9_malloc_past_block_top_returns_null),
+    TEST_CASE(test_bug3_realloc_foreign_ptr_discloses),
 };
 
 const test_suite_t taskheap_suite = {
