@@ -90,28 +90,35 @@ paths are reachable.
 
 ### Regression tests + fix status
 
-Five findings have host regression tests. All five are now **FIXED** (the tests
-that used to fail are green); the full host suite is 237/237 under ASan+UBSan.
+Ten findings are now **FIXED** with host regression tests (each verified to fail
+before its fix, pass after). Full host suite: **241/241** under ASan+UBSan.
 
 | Finding | Test | Binary | Status |
 |---|---|---|---|
 | #2 SYS_wait `nfds*sizeof` overflow | `test_bug2_wait_nfds_multiply_overflow` | `vaios_syscall_tests` | ✅ fixed |
 | #3 realloc foreign-pointer disclosure | `test_bug3_realloc_foreign_ptr_discloses` | `vaios_taskheap_tests` | ✅ fixed |
+| #4 named-object leak on exit | `test_bug4_named_sem_slot_freed_on_exit` | `vaios_ipcfd_tests` | ✅ fixed |
 | #5 blocked-task exit corrupts `blocked_list` | `test_bug5_blocked_task_exit_corrupts_blocked_list` | `vaios_tests` | ✅ fixed |
 | #6 mutex held on exit not released | `test_bug6_mutex_held_on_exit_not_released` | `vaios_tests` | ✅ fixed |
+| #7 over-long name silently truncated | `test_bug7_overlong_name_rejected` | `vaios_ipcfd_tests` | ✅ fixed |
+| #8 v_memalign under-reservation | `test_memalign_underalloc_regression` | `vaios_tests` | ✅ fixed |
 | #9 per-task malloc no cap at block top | `test_bug9_malloc_past_block_top_returns_null` | `vaios_taskheap_tests` | ✅ fixed |
+| #12 fd-mutex owner re-lock self-deadlock | `test_bug12_owner_relock_no_self_block` | `vaios_ipcfd_tests` | ✅ fixed |
 
-**#1** (SYS_wait `wnodes` overrun) is also **fixed** — the same clamp now lives in
+**#1** (SYS_wait `wnodes` overrun) is also **fixed** — the clamp now lives in
 `v_wait_block_impl` (`ipc.c`), not only the `v_wait()` wrapper — but has no host
 regression test yet (the overrun is an OOB write that would ASan-*abort* rather
 than assert; it needs a purpose-built fd-IPC harness).
 
-Fixes landed in: `1642a15` (#2/#3/#9) and `ad211af` (#1/#5/#6).
+Fix commits: `1642a15` (#2/#3/#9), `ad211af` (#1/#5/#6), `8865690` (#4/#7/#8/#12).
 
-**Still open (no fix yet):** #4 (named-object refcount leak on exit — the
-teardown releases mutexes/waits but not fd refcounts), #7 (name truncation),
-#8 (v_memalign under-reservation), #10 (gcov integrity), #11 (v_access_ok guard
-bound), #12 (fd-mutex recursion), #13 (gcov caps), #14 (tick wrap).
+**Still open (no fix yet):**
+- **#10** gcov protocol has no integrity check (target/host tooling).
+- **#11** `v_access_ok` lower bound includes the stack-guard region (target-MPU;
+  low — a valid-looking pointer faults the kernel's own copy).
+- **#13** gcov `MAX_INFOS` / arena silently drop on overflow (target-only).
+- **#14** `v_get_ticks()+ticks == 0` wrap turns a finite wait infinite (shared
+  with the base scheduler; low).
 
 **Genuinely target/Renode/HW-only (unchanged):** the enforcement proofs (unpriv
 actually traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.
