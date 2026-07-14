@@ -380,3 +380,42 @@ set_tests_properties(vaios_ipcfd_unit_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
+
+# -------------------------------------------------------------------------
+# vaios_uaccess_guard_tests — seventh executable: v_access_ok / v_strnlen_user
+# with VAIOS_MPU_STACK_GUARD on, so the no-access guard region is excluded from
+# the valid range (STAGE5_REVIEW_FINDINGS #11). The base suite builds guard-off,
+# so this needs its own binary.
+# -------------------------------------------------------------------------
+add_executable(vaios_uaccess_guard_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_uaccess_guard.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
+    "${VAIOS_ROOT}/kernel/task.c"
+    "${VAIOS_ROOT}/kernel/ipc.c"
+    "${VAIOS_ROOT}/kernel/perf.c"
+    "${VAIOS_ROOT}/kernel/memory/memory.c"
+    "${VAIOS_ROOT}/kernel/memory/seglist.c"
+    "${VAIOS_ROOT}/kernel/memory/tlsf.c"
+)
+target_include_directories(vaios_uaccess_guard_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_uaccess_guard_tests PRIVATE
+    CORTEX_M4
+    VAIOS_HOST_TEST
+    VAIOS_MPU_STACK_GUARD=1
+    VAIOS_MPU_GUARD_SIZE=32
+    VAIOS_MODULE_VFS=0
+    HEAP_WATERMARK_ENABLE=0
+    TASK_STACK_WATERMARK_ENABLE=0
+    STATIC_SEMAPHORE_SIZE=64)
+target_compile_options(vaios_uaccess_guard_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_uaccess_guard_unit_tests COMMAND vaios_uaccess_guard_tests)
+set_tests_properties(vaios_uaccess_guard_unit_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
+)

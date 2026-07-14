@@ -102,9 +102,29 @@ static void test_bug6_mutex_held_on_exit_not_released(void) {
   TEST_ASSERT_EQ(v_mutex_lock(m, 0), VA_PASS);
 }
 
+/* Finding #14: a finite timeout whose absolute deadline (v_get_ticks() + ticks)
+ * sums exactly to 0 — the 32-bit tick counter wrapping past UINT32_MAX — was
+ * stored as delay_ticks == 0, which is the V_WAIT_FOREVER "no deadline"
+ * sentinel. A finite wait would then never time out. The fix nudges such a
+ * deadline to 1. */
+static void test_bug14_finite_wait_not_infinite_on_tick_wrap(void) {
+  full_reset();
+  scheduler_init();
+  current_task = idle_task; /* a running task to block */
+  stub_set_ticks(0xFFFFFFFFu); /* +1 wraps to 0 */
+
+  SemaphoreHandle_t s = v_semaphore_create_binary(); /* starts empty (count 0) */
+  TEST_ASSERT_NOT_NULL(s);
+  (void)v_semaphore_take(s, 1); /* finite wait; deadline = 0xFFFFFFFF + 1 = 0 */
+
+  /* A finite wait must not be parked with the FOREVER sentinel. */
+  TEST_ASSERT(current_task->delay_ticks != 0);
+}
+
 static const test_case_t stage5_regress_cases[] = {
     TEST_CASE(test_bug5_blocked_task_exit_corrupts_blocked_list),
     TEST_CASE(test_bug6_mutex_held_on_exit_not_released),
+    TEST_CASE(test_bug14_finite_wait_not_infinite_on_tick_wrap),
 };
 
 const test_suite_t stage5_regress_suite = {
