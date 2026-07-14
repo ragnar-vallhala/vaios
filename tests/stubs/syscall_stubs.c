@@ -81,3 +81,10 @@ void v_perf_on_heap_alloc(uint32_t size, int split) {
 }
 void v_perf_on_heap_free(int coalesces) { (void)coalesces; }
 void v_perf_on_heap_oom(void) {}
+
+/* /dev/kmsg backing read — devfs.c needs it; unused by these tests. */
+int v_kmsg_read(char *out, uint32_t len) {
+  (void)out;
+  (void)len;
+  return 0;
+}

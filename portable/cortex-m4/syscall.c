@@ -77,11 +77,19 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
       if (!v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
         return V_EFAULT;
       break;
+#if VAIOS_IPC_FD
     case SYS_wait:
+      // Reject an oversized nfds BEFORE computing the byte length: args[1] *
+      // sizeof(int) is a 32-bit multiply that would otherwise wrap (e.g.
+      // nfds=0x40000000 -> 0) and slip a huge count past v_access_ok. The count
+      // can never legitimately exceed the fd table.
+      if (args[1] > (uint32_t)VAIOS_MAX_FDS)
+        return V_EFAULT;
       if (!v_access_ok((const void *)(uintptr_t)args[0],
                        args[1] * (uint32_t)sizeof(int), 0))
         return V_EFAULT;
       break;
+#endif
     default:
       break;
     }

@@ -381,12 +381,18 @@ void *malloc(size_t size) {
     last = b;
     b = (Heap_Mem_Block *)((uint8_t *)b + THDR + b->size);
   }
-  // No free block fits: grow the break, bounded by the live stack pointer.
+  // No free block fits: grow the break, bounded by (a) the block's own end and
+  // (b) the live stack pointer. The block-end cap is the hard limit — the heap
+  // must never escape the task's own block, independent of where the stack is
+  // (on host task_live_sp() is a no-op sentinel, so this is the only real
+  // bound); the live-SP cap is the tighter target-side stack-collision guard.
   uint8_t *nb = t->heap_brk;
   uint8_t *new_brk = nb + THDR + need;
-  if (new_brk > task_live_sp() - TASK_HEAP_STACK_MARGIN) {
+  uint8_t *block_end = (uint8_t *)t->mem_block + t->stack_size;
+  if (new_brk > block_end ||
+      new_brk > task_live_sp() - TASK_HEAP_STACK_MARGIN) {
     EXIT_CRITICAL();
-    return NULL; // would collide with the stack — region too small
+    return NULL; // would escape the block / collide with the stack
   }
   Heap_Mem_Block *blk = (Heap_Mem_Block *)nb;
   blk->magic_number = SANITY_MAGIC_NUMBER;
@@ -466,16 +472,24 @@ void *realloc(void *ptr, size_t size) {
     free(ptr);
     return NULL;
   }
+  TCB *t = current_task;
   Heap_Mem_Block *blk = (Heap_Mem_Block *)((uint8_t *)ptr - THDR);
+  // Validate the pointer against the caller's OWN heap before dereferencing its
+  // header — the same guard free() uses. Without it, realloc reads (and can copy
+  // out) a header/payload at an arbitrary or another task's address, a
+  // privileged read / cross-task disclosure from an unprivileged caller.
+  if (!t || (uint8_t *)blk < t->heap_base || (uint8_t *)blk >= t->heap_brk ||
+      blk->magic_number != SANITY_MAGIC_NUMBER || blk->status != MEM_ALOC)
+    return NULL; // foreign / corrupt: not ours to realloc
   uint32_t need =
       (uint32_t)((size + (VHEAP_ALIGN - 1)) & ~(size_t)(VHEAP_ALIGN - 1));
   // Fits in place: keep it (no shrink-split, for simplicity).
-  if (blk->magic_number == SANITY_MAGIC_NUMBER && blk->size >= need)
+  if (blk->size >= need)
     return ptr;
   void *np = malloc(size);
   if (!np)
     return NULL; // original left intact
-  uint32_t old = (blk->magic_number == SANITY_MAGIC_NUMBER) ? blk->size : 0;
+  uint32_t old = blk->size;
   v_memcpy(np, ptr, old < size ? old : size);
   free(ptr);
   return np;

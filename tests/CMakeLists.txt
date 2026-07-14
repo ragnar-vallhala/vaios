@@ -300,16 +300,23 @@ add_executable(vaios_syscall_tests
     "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"
+    "${VAIOS_ROOT}/kernel/devfs.c"                    # fd table (IPC_FD/DEVFS)
     "${VAIOS_ROOT}/kernel/memory/memory.c"
     "${VAIOS_ROOT}/kernel/memory/seglist.c"
     "${VAIOS_ROOT}/kernel/memory/tlsf.c"
 )
 target_include_directories(vaios_syscall_tests PRIVATE ${TEST_INCLUDE_DIRS})
+# The faithful Stage-5 unprivileged config: unprivileged tasks use fd-typed IPC,
+# so DEVFS + IPC_FD are on (that's also where VAIOS_MAX_FDS — the SYS_wait bound —
+# is defined). TASK_HEAP stays off to avoid the libc malloc-symbol clash.
 target_compile_definitions(vaios_syscall_tests PRIVATE
     CORTEX_M4
     VAIOS_HOST_TEST
     VAIOS_SYSCALL_SVC=1            # compile the dispatch + svc host hooks
     VAIOS_MPU_USER_SEPARATION=1    # compile the validation switch + priv gate
+    VAIOS_DEVFS=1                  # fd table
+    VAIOS_IPC_FD=1                 # fd-typed IPC + SYS_wait validation
+    VAIOS_MAX_FDS=8
     VAIOS_MODULE_VFS=0
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0
