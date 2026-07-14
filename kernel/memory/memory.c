@@ -156,10 +156,16 @@ void *v_memalign(size_t align, size_t size) {
 
   ENTER_CRITICAL();
 
-  // Enough to carve the aligned payload plus up to `align` bytes of leading
-  // slack and a header for the aligned block.
-  Heap_Mem_Block *blk =
-      vheap_index_find(need + (uint32_t)align + (uint32_t)sizeof(Heap_Mem_Block));
+  // Enough to carve the aligned payload plus the leading slack and the aligned
+  // block's header. The leading offset can reach MIN_PAYLOAD + header + (align-1)
+  // (the loop below bumps the aligned address until the leading remainder can
+  // hold a valid free block), so the reservation must include VHEAP_MIN_PAYLOAD
+  // on top of align + header — otherwise a block that's just big enough for
+  // `need + align + header` yields aligned->size < need and overruns the next
+  // block. (STAGE5_REVIEW_FINDINGS #8.)
+  Heap_Mem_Block *blk = vheap_index_find(
+      need + (uint32_t)align + (uint32_t)sizeof(Heap_Mem_Block) +
+      VHEAP_MIN_PAYLOAD);
   if (!blk) {
     EXIT_CRITICAL();
     PERF_HEAP_OOM();

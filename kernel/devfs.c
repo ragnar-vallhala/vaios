@@ -96,6 +96,18 @@ void *v_fd_obj(int fd, const v_file_ops *ops) {
   return e->priv;
 }
 
+void v_fd_close_all(TCB *t) {
+  for (int fd = 0; fd < VAIOS_MAX_FDS; fd++) {
+    v_fd_entry *e = &t->fds[fd];
+    if (!e->ops)
+      continue;
+    if (e->ops->close)
+      e->ops->close(e->priv); // e.g. ipc_sem_close -> drop named-object refcount
+    e->ops = NULL;
+    e->priv = NULL;
+  }
+}
+
 // --- file API (trap-once: task traps via svc; dispatch runs the body) -------
 int v_file_open(const char *path, int flags) {
 #if VAIOS_SYSCALL_SVC

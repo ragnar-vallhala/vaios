@@ -413,11 +413,23 @@ static int ipc_sem_close(void *priv) {
 static const v_file_ops ipc_sem_ops = {
     .read = NULL, .write = NULL, .close = ipc_sem_close};
 
+// A named-object name must fit the fixed 16-byte slot (15 chars + NUL). A longer
+// name would be silently truncated on store and then never match on re-open —
+// each open()ing a second, distinct object that can never rendezvous. Reject it.
+static int ipc_name_ok(const char *name) {
+  int n = 0;
+  while (n < 16 && name[n])
+    n++;
+  return n < 16; // false once length reaches 16
+}
+
 int v_sem_open(const char *name, int flags) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
     return v_svc2(SYS_sem_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
 #endif
+  if (!ipc_name_ok(name))
+    return -1;
   ENTER_CRITICAL();
   named_sem_t *ns = named_sem_find(name);
   if (!ns) {
@@ -509,6 +521,8 @@ int v_mtx_open(const char *name, int flags) {
   if (v_in_thread_mode())
     return v_svc2(SYS_mtx_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
 #endif
+  if (!ipc_name_ok(name))
+    return -1;
   ENTER_CRITICAL();
   named_mtx_t *nm = named_mtx_find(name);
   if (!nm) {
@@ -553,6 +567,11 @@ int v_mtx_lock(int fd, uint32_t ticks_to_wait) {
 #endif
   named_mtx_t *nm = (named_mtx_t *)v_fd_obj(fd, &ipc_mtx_ops);
   if (!nm)
+    return VA_FAIL;
+  // Non-recursive: a re-lock by the current owner would otherwise fall into the
+  // blocking path (count is 0) and self-deadlock — it can never be woken.
+  // Return an error instead. (The recursive API is v_mutex_lock_recursive.)
+  if (nm->mtx.owner == get_current_task())
     return VA_FAIL;
   return mutex_lock_common(&nm->mtx, ticks_to_wait);
 }
@@ -850,6 +869,13 @@ void v_ipc_task_teardown(TCB *t) {
   // 3. If in a multi-fd wait, unlink its observer nodes.
   if (t->in_multiwait)
     (void)mwait_disarm(t);
+#endif
+#if VAIOS_DEVFS
+  // 4. Close every fd the task still holds so named-object refcounts drop and
+  //    their table slots are reclaimed (done AFTER the mutex handoff above, so a
+  //    still-held mutex's slot isn't freed while it is being released). This is
+  //    the fix for the named-object leak on exit.
+  v_fd_close_all(t);
 #endif
 }
 
