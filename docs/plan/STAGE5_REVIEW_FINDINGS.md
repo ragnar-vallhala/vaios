@@ -129,9 +129,15 @@ Beyond the host suite, three Renode jobs run in CI on real ARM under NAVHAL:
 - **Task-teardown regression** (`renode_lifecycle.sh`, `examples/34_stage5_lifecycle.c`)
   — **#5** (blocked-task force-termination) and **#6** (mutex held on exit) under
   the REAL running scheduler, not the host's frozen one. Verified red-on-revert.
+- **fd-typed IPC regression** (`renode_fdipc.sh`, `examples/35_stage5_fdipc.c`)
+  — **#4** (named-object slot reclaim on exit), **#7** (over-long name), **#12**
+  (fd-mutex owner re-lock) under the real scheduler + SVC path (DEVFS + IPC_FD).
+  Verified red-on-revert (FAIL #7, FAIL #4, and a self-deadlock hang at #12).
 
 The host suite exercises the *logic* with a frozen scheduler; these prove the
-*real* block/exit/wake/context-switch paths on-device.
+*real* block/exit/wake/context-switch + SVC paths on-device. Every finding with
+kernel-behaviour impact (#1–#9, #11, #12, #14) now has on-target validation;
+#10/#13 are gcov host/target tooling.
 
 **Genuinely target/Renode/HW-only (unchanged):** the enforcement proofs (unpriv
 actually traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.
