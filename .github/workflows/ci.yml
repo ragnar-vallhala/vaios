@@ -67,3 +67,6 @@ jobs:
 
       - name: Stage-5 task-teardown regression in Renode
         run: bash tools/renode_lifecycle.sh
+
+      - name: Stage-5 fd-typed IPC regression in Renode
+        run: bash tools/renode_fdipc.sh

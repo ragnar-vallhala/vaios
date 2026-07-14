@@ -48,6 +48,15 @@ config EXAMPLE_STAGE5_LIFECYCLE
 	# termination) under the real scheduler. Plain kernel config — no MPU/SVC
 	# flip needed; raw mutexes/semaphores + task_exit_request.
 
+config EXAMPLE_STAGE5_FDIPC
+	bool "stage5_fdipc"
+	# On-target fd-typed IPC regression (over-long name, fd-mutex owner re-lock,
+	# named-object slot reclaim on exit) under the real scheduler + SVC path.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_IPC_FD
+
 config EXAMPLE_COVERAGE_SCHED
 	bool "coverage_sched"
 	# Scheduler-exercising on-target gcov runner (build with -DVAIOS_GCOV=ON).
