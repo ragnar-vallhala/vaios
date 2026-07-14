@@ -16,7 +16,72 @@ the 64-bit host test build, latent on the 32-bit target.
 
 ---
 
-## 🔴 1. `SYS_wait` overruns `TCB.wnodes[VAIOS_MAX_FDS]` (boundary)
+## Test coverage — host vs. hardware
+
+Each finding is tagged with how it can be exercised:
+
+- **HOST** — the buggy logic is in kernel C the host suite already compiles
+  (`memory.c`, `task.c`, `ipc.c`); a host test can drive it directly.
+- **HOST\*** — host-coverable, but needs a harness change first (see below).
+- **HW** — requires the target / Renode: the ARM-only SVC/MPU/nPRIV machinery, or
+  a real UART, is what surfaces it.
+
+**Key distinction.** For every boundary bug (#1–#3, #11) the host suite can prove
+the *memory-safety defect*, because a host test calling `v_wait_block_impl` /
+`v_syscall_dispatch` / `realloc` directly with hostile arguments **is** the
+syscall body the SVC path runs. What the host suite **cannot** prove is
+*enforcement* — that an unprivileged task actually traps and the MPU/nPRIV
+actually blocks the raw access. That is inherently target-only and is what the
+Renode isolation regression + on-target gcov exist for.
+
+### What the host build compiles today
+- **In:** `memory.c` (global `v_malloc/v_free/v_memalign` always; per-task
+  `malloc/free/realloc` **only if `VAIOS_TASK_HEAP`** — currently **off**),
+  `task.c`, `ipc.c`, `devfs.c` (separate binary `vaios_devfs_tests`).
+- **Out:** `portable/cortex-m4/syscall.c` (`v_syscall_dispatch`), `port.c`,
+  `port_hw.c`, `startup.s` — all ARM-only.
+- **No `-fsanitize`** anywhere; `-O0 -g`. Not defined: `VAIOS_MPU_USER_SEPARATION`,
+  `VAIOS_SYSCALL_SVC`, `VAIOS_TASK_HEAP`.
+
+### Coverage summary
+
+| # | Tag | Where the logic lives / what's needed |
+|---|-----|----------------------------------------|
+| 1 | HOST | `ipc.c v_wait_block_impl`; observing the overrun write needs ASAN or a canary |
+| 2 | HOST\* | validator is in un-linked `syscall.c`; fully covered if the clamp lands in the host-linked impl (recommended) |
+| 3 | HOST\* | per-task `realloc` gated by `VAIOS_TASK_HEAP` (off); needs `VAIOS_TASK_HEAP=1` + synthetic `current_task` |
+| 4 | HOST | `task.c` exit + `ipc.c` tables; fd-teardown wiring may need the devfs layer |
+| 5 | HOST | `task.c` list ops; list truncation observable directly, UAF tail needs ASAN |
+| 6 | HOST | `task.c` exit + `ipc.c` mutex owner model |
+| 7 | HOST | pure `ipc.c`; trivial |
+| 8 | HOST | **global `v_memalign`; host is the *only* place it manifests** (target interval empty) |
+| 9 | HOST\* | per-task `malloc` gated by `VAIOS_TASK_HEAP` (off); needs `VAIOS_TASK_HEAP=1` |
+| 10 | HOST decoder / HW loss | Python decoder unit-testable with a dropped-line stream; the real UART-loss event needs Renode/HW |
+| 11 | HOST logic / HW fault | wrong `v_access_ok` return is host-assertable; the panic needs the live MPU |
+| 12 | HOST | pure `ipc.c` |
+| 13 | HW | needs >64 instrumented TUs / arena stress on target |
+| 14 | HOST | `ipc.c`/`task.c`; drive the `v_get_ticks` stub near wrap |
+
+### Harness changes that unlock coverage (do these first)
+
+1. **Add `-fsanitize=address,undefined` to `vaios_tests`.** Highest-leverage
+   single change: #1, #5, #8 are already *reachable* on host; ASAN makes the
+   overruns/UAF *observable* instead of silent. Unblocks the **HOST** tags that
+   currently say "needs ASAN".
+2. **Link the pure-C `v_syscall_dispatch` into the host binary** (stub the asm
+   `SVCall_Handler`). Puts the validation switch — where the security decisions
+   live — under host test. Resolves the **HOST\*** on #2 and the dispatch side of
+   #1/#3.
+3. **A host build variant with `VAIOS_TASK_HEAP=1` + a synthetic `current_task`.**
+   Brings the per-task allocator under host test. Resolves the **HOST\*** on #3
+   and #9.
+
+**Genuinely target/Renode/HW-only:** the enforcement proofs (unpriv actually
+traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.
+
+---
+
+## 🔴 1. `SYS_wait` overruns `TCB.wnodes[VAIOS_MAX_FDS]` (boundary) — HOST
 
 **Where:** write site `kernel/ipc.c:651`; unclamped entry `kernel/ipc.c:630`
 (`v_wait_block_impl`); dispatch `portable/cortex-m4/syscall.c:150-153`.
@@ -56,7 +121,7 @@ the userspace wrapper for a security bound.
 
 ---
 
-## 🟠 2. `SYS_wait` length check integer-overflows (boundary)
+## 🟠 2. `SYS_wait` length check integer-overflows (boundary) — HOST\*
 
 **Where:** `portable/cortex-m4/syscall.c:74-75`.
 
@@ -79,7 +144,7 @@ the end of the buffer → BusFault → panic (system-wide DoS). Also compounds #
 
 ---
 
-## 🟠 3. `realloc()` dereferences an unvalidated user pointer (boundary)
+## 🟠 3. `realloc()` dereferences an unvalidated user pointer (boundary) — HOST\*
 
 **Where:** `kernel/memory/memory.c:469-479`; dispatch `syscall.c:170-172`.
 
@@ -117,7 +182,7 @@ before the first dereference.
 
 ---
 
-## 🟠 4. Named IPC objects leak their refcount on task exit
+## 🟠 4. Named IPC objects leak their refcount on task exit — HOST
 
 **Where:** `kernel/task.c:370-377` (`v_task_exit_impl`), `:432-451`
 (`task_exit_request`) — neither walks `t->fds[]`. Refcount only drops via
@@ -137,7 +202,7 @@ then return. After the 8th, `MAX_NAMED_SEMS` is exhausted and every subsequent
 
 ---
 
-## 🟠 5. Terminating a `TASK_BLOCKED` task corrupts `blocked_list` + dangling wait nodes
+## 🟠 5. Terminating a `TASK_BLOCKED` task corrupts `blocked_list` + dangling wait nodes — HOST
 
 **Where:** `kernel/task.c:432-446` (`task_exit_request`), interacting with
 `enqueue_task` (`task.c:100-118`) and the sem `wait_q`/`observers` (`ipc.c`).
@@ -174,7 +239,7 @@ enqueue.
 
 ---
 
-## 🟡 6. Task exits holding a mutex → never released
+## 🟡 6. Task exits holding a mutex → never released — HOST
 
 **Where:** `kernel/task.c:370-377` / `:432-451` don't walk `held_mutexes`; owner
 model in `kernel/ipc.c`.
@@ -192,7 +257,7 @@ A's freed TCB via `m->owner`.
 
 ---
 
-## 🟡 7. Named sem/mutex names ≥16 chars silently truncate and can't be re-found
+## 🟡 7. Named sem/mutex names ≥16 chars silently truncate and can't be re-found — HOST
 
 **Where:** `kernel/ipc.c:420-425` (`v_sem_open`), `:511-516` (`v_mtx_open`), with
 `sname_eq` (`:374-379`) and `char name[16]`.
@@ -213,7 +278,7 @@ and make `find`/`create` consistent about truncation.
 
 ---
 
-## 🟡 8. `v_memalign` search reservation undersized → heap overwrite (host)
+## 🟡 8. `v_memalign` search reservation undersized → heap overwrite (host) — HOST (only)
 
 **Where:** `kernel/memory/memory.c:161-162` (reservation), carve `:191-199`.
 
@@ -240,7 +305,7 @@ it: it runs on a fresh whole-heap block and only uses align=32 (`d0<32`).
 
 ---
 
-## 🟡 9. Per-task `malloc` has no hard cap at the block top (host)
+## 🟡 9. Per-task `malloc` has no hard cap at the block top (host) — HOST\*
 
 **Where:** `kernel/memory/memory.c:385-390`, `task_live_sp()` `:326-334`.
 
@@ -259,7 +324,7 @@ the stack-collision check.
 
 ---
 
-## 🟡 10. On-target gcov: no length/CRC → lossy capture looks valid
+## 🟡 10. On-target gcov: no length/CRC → lossy capture looks valid — HOST decoder / HW loss
 
 **Where:** `tools/gcov_uart_decode.py:120-124` and the emitter
 `portable/cortex-m4/gcov_dump.c` (whole protocol).
@@ -284,12 +349,12 @@ gap.)
 
 ## 🟢 Low
 
-| # | Site | Issue |
-|---|------|-------|
-| 11 | `kernel/task.c:405-410` | `v_access_ok` lower bound includes the `AP_NONE` stack-guard region; a buffer in `[mem_block, mem_block+GUARD)` passes validation but faults the kernel's own copy in handler mode → panic. Lower bound should be `heap_base`. |
-| 12 | `kernel/ipc.c:532-541` | fd-typed `v_mtx_lock` has no `owner == current` recursion check; a holder re-locking self-deadlocks silently (forever under `V_WAIT_FOREVER`) instead of erroring. |
-| 13 | `portable/cortex-m4/gcov_dump.c:73-76,184-193` | `VAIOS_GCOV_MAX_INFOS=64` and the 8 KB arena silently drop TUs / HardFault on overflow. Fits today's ~25 instrumented TUs; latent. |
-| 14 | `kernel/ipc.c:665`, `:183` | `v_get_ticks() + ticks == 0` (32-bit tick wrap) makes `delay_ticks==0`, which the scan treats as `V_WAIT_FOREVER` — a finite wait becomes infinite. Absolute-tick compares also mis-order after the ~49-day wrap. Shared with the base scheduler, not new to this diff. |
+| # | Site | Coverage | Issue |
+|---|------|----------|-------|
+| 11 | `kernel/task.c:405-410` | HOST logic / HW fault | `v_access_ok` lower bound includes the `AP_NONE` stack-guard region; a buffer in `[mem_block, mem_block+GUARD)` passes validation but faults the kernel's own copy in handler mode → panic. Lower bound should be `heap_base`. |
+| 12 | `kernel/ipc.c:532-541` | HOST | fd-typed `v_mtx_lock` has no `owner == current` recursion check; a holder re-locking self-deadlocks silently (forever under `V_WAIT_FOREVER`) instead of erroring. |
+| 13 | `portable/cortex-m4/gcov_dump.c:73-76,184-193` | HW | `VAIOS_GCOV_MAX_INFOS=64` and the 8 KB arena silently drop TUs / HardFault on overflow. Fits today's ~25 instrumented TUs; latent. |
+| 14 | `kernel/ipc.c:665`, `:183` | HOST | `v_get_ticks() + ticks == 0` (32-bit tick wrap) makes `delay_ticks==0`, which the scan treats as `V_WAIT_FOREVER` — a finite wait becomes infinite. Absolute-tick compares also mis-order after the ~49-day wrap. Shared with the base scheduler, not new to this diff. |
 
 ---
 
