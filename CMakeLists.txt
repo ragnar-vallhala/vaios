@@ -357,6 +357,42 @@ endif()
 add_compile_options("SHELL:-include ${VAIOS_AUTOCONF}")
 add_compile_options("SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/vaios_config_derived.h")
 
+# ---------------------------------------------------------------------------
+# On-target gcov coverage (VAIOS_GCOV). Instruments vaios's OWN translation
+# units — portable/kernel/examples, added below — with --coverage so a run under
+# semihosting (QEMU/Renode) can measure the ARM-only enforcement code host gcov
+# cannot reach (context switch, MPU, SVC dispatch, fault handlers, semihosting).
+# NavHAL was added above and keeps its own uninstrumented flags. Plain
+# --coverage (NOT -fprofile-info-section) so the embedded .gcda path survives for
+# __gcov_info_to_gcda; tools/gcov_sections.ld (prepended -> parsed first) bounds
+# .init_array; --coverage at link pulls the correct multilib libgcov. The dumper
+# lives in portable/cortex-m4/gcov_dump.c; drive it via tools/coverage_target.sh.
+# Default OFF: normal builds are byte-for-byte unaffected.
+# ---------------------------------------------------------------------------
+option(VAIOS_GCOV "Instrument vaios for on-target gcov coverage (.gcda streamed over UART)" OFF)
+if(VAIOS_GCOV)
+  # -O0 (trailing, overrides the -O2 in CMAKE_C_FLAGS) so gcov attributes
+  # lines/branches to source faithfully, matching the host coverage.sh. Note the
+  # instruction-count cost: an instrumented image runs slowly under Renode's
+  # virtual-time model, so keep on-target coverage runners lean (the no-scheduler
+  # UNIT_TESTS runner is the validated CI path; scheduler-heavy runners are far
+  # slower and better exercised on real hardware, which runs at full speed).
+  string(APPEND CMAKE_C_FLAGS " --coverage -O0")
+  set(CMAKE_EXE_LINKER_FLAGS
+      "-T ${CMAKE_CURRENT_SOURCE_DIR}/tools/gcov_sections.ld ${CMAKE_EXE_LINKER_FLAGS} --coverage")
+  add_compile_definitions(VAIOS_GCOV)
+  # gcov's per-arc counter arrays inflate .bss substantially, pushing _heap_start
+  # up. The default 88 KB heap (memset in full by v_heap_memory_init) then runs
+  # off the end of the 96 KB SRAM and faults before the suite starts. Shrink the
+  # heap for coverage builds so .bss + heap + stack fit; still ample for the
+  # on-target unit suite's allocations. Tunable via -DVAIOS_GCOV_HEAP_SIZE.
+  set(VAIOS_GCOV_HEAP_SIZE 32768 CACHE STRING
+      "Heap size (bytes) for -DVAIOS_GCOV builds (smaller so gcov .bss + heap fit RAM)")
+  add_compile_definitions(HEAP_SIZE=${VAIOS_GCOV_HEAP_SIZE})
+  message(STATUS "VAIOS: on-target gcov instrumentation ENABLED (UART .gcda dump); "
+                 "HEAP_SIZE forced to ${VAIOS_GCOV_HEAP_SIZE} for RAM fit")
+endif()
+
 add_subdirectory(portable) # implementations for specific architectures (context switching, interrupt handling)
 add_subdirectory(kernel) # The heart of your RTOS (scheduling, tasks, synchronization, etc.) — totally architecture independent
 if(EXAMPLES)

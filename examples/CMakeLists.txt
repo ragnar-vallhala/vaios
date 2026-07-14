@@ -47,6 +47,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "TASK_HEAP_TEST")
   add_executable(main 15_task_heap_test.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "MPU_USER_DEMO")
   add_executable(main 33_mpu_user_demo.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "COVERAGE_SCHED")
+  add_executable(main 98_coverage_sched.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "KMSG_TEST")
   add_executable(main 24_kmsg_test.c ${STARTUP_FILE})
   # Probe select: 0=W^X (default), 1=NULL guard, 2=flash-RO. -DMPU_FAULT_MODE=N
