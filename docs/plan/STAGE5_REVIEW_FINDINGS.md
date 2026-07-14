@@ -48,36 +48,50 @@ Renode isolation regression + on-target gcov exist for.
 | # | Tag | Where the logic lives / what's needed |
 |---|-----|----------------------------------------|
 | 1 | HOST | `ipc.c v_wait_block_impl`; observing the overrun write needs ASAN or a canary |
-| 2 | HOST\* | validator is in un-linked `syscall.c`; fully covered if the clamp lands in the host-linked impl (recommended) |
-| 3 | HOST\* | per-task `realloc` gated by `VAIOS_TASK_HEAP` (off); needs `VAIOS_TASK_HEAP=1` + synthetic `current_task` |
+| 2 | HOST | validator is in un-linked `syscall.c`; fully covered if the clamp lands in the host-linked impl (recommended) |
+| 3 | HOST | per-task `realloc` gated by `VAIOS_TASK_HEAP` (off); needs `VAIOS_TASK_HEAP=1` + synthetic `current_task` |
 | 4 | HOST | `task.c` exit + `ipc.c` tables; fd-teardown wiring may need the devfs layer |
 | 5 | HOST | `task.c` list ops; list truncation observable directly, UAF tail needs ASAN |
 | 6 | HOST | `task.c` exit + `ipc.c` mutex owner model |
 | 7 | HOST | pure `ipc.c`; trivial |
 | 8 | HOST | **global `v_memalign`; host is the *only* place it manifests** (target interval empty) |
-| 9 | HOST\* | per-task `malloc` gated by `VAIOS_TASK_HEAP` (off); needs `VAIOS_TASK_HEAP=1` |
+| 9 | HOST | per-task `malloc` gated by `VAIOS_TASK_HEAP` (off); needs `VAIOS_TASK_HEAP=1` |
 | 10 | HOST decoder / HW loss | Python decoder unit-testable with a dropped-line stream; the real UART-loss event needs Renode/HW |
 | 11 | HOST logic / HW fault | wrong `v_access_ok` return is host-assertable; the panic needs the live MPU |
 | 12 | HOST | pure `ipc.c` |
 | 13 | HW | needs >64 instrumented TUs / arena stress on target |
 | 14 | HOST | `ipc.c`/`task.c`; drive the `v_get_ticks` stub near wrap |
 
-### Harness changes that unlock coverage (do these first)
+### Harness changes that unlock coverage — DONE
 
-1. **Add `-fsanitize=address,undefined` to `vaios_tests`.** Highest-leverage
-   single change: #1, #5, #8 are already *reachable* on host; ASAN makes the
-   overruns/UAF *observable* instead of silent. Unblocks the **HOST** tags that
-   currently say "needs ASAN".
-2. **Link the pure-C `v_syscall_dispatch` into the host binary** (stub the asm
-   `SVCall_Handler`). Puts the validation switch — where the security decisions
-   live — under host test. Resolves the **HOST\*** on #2 and the dispatch side of
-   #1/#3.
-3. **A host build variant with `VAIOS_TASK_HEAP=1` + a synthetic `current_task`.**
-   Brings the per-task allocator under host test. Resolves the **HOST\*** on #3
-   and #9.
+All three landed under `tests/`; each new suite runs under ASan+UBSan and is
+wired into `tools/run_tests.sh` + CTest. Result: 229 pre-existing asserts + 6
+per-task-heap cases + 12 syscall-dispatch cases, all green under the sanitizers.
 
-**Genuinely target/Renode/HW-only:** the enforcement proofs (unpriv actually
-traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.
+1. ✅ **ASan+UBSan on the host suites** (`VAIOS_TEST_SANITIZE`, default ON;
+   `tests/CMakeLists.txt`). `-fno-sanitize-recover=all` makes UB/OOB a hard
+   failure so a bug can't slip past CTest's "0 failed" gate. This is what makes
+   #1, #5, #8 — already *reachable* — *observable* instead of silent.
+2. ✅ **`vaios_syscall_tests`** links the real `v_syscall_dispatch`
+   (`portable/cortex-m4/syscall.c`) + the real validators (`task.c`) with a
+   synthetic caller whose privilege the test flips. The two ARM-asm seams
+   (`CONTROL.nPRIV` read; the `svc` trampolines) resolve to host hooks under
+   `VAIOS_HOST_TEST` (`syscall.c`, `include/syscall.h`); the caller block is a
+   `MAP_32BIT` mapping so pointers survive the 32-bit syscall ABI. Unblocks
+   **#2** and the dispatch side of #1/#3.
+3. ✅ **`vaios_taskheap_tests`** builds `memory.c` with `VAIOS_TASK_HEAP=1`, SVC
+   off, a synthetic `current_task`; the allocator symbols are renamed
+   (`-Dmalloc=vtask_malloc …`) so they don't override libc on host, and the task
+   block is a real ASan object so an allocator escaping it aborts. Unblocks
+   **#3** and **#9**.
+
+The **HOST\*** tags below are now plain **HOST** — the binaries exist and the
+paths are reachable. Each finding's *regression* test (asserts the fixed
+contract; fails against today's buggy code) lands with its fix; the harness to
+run them is in place.
+
+**Genuinely target/Renode/HW-only (unchanged):** the enforcement proofs (unpriv
+actually traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.
 
 ---
 
@@ -121,7 +135,7 @@ the userspace wrapper for a security bound.
 
 ---
 
-## 🟠 2. `SYS_wait` length check integer-overflows (boundary) — HOST\*
+## 🟠 2. `SYS_wait` length check integer-overflows (boundary) — HOST
 
 **Where:** `portable/cortex-m4/syscall.c:74-75`.
 
@@ -144,7 +158,7 @@ the end of the buffer → BusFault → panic (system-wide DoS). Also compounds #
 
 ---
 
-## 🟠 3. `realloc()` dereferences an unvalidated user pointer (boundary) — HOST\*
+## 🟠 3. `realloc()` dereferences an unvalidated user pointer (boundary) — HOST
 
 **Where:** `kernel/memory/memory.c:469-479`; dispatch `syscall.c:170-172`.
 
@@ -305,7 +319,7 @@ it: it runs on a fresh whole-heap block and only uses align=32 (`d0<32`).
 
 ---
 
-## 🟡 9. Per-task `malloc` has no hard cap at the block top (host) — HOST\*
+## 🟡 9. Per-task `malloc` has no hard cap at the block top (host) — HOST
 
 **Where:** `kernel/memory/memory.c:385-390`, `task_live_sp()` `:326-334`.
 
