@@ -22,6 +22,30 @@ set(TEST_INCLUDE_DIRS
 )
 
 # -------------------------------------------------------------------------
+# AddressSanitizer + UBSan for the host suites. Directory-scoped so it applies
+# to every test target defined below (they are all created after this call).
+# This is what makes the Stage-5 memory-safety regressions observable: an
+# out-of-bounds write (e.g. the SYS_wait wnodes overrun) or a wild-pointer
+# dereference (unvalidated realloc) aborts instead of silently corrupting.
+# -fno-sanitize-recover=all makes UB a hard failure so a bug can't slip past
+# ctest's "0 failed" gate. Toggle off with -DVAIOS_TEST_SANITIZE=OFF.
+# -------------------------------------------------------------------------
+option(VAIOS_TEST_SANITIZE "Build host tests with AddressSanitizer + UBSan" ON)
+if(VAIOS_TEST_SANITIZE)
+  add_compile_options(-fsanitize=address,undefined
+                      -fno-sanitize-recover=all
+                      -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+# ASan's leak detector would flag the RTOS's static heap (never freed by
+# design) and libc allocations the tests don't own; we care about OOB/UAF here,
+# not leaks. Applied to each test via set_tests_properties(... ENVIRONMENT ...).
+set(VAIOS_SANITIZER_ENV
+    "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1"
+    "UBSAN_OPTIONS=print_stacktrace=1")
+
+# -------------------------------------------------------------------------
 # Kconfig-generated config. The host build has no NavHAL and no static default
 # header any more, so it configures from the same Kconfig (standalone: NavHAL is
 # not sourced) and force-includes the generated scalars + derived layer into
@@ -138,6 +162,7 @@ enable_testing()
 add_test(NAME vaios_unit_tests COMMAND vaios_tests)
 set_tests_properties(vaios_unit_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
 
 # -------------------------------------------------------------------------
@@ -170,6 +195,7 @@ target_compile_options(vaios_utils_tests PRIVATE
 add_test(NAME vaios_utils_unit_tests COMMAND vaios_utils_tests)
 set_tests_properties(vaios_utils_unit_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
 
 # -------------------------------------------------------------------------
@@ -199,4 +225,101 @@ target_compile_options(vaios_devfs_tests PRIVATE
 add_test(NAME vaios_devfs_unit_tests COMMAND vaios_devfs_tests)
 set_tests_properties(vaios_devfs_unit_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
+)
+
+# -------------------------------------------------------------------------
+# vaios_taskheap_tests — fourth executable for the per-task heap.
+#
+# The main binary leaves VAIOS_TASK_HEAP off, so memory.c's per-task
+# malloc/free/calloc/realloc never ran host-side (STAGE5_REVIEW_FINDINGS #3, #9).
+# Build memory.c with VAIOS_TASK_HEAP=1 and SVC off (bodies run directly) against
+# a synthetic current_task (taskheap_stubs.c) — no task.c/scheduler needed. The
+# task block is a real ASan object, so an allocator that escapes it aborts.
+# -------------------------------------------------------------------------
+add_executable(vaios_taskheap_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/taskheap_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_taskheap.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/taskheap_stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"          # _heap_start, v_mem*, v_panic
+    "${VAIOS_ROOT}/kernel/memory/memory.c"
+    "${VAIOS_ROOT}/kernel/memory/seglist.c"
+    "${VAIOS_ROOT}/kernel/memory/tlsf.c"
+)
+target_include_directories(vaios_taskheap_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_taskheap_tests PRIVATE
+    CORTEX_M4
+    VAIOS_HOST_TEST
+    VAIOS_TASK_HEAP=1          # opt the per-task allocator in
+    VAIOS_MODULE_VFS=0
+    HEAP_WATERMARK_ENABLE=0
+    TASK_STACK_WATERMARK_ENABLE=0
+    STATIC_SEMAPHORE_SIZE=64
+    # The per-task allocator is literally named malloc/free/calloc/realloc; on
+    # the host those would override libc (ASan's own init calls malloc), so
+    # rename them for this binary. memory.c defines the renamed symbols and
+    # test_taskheap.c calls them via the same macro — libc's malloc stays intact.
+    # Safe target-wide: no sibling TU here calls these identifiers as code.
+    malloc=vtask_malloc
+    free=vtask_free
+    calloc=vtask_calloc
+    realloc=vtask_realloc)
+target_compile_options(vaios_taskheap_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_taskheap_unit_tests COMMAND vaios_taskheap_tests)
+set_tests_properties(vaios_taskheap_unit_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
+)
+
+# -------------------------------------------------------------------------
+# vaios_syscall_tests — fifth executable for the SVC syscall dispatch.
+#
+# The main binary does not link portable/cortex-m4/syscall.c, so
+# v_syscall_dispatch — the Stage-5 pointer-validation switch + privileged-only
+# IPC gate — was never host-tested (STAGE5_REVIEW_FINDINGS #2, and the dispatch
+# side of #1/#3). Build it with SVC + MPU_USER_SEPARATION on (DEVFS/IPC_FD/
+# TASK_HEAP off, so the validation runs while device/fd/heap cases fall through
+# to `default: -1`), against the real validators in task.c and a synthetic
+# caller whose privilege the test flips (syscall_stubs.c). The two ARM-asm seams
+# (CONTROL.nPRIV read, the svc trampolines) resolve to host hooks under
+# VAIOS_HOST_TEST — see syscall.c and include/syscall.h.
+# -------------------------------------------------------------------------
+add_executable(vaios_syscall_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/syscall_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_syscall.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/syscall_stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
+    "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"
+    "${VAIOS_ROOT}/kernel/task.c"
+    "${VAIOS_ROOT}/kernel/ipc.c"
+    "${VAIOS_ROOT}/kernel/memory/memory.c"
+    "${VAIOS_ROOT}/kernel/memory/seglist.c"
+    "${VAIOS_ROOT}/kernel/memory/tlsf.c"
+)
+target_include_directories(vaios_syscall_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_syscall_tests PRIVATE
+    CORTEX_M4
+    VAIOS_HOST_TEST
+    VAIOS_SYSCALL_SVC=1            # compile the dispatch + svc host hooks
+    VAIOS_MPU_USER_SEPARATION=1    # compile the validation switch + priv gate
+    VAIOS_MODULE_VFS=0
+    HEAP_WATERMARK_ENABLE=0
+    TASK_STACK_WATERMARK_ENABLE=0
+    STATIC_SEMAPHORE_SIZE=64)
+target_compile_options(vaios_syscall_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_syscall_unit_tests COMMAND vaios_syscall_tests)
+set_tests_properties(vaios_syscall_unit_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )

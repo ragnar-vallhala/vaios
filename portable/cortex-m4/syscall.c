@@ -26,9 +26,16 @@
 // thread's privilege. Handler mode reads it fine (SPSEL is what's forced there,
 // not nPRIV).
 static inline int v_caller_unprivileged(void) {
+#if defined(VAIOS_HOST_TEST)
+  // No CONTROL register on the host; a test sets the simulated caller privilege
+  // (tests/stubs/syscall_stubs.c) so the validation switch is host-exercisable.
+  extern int v_test_caller_unprivileged;
+  return v_test_caller_unprivileged;
+#else
   uint32_t control;
   __asm__ volatile("mrs %0, control" : "=r"(control));
   return (control & 1u) != 0u;
+#endif
 }
 // The raw-handle (non-fd) IPC syscalls dereference a user-supplied kernel
 // object pointer (args[0] -> sema_t*/rmutex_t*), which can't be bounds-checked.

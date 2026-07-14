@@ -3,6 +3,11 @@
 # Usage: ./tools/run_tests.sh [--verbose]
 
 set -e
+# Sanitizer runtime knobs (host tests build with ASan+UBSan by default). Leak
+# detection off: the RTOS never frees its static heap by design. Callers can
+# override by exporting these before invoking.
+export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1}"
+export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/build_tests"
@@ -47,6 +52,16 @@ echo "=== Running devfs tests (separate binary: DEVFS=1) ==="
 "$BUILD_DIR/vaios_devfs_tests" | tee "$LOG_DIR/devfs.log"
 DEVFS_EXIT=${PIPESTATUS[0]}
 
+echo ""
+echo "=== Running per-task-heap tests (separate binary: TASK_HEAP=1) ==="
+"$BUILD_DIR/vaios_taskheap_tests" | tee "$LOG_DIR/taskheap.log"
+TASKHEAP_EXIT=${PIPESTATUS[0]}
+
+echo ""
+echo "=== Running syscall-dispatch tests (separate binary: SVC + MPU_USER) ==="
+"$BUILD_DIR/vaios_syscall_tests" | tee "$LOG_DIR/syscall.log"
+SYSCALL_EXIT=${PIPESTATUS[0]}
+
 # -----------------------------------------------------------------------------
 # Cross-binary summary table. Renderer is shared with tools/run_hw_tests.sh —
 # tools/lib/test_summary.awk owns the format. ANSI is stripped before awk
@@ -57,7 +72,7 @@ cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" \
   | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' \
   | awk -v title="HOST TEST SUMMARY" -f "$SCRIPT_DIR/lib/test_summary.awk"
 
-EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT ))
+EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT | TASKHEAP_EXIT | SYSCALL_EXIT ))
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     echo -e "\033[1;32m=== ALL TESTS PASSED ===\033[0m"
