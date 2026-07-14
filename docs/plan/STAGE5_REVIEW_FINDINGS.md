@@ -88,24 +88,30 @@ per-task-heap cases + 12 syscall-dispatch cases, all green under the sanitizers.
 The **HOST\*** tags below are now plain **HOST** — the binaries exist and the
 paths are reachable.
 
-### Expected-fail regression tests (present now)
+### Regression tests + fix status
 
-Five findings have host regression tests that **fail today** and go green on
-fix. They fail *gracefully* (a state/return assertion, not a crash), so
-`tools/run_tests.sh` still prints its summary — look for the FAILs:
+Five findings have host regression tests. All five are now **FIXED** (the tests
+that used to fail are green); the full host suite is 237/237 under ASan+UBSan.
 
-| Finding | Test | Binary |
-|---|---|---|
-| #2 SYS_wait `nfds*sizeof` overflow | `test_bug2_wait_nfds_multiply_overflow` | `vaios_syscall_tests` |
-| #3 realloc foreign-pointer disclosure | `test_bug3_realloc_foreign_ptr_discloses` | `vaios_taskheap_tests` |
-| #5 blocked-task exit corrupts `blocked_list` | `test_bug5_blocked_task_exit_corrupts_blocked_list` | `vaios_tests` |
-| #6 mutex held on exit not released | `test_bug6_mutex_held_on_exit_not_released` | `vaios_tests` |
-| #9 per-task malloc no cap at block top | `test_bug9_malloc_past_block_top_returns_null` | `vaios_tests`→`vaios_taskheap_tests` |
+| Finding | Test | Binary | Status |
+|---|---|---|---|
+| #2 SYS_wait `nfds*sizeof` overflow | `test_bug2_wait_nfds_multiply_overflow` | `vaios_syscall_tests` | ✅ fixed |
+| #3 realloc foreign-pointer disclosure | `test_bug3_realloc_foreign_ptr_discloses` | `vaios_taskheap_tests` | ✅ fixed |
+| #5 blocked-task exit corrupts `blocked_list` | `test_bug5_blocked_task_exit_corrupts_blocked_list` | `vaios_tests` | ✅ fixed |
+| #6 mutex held on exit not released | `test_bug6_mutex_held_on_exit_not_released` | `vaios_tests` | ✅ fixed |
+| #9 per-task malloc no cap at block top | `test_bug9_malloc_past_block_top_returns_null` | `vaios_taskheap_tests` | ✅ fixed |
 
-Not yet covered (need a build with `VAIOS_IPC_FD`, or would ASan-abort rather
-than assert): **#1** (wnodes overrun — needs the fd-IPC stack; the overrun is an
-OOB write that aborts under ASan), **#4/#7/#12** (fd-typed named objects), **#8**
-(v_memalign — needs a deterministic heap-address setup), **#10/#11/#13/#14**.
+**#1** (SYS_wait `wnodes` overrun) is also **fixed** — the same clamp now lives in
+`v_wait_block_impl` (`ipc.c`), not only the `v_wait()` wrapper — but has no host
+regression test yet (the overrun is an OOB write that would ASan-*abort* rather
+than assert; it needs a purpose-built fd-IPC harness).
+
+Fixes landed in: `1642a15` (#2/#3/#9) and `ad211af` (#1/#5/#6).
+
+**Still open (no fix yet):** #4 (named-object refcount leak on exit — the
+teardown releases mutexes/waits but not fd refcounts), #7 (name truncation),
+#8 (v_memalign under-reservation), #10 (gcov integrity), #11 (v_access_ok guard
+bound), #12 (fd-mutex recursion), #13 (gcov caps), #14 (tick wrap).
 
 **Genuinely target/Renode/HW-only (unchanged):** the enforcement proofs (unpriv
 actually traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.
