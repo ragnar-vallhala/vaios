@@ -118,6 +118,21 @@ the dump emits `@@VAIOS_GCDA_ERROR`).
 Fix commits: `1642a15` (#2/#3/#9), `ad211af` (#1/#5/#6), `8865690` (#4/#7/#8/#12),
 `2c08ddf` (#10/#11/#13/#14).
 
+### On-target (Renode) coverage
+
+Beyond the host suite, three Renode jobs run in CI on real ARM under NAVHAL:
+
+- **On-target unit suite** (`run_all_tests.sh sitl`) — 552 asserts incl. the
+  memory (#8) and uaccess (#11-path) suites on 32-bit ARM.
+- **Isolation regression** (`renode_isolation.sh`) — the unprivileged flip:
+  nPRIV=1, the SVC + per-task-heap path (#3/#9), MPU trap + fault handlers.
+- **Task-teardown regression** (`renode_lifecycle.sh`, `examples/34_stage5_lifecycle.c`)
+  — **#5** (blocked-task force-termination) and **#6** (mutex held on exit) under
+  the REAL running scheduler, not the host's frozen one. Verified red-on-revert.
+
+The host suite exercises the *logic* with a frozen scheduler; these prove the
+*real* block/exit/wake/context-switch paths on-device.
+
 **Genuinely target/Renode/HW-only (unchanged):** the enforcement proofs (unpriv
 actually traps + MPU blocks), #11's fault, #13, and #10's real UART-loss event.
 
