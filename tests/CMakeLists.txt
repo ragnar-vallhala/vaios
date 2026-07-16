@@ -38,6 +38,20 @@ if(VAIOS_TEST_SANITIZE)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
+# -------------------------------------------------------------------------
+# GCC static analyzer (-fanalyzer). Complements the runtime sanitizers above:
+# ASan/UBSan only see paths the tests execute, whereas -fanalyzer reasons about
+# the kernel sources statically (null derefs, leaks, use-after-free, bad
+# variadics) on paths no test reaches. Off by default so the normal ASan test
+# loop stays fast (~4s); tools/run_static_analysis.sh flips it ON for the gate.
+# Known false positives (custom byte-arena heap, best-effort panic formatter)
+# are suppressed at their sites with GCC-only pragmas.
+# -------------------------------------------------------------------------
+option(VAIOS_TEST_ANALYZER "Build host tests with the GCC -fanalyzer static analyzer" OFF)
+if(VAIOS_TEST_ANALYZER)
+  add_compile_options(-fanalyzer)
+endif()
+
 # ASan's leak detector would flag the RTOS's static heap (never freed by
 # design) and libc allocations the tests don't own; we care about OOB/UAF here,
 # not leaks. Applied to each test via set_tests_properties(... ENVIRONMENT ...).

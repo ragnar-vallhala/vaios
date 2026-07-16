@@ -56,7 +56,17 @@ static inline void fixup_next_prev(Heap_Mem_Block *blk) {
 }
 
 void v_heap_memory_init(void) {
+  // The heap is a raw byte arena (_heap_start[]) over which block headers are
+  // placed by hand; -fanalyzer's allocation-size check assumes malloc-typed
+  // sizing and can't model that. Not a real defect.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-allocation-size"
+#endif
   heap_mem_head = (Heap_Mem_Block *)&_heap_start;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   v_memset(heap_mem_head, 0, HEAP_SIZE);
 
   vheap_index_reset();
