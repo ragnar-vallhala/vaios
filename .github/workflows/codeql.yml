@@ -4,6 +4,15 @@ name: codeql
 # ASan/UBSan runtime suite and the cppcheck + -fanalyzer gate: CodeQL tracks
 # untrusted data across function boundaries — exactly the shape of the Stage-5
 # unprivileged-argument -> kernel-memory findings (nfds/realloc/brk bounds).
+#
+# CodeQL for C/C++ only sees translation units the build actually compiles, so
+# two builds run as a matrix:
+#   host          — gcc, NavHAL stubbed: kernel/ core (memory, ipc, task, ...).
+#   arm-firmware  — arm-none-eabi, NAVHAL=ON, the fullest Stage-5 closure
+#                   (MPU_USER_DEMO): adds portable/cortex-m4/*.c — syscall.c's
+#                   dispatch + pointer validation and port*.c — which the host
+#                   build stubs out. Distinct `category` per target so both
+#                   result sets coexist in the Security tab.
 on:
   push:
     branches: [dev, stable]
@@ -15,22 +24,37 @@ on:
 
 jobs:
   analyze:
-    name: CodeQL (C/C++)
+    name: CodeQL (C/C++, ${{ matrix.target }})
     runs-on: ubuntu-latest
     permissions:
       security-events: write   # upload results to the Security tab
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: host
+            submodules: false
+          - target: arm-firmware
+            # NAVHAL=ON compiles the real firmware, so the submodule is required.
+            submodules: recursive
     steps:
       - uses: actions/checkout@v4
-        # The host build stubs NavHAL, so the submodule is not needed to compile
-        # the kernel sources CodeQL observes.
+        with:
+          submodules: ${{ matrix.submodules }}
 
-      - name: Install build dependencies
+      - name: Install base dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
               gcc cmake make python3 python3-pip
           python3 -m pip install --break-system-packages kconfiglib
+
+      - name: Install ARM toolchain
+        if: matrix.target == 'arm-firmware'
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+              gcc-arm-none-eabi libnewlib-arm-none-eabi
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -41,6 +65,7 @@ jobs:
           queries: security-and-quality
 
       - name: Build (host test configuration)
+        if: matrix.target == 'host'
         # Manual build so CodeQL traces the real kernel compilation. Configure +
         # build only — running the suite is ci.yml's job. Sanitizers off (CodeQL
         # instruments its own build); static analyzer off (that's the cppcheck /
@@ -52,7 +77,18 @@ jobs:
               -DVAIOS_TEST_SANITIZE=OFF
           cmake --build build_codeql --parallel
 
+      - name: Build (ARM firmware, NAVHAL=ON)
+        if: matrix.target == 'arm-firmware'
+        # MPU_USER_DEMO is the fullest Stage-5 closure (MPU + SVC + DEVFS +
+        # TASK_HEAP + the unprivileged flip), so CodeQL sees syscall.c's
+        # validation switch and the per-task heap paths with their guards on.
+        run: |
+          export srctree="$PWD/extern/NavHAL"
+          cmake -S . -B build_codeql_arm \
+              -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=MPU_USER_DEMO
+          cmake --build build_codeql_arm --parallel
+
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:c-cpp"
+          category: "/language:c-cpp/target:${{ matrix.target }}"
