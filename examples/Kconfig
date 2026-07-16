@@ -42,6 +42,33 @@ config EXAMPLE_MPU_USER_DEMO
 	select VAIOS_TASK_HEAP
 	select VAIOS_MPU_USER_SEPARATION
 
+config EXAMPLE_STAGE5_LIFECYCLE
+	bool "stage5_lifecycle"
+	# On-target task-teardown regression (mutex-held-on-exit, blocked-task
+	# termination) under the real scheduler. Plain kernel config — no MPU/SVC
+	# flip needed; raw mutexes/semaphores + task_exit_request.
+
+config EXAMPLE_STAGE5_FDIPC
+	bool "stage5_fdipc"
+	# On-target fd-typed IPC regression (over-long name, fd-mutex owner re-lock,
+	# named-object slot reclaim on exit) under the real scheduler + SVC path.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_IPC_FD
+
+config EXAMPLE_COVERAGE_SCHED
+	bool "coverage_sched"
+	# Scheduler-exercising on-target gcov runner (build with -DVAIOS_GCOV=ON).
+	# Drives the SVC syscall + context-switch paths (port.c / syscall.c) that the
+	# no-scheduler unit runner leaves at 0%. Privileged tasks: MPU enabled + SVC
+	# syscalls (the same closure the fd-IPC examples use), but neither the static
+	# SRAM protect region nor the unprivileged flip — the flip faults by design
+	# and so cannot dump.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_TASK_HEAP
+
 config EXAMPLE_FD_IPC_TEST
 	bool "fd_ipc_test"
 	select VAIOS_MPU_ENABLE

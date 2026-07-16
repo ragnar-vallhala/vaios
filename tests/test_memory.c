@@ -316,6 +316,46 @@ static void test_memalign_leading_underflow_regression(void) {
   }
 }
 
+/* #8: for align=64 a free-block header ≡ 8 mod 64 (payload0 ≡ 32 mod 64) made the
+ * old reservation (need + align + header) one MIN_PAYLOAD short, so v_memalign
+ * returned a block whose usable size was < the request and it overran the next
+ * block. (The align=32 sweep above misses it — d0 can't reach 32.) Sweep a
+ * leading shim so the header lands on every residue mod 64 — one hits the bad
+ * one regardless of heap base — and assert the returned block's own size is
+ * always >= the request. */
+static void test_memalign_underalloc_regression(void) {
+  const size_t ALIGN = 64, SZ = 64;
+  /* The bug bites only when the found block is JUST the old reservation
+   * (need + align + header) AND its header residue makes payload0 ≡ align/2 mod
+   * align. Build a tightly-sized free hole (payload == old reservation) pinned
+   * so it can't coalesce, and sweep a leading allocation so the hole's header
+   * lands on every residue mod align — one iteration hits the bad one. */
+  const size_t OLD_RESV = SZ + ALIGN + sizeof(Heap_Mem_Block); /* pre-fix size */
+  for (size_t shim = 0; shim <= 120; shim += 8) {
+    reset();
+    void *lead = v_malloc(256 + shim); /* shifts the hole's header mod align */
+    TEST_ASSERT_NOT_NULL(lead);
+    void *hole = v_malloc(OLD_RESV); /* the tight block memalign will pick */
+    TEST_ASSERT_NOT_NULL(hole);
+    void *pin = v_malloc(64); /* stops the hole coalescing into the tail */
+    TEST_ASSERT_NOT_NULL(pin);
+    v_free(hole); /* now a tightly-sized free hole */
+
+    void *p = v_memalign(ALIGN, SZ);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQ((uintptr_t)p & (ALIGN - 1), (uintptr_t)0);
+    Heap_Mem_Block *h =
+        (Heap_Mem_Block *)((uint8_t *)p - sizeof(Heap_Mem_Block));
+    TEST_ASSERT_EQ(h->magic_number, SANITY_MAGIC_NUMBER);
+    TEST_ASSERT(h->size >= SZ); /* under-allocation (finding #8) fails here */
+    for (size_t i = 0; i < SZ; i++) /* touch the whole requested payload */
+      ((volatile uint8_t *)p)[i] = 0xCD;
+    v_free(p);
+    v_free(lead);
+    v_free(pin);
+  }
+}
+
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
@@ -334,6 +374,7 @@ static const test_case_t memory_cases[] = {
     TEST_CASE(test_memalign_no_leak),
     TEST_CASE(test_memalign_leading_slack_reusable),
     TEST_CASE(test_memalign_leading_underflow_regression),
+    TEST_CASE(test_memalign_underalloc_regression),
 };
 const test_suite_t memory_suite = {
     .name = "Memory Allocator",

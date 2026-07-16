@@ -26,6 +26,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#if defined(VAIOS_GCOV)
+#include "gcov_dump.h"
+#endif
 
 /* Curated subset of the shared suite registry (suites.h). The pass/fail
  * counters and run_test_suites live in tests/framework.c, linked into this
@@ -116,6 +119,14 @@ int main(void) {
             _test_pass, _test_fail);
   print_fmt(_test_fail == 0 ? "ON-TARGET RESULT: ALL PASS\r\n"
                             : "ON-TARGET RESULT: FAIL\r\n");
+
+#if defined(VAIOS_GCOV)
+  /* Stream each instrumented TU's .gcda as framed base64 over the UART; the host
+   * (tools/coverage_target.sh -> tools/gcov_uart_decode.py) reconstructs the
+   * real .gcda files next to their .gcno. The emitter self-brackets with
+   * @@VAIOS_GCDA_DUMP_BEGIN/END so the capturing side knows when it is done. */
+  vaios_gcov_dump();
+#endif
 
   while (1) {
   }

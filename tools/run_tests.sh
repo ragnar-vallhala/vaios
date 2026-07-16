@@ -3,6 +3,11 @@
 # Usage: ./tools/run_tests.sh [--verbose]
 
 set -e
+# Sanitizer runtime knobs (host tests build with ASan+UBSan by default). Leak
+# detection off: the RTOS never frees its static heap by design. Callers can
+# override by exporting these before invoking.
+export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1}"
+export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/build_tests"
@@ -47,17 +52,58 @@ echo "=== Running devfs tests (separate binary: DEVFS=1) ==="
 "$BUILD_DIR/vaios_devfs_tests" | tee "$LOG_DIR/devfs.log"
 DEVFS_EXIT=${PIPESTATUS[0]}
 
+echo ""
+echo "=== Running per-task-heap tests (separate binary: TASK_HEAP=1) ==="
+"$BUILD_DIR/vaios_taskheap_tests" | tee "$LOG_DIR/taskheap.log"
+TASKHEAP_EXIT=${PIPESTATUS[0]}
+
+echo ""
+echo "=== Running syscall-dispatch tests (separate binary: SVC + MPU_USER) ==="
+"$BUILD_DIR/vaios_syscall_tests" | tee "$LOG_DIR/syscall.log"
+SYSCALL_EXIT=${PIPESTATUS[0]}
+
+echo ""
+echo "=== Running fd-typed IPC tests (separate binary: DEVFS + IPC_FD) ==="
+"$BUILD_DIR/vaios_ipcfd_tests" | tee "$LOG_DIR/ipcfd.log"
+IPCFD_EXIT=${PIPESTATUS[0]}
+
+echo ""
+echo "=== Running uaccess-guard tests (separate binary: MPU_STACK_GUARD) ==="
+"$BUILD_DIR/vaios_uaccess_guard_tests" | tee "$LOG_DIR/uaguard.log"
+UAGUARD_EXIT=${PIPESTATUS[0]}
+
+echo ""
+echo "=== Running gcov UART decoder integrity test (python) ==="
+python3 "$ROOT_DIR/tools/test_gcov_uart_decode.py"
+GCOVDEC_EXIT=$?
+
+# Static analysis (cppcheck + gcc -fanalyzer). Complements the ASan/UBSan run
+# above — it reasons about paths the tests never execute. Set VAIOS_STATIC=0 for
+# a fast inner loop; CI leaves it on. Skips cleanly if the tools are absent.
+STATIC_EXIT=0
+if [ "${VAIOS_STATIC:-1}" != "0" ]; then
+  echo ""
+  echo "=== Running static analysis (cppcheck + -fanalyzer) ==="
+  bash "$SCRIPT_DIR/run_static_analysis.sh"
+  STATIC_EXIT=$?
+else
+  echo ""
+  echo "=== Static analysis skipped (VAIOS_STATIC=0) ==="
+fi
+
 # -----------------------------------------------------------------------------
 # Cross-binary summary table. Renderer is shared with tools/run_hw_tests.sh —
 # tools/lib/test_summary.awk owns the format. ANSI is stripped before awk
 # so the parser only deals with plain text.
 # -----------------------------------------------------------------------------
 echo ""
-cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" \
+cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" "$LOG_DIR/devfs.log" \
+    "$LOG_DIR/taskheap.log" "$LOG_DIR/syscall.log" "$LOG_DIR/ipcfd.log" \
+    "$LOG_DIR/uaguard.log" \
   | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' \
   | awk -v title="HOST TEST SUMMARY" -f "$SCRIPT_DIR/lib/test_summary.awk"
 
-EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT ))
+EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT | TASKHEAP_EXIT | SYSCALL_EXIT | IPCFD_EXIT | UAGUARD_EXIT | GCOVDEC_EXIT | STATIC_EXIT ))
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     echo -e "\033[1;32m=== ALL TESTS PASSED ===\033[0m"

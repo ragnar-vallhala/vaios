@@ -64,6 +64,23 @@ static TCB *wait_q_dequeue(sema_t *sem) {
   return task;
 }
 
+// Unlink an arbitrary task from the queue (used when a blocked task is
+// force-terminated, so a later give/handoff never touches a dead TCB).
+static void wait_q_remove(sema_t *sem, TCB *task) {
+  TCB **pp = &sem->wait_q;
+  TCB *prev = NULL;
+  while (*pp && *pp != task) {
+    prev = *pp;
+    pp = &(*pp)->wait_next;
+  }
+  if (!*pp)
+    return; // not queued here
+  *pp = task->wait_next;
+  if (sem->tail == task)
+    sem->tail = prev;
+  task->wait_next = NULL;
+}
+
 //-----------------------------------------------------------------------------
 // Semaphore / Mutex Creation
 //-----------------------------------------------------------------------------
@@ -158,6 +175,15 @@ MutexHandle_t v_mutex_create_recursive_static(StaticSemaphore_t *pxBuffer) {
 //-----------------------------------------------------------------------------
 // Semaphore / Mutex Operations
 //-----------------------------------------------------------------------------
+// Absolute wake deadline for a FINITE timeout. delay_ticks == 0 is the
+// "no deadline" (V_WAIT_FOREVER) sentinel, so a finite deadline that lands
+// exactly on 0 — the 32-bit tick counter summing past UINT32_MAX — is nudged to
+// 1. Otherwise a finite wait silently becomes infinite. (STAGE5_REVIEW #14.)
+static inline uint32_t v_wake_deadline(uint32_t ticks_to_wait) {
+  uint32_t d = v_get_ticks() + ticks_to_wait;
+  return d == 0u ? 1u : d;
+}
+
 static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   TCB *current = get_current_task();
   PERF_IPC_TAKE_ATTEMPT();
@@ -180,7 +206,7 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
   // the task waits until an explicit give/handoff, never a timeout.
   current->status = TASK_BLOCKED;
   current->delay_ticks =
-      (ticks_to_wait == V_WAIT_FOREVER) ? 0u : v_get_ticks() + ticks_to_wait;
+      (ticks_to_wait == V_WAIT_FOREVER) ? 0u : v_wake_deadline(ticks_to_wait);
   current->wait_sem = s; // track which semaphore we are waiting on
   wait_q_enqueue(s, current);
   add_to_blocked_list(
@@ -396,11 +422,23 @@ static int ipc_sem_close(void *priv) {
 static const v_file_ops ipc_sem_ops = {
     .read = NULL, .write = NULL, .close = ipc_sem_close};
 
+// A named-object name must fit the fixed 16-byte slot (15 chars + NUL). A longer
+// name would be silently truncated on store and then never match on re-open —
+// each open()ing a second, distinct object that can never rendezvous. Reject it.
+static int ipc_name_ok(const char *name) {
+  int n = 0;
+  while (n < 16 && name[n])
+    n++;
+  return n < 16; // false once length reaches 16
+}
+
 int v_sem_open(const char *name, int flags) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
     return v_svc2(SYS_sem_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
 #endif
+  if (!ipc_name_ok(name))
+    return -1;
   ENTER_CRITICAL();
   named_sem_t *ns = named_sem_find(name);
   if (!ns) {
@@ -492,6 +530,8 @@ int v_mtx_open(const char *name, int flags) {
   if (v_in_thread_mode())
     return v_svc2(SYS_mtx_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
 #endif
+  if (!ipc_name_ok(name))
+    return -1;
   ENTER_CRITICAL();
   named_mtx_t *nm = named_mtx_find(name);
   if (!nm) {
@@ -536,6 +576,11 @@ int v_mtx_lock(int fd, uint32_t ticks_to_wait) {
 #endif
   named_mtx_t *nm = (named_mtx_t *)v_fd_obj(fd, &ipc_mtx_ops);
   if (!nm)
+    return VA_FAIL;
+  // Non-recursive: a re-lock by the current owner would otherwise fall into the
+  // blocking path (count is 0) and self-deadlock — it can never be woken.
+  // Return an error instead. (The recursive API is v_mutex_lock_recursive.)
+  if (nm->mtx.owner == get_current_task())
     return VA_FAIL;
   return mutex_lock_common(&nm->mtx, ticks_to_wait);
 }
@@ -628,6 +673,11 @@ static int mwait_disarm(TCB *t) {
 // immediately if one is ready (nothing armed), -1 for a non-blocking probe with
 // nothing ready, or V_SYSCALL_BLOCKED after arming observers and parking.
 int32_t v_wait_block_impl(const int *fds, int nfds, uint32_t ticks) {
+  // Security bound: the arm loop writes one cur->wnodes[] entry per valid fd, so
+  // nfds MUST be clamped to the array size here — not only in the v_wait()
+  // wrapper, which an unprivileged task bypasses by issuing the SVC directly.
+  if (nfds <= 0 || nfds > VAIOS_MAX_FDS)
+    return -1;
   TCB *cur = get_current_task();
   ENTER_CRITICAL();
   // Readiness scan first: a ready fd needs neither blocking nor registration.
@@ -662,7 +712,7 @@ int32_t v_wait_block_impl(const int *fds, int nfds, uint32_t ticks) {
   }
   cur->in_multiwait = 1;
   cur->status = TASK_BLOCKED;
-  cur->delay_ticks = (ticks == V_WAIT_FOREVER) ? 0u : v_get_ticks() + ticks;
+  cur->delay_ticks = (ticks == V_WAIT_FOREVER) ? 0u : v_wake_deadline(ticks);
   add_to_blocked_list(cur);
   EXIT_CRITICAL();
   v_port_trigger_pendsv();
@@ -780,6 +830,62 @@ static int mutex_unlock_common(rmutex_t *rm) {
   atomic_inc(&rm->base.count);
   EXIT_CRITICAL();
   return VA_PASS;
+}
+
+// Release everything a terminating task holds or waits on, so no later
+// give/unlock/wake dereferences its (soon-freed) TCB. Called from the task exit
+// paths (kernel/task.c) with the scheduler critical section already held, and
+// works whether or not `t` is the running task:
+//   - hands off every mutex t owns to its highest-priority waiter (or frees it),
+//   - unlinks t from the raw-semaphore wait queue it is parked on,
+//   - disarms its multi-fd wait observers.
+void v_ipc_task_teardown(TCB *t) {
+  // 1. Hand off / free every mutex t owns (mirror of mutex_unlock_common's
+  //    handoff, but for `t` rather than the current task — t's own priority is
+  //    irrelevant, it is terminating).
+  while (t->held_mutexes) {
+    rmutex_t *rm = (rmutex_t *)t->held_mutexes;
+    t->held_mutexes = rm->next_held;
+    rm->next_held = NULL;
+    TCB *w = wait_q_dequeue(&rm->base);
+    if (w) {
+      w->wait_sem = NULL;
+      w->wait_mutex = NULL;
+      remove_from_blocked_list(w);
+      w->status = TASK_READY;
+      add_to_ready_list(w);
+      rm->owner = w;
+      rm->recursion_count = 1;
+      rm->next_held = (rmutex_t *)w->held_mutexes;
+      w->held_mutexes = rm;
+#if VAIOS_SYSCALL_SVC
+      v_syscall_wake_result(w, VA_PASS);
+#endif
+    } else {
+      rm->owner = NULL;
+      rm->recursion_count = 0;
+      atomic_inc(&rm->base.count);
+    }
+  }
+  // 2. If parked on a raw semaphore/mutex wait queue, unlink so a later
+  //    give/handoff never wakes a dead task.
+  if (t->wait_sem) {
+    wait_q_remove(t->wait_sem, t);
+    t->wait_sem = NULL;
+  }
+  t->wait_mutex = NULL;
+#if VAIOS_IPC_FD
+  // 3. If in a multi-fd wait, unlink its observer nodes.
+  if (t->in_multiwait)
+    (void)mwait_disarm(t);
+#endif
+#if VAIOS_DEVFS
+  // 4. Close every fd the task still holds so named-object refcounts drop and
+  //    their table slots are reclaimed (done AFTER the mutex handoff above, so a
+  //    still-held mutex's slot isn't freed while it is being released). This is
+  //    the fix for the named-object leak on exit.
+  v_fd_close_all(t);
+#endif
 }
 
 int v_mutex_unlock(MutexHandle_t mtx) {

@@ -56,7 +56,17 @@ static inline void fixup_next_prev(Heap_Mem_Block *blk) {
 }
 
 void v_heap_memory_init(void) {
+  // The heap is a raw byte arena (_heap_start[]) over which block headers are
+  // placed by hand; -fanalyzer's allocation-size check assumes malloc-typed
+  // sizing and can't model that. Not a real defect.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-allocation-size"
+#endif
   heap_mem_head = (Heap_Mem_Block *)&_heap_start;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   v_memset(heap_mem_head, 0, HEAP_SIZE);
 
   vheap_index_reset();
@@ -156,10 +166,16 @@ void *v_memalign(size_t align, size_t size) {
 
   ENTER_CRITICAL();
 
-  // Enough to carve the aligned payload plus up to `align` bytes of leading
-  // slack and a header for the aligned block.
-  Heap_Mem_Block *blk =
-      vheap_index_find(need + (uint32_t)align + (uint32_t)sizeof(Heap_Mem_Block));
+  // Enough to carve the aligned payload plus the leading slack and the aligned
+  // block's header. The leading offset can reach MIN_PAYLOAD + header + (align-1)
+  // (the loop below bumps the aligned address until the leading remainder can
+  // hold a valid free block), so the reservation must include VHEAP_MIN_PAYLOAD
+  // on top of align + header — otherwise a block that's just big enough for
+  // `need + align + header` yields aligned->size < need and overruns the next
+  // block. (STAGE5_REVIEW_FINDINGS #8.)
+  Heap_Mem_Block *blk = vheap_index_find(
+      need + (uint32_t)align + (uint32_t)sizeof(Heap_Mem_Block) +
+      VHEAP_MIN_PAYLOAD);
   if (!blk) {
     EXIT_CRITICAL();
     PERF_HEAP_OOM();
@@ -381,12 +397,18 @@ void *malloc(size_t size) {
     last = b;
     b = (Heap_Mem_Block *)((uint8_t *)b + THDR + b->size);
   }
-  // No free block fits: grow the break, bounded by the live stack pointer.
+  // No free block fits: grow the break, bounded by (a) the block's own end and
+  // (b) the live stack pointer. The block-end cap is the hard limit — the heap
+  // must never escape the task's own block, independent of where the stack is
+  // (on host task_live_sp() is a no-op sentinel, so this is the only real
+  // bound); the live-SP cap is the tighter target-side stack-collision guard.
   uint8_t *nb = t->heap_brk;
   uint8_t *new_brk = nb + THDR + need;
-  if (new_brk > task_live_sp() - TASK_HEAP_STACK_MARGIN) {
+  uint8_t *block_end = (uint8_t *)t->mem_block + t->stack_size;
+  if (new_brk > block_end ||
+      new_brk > task_live_sp() - TASK_HEAP_STACK_MARGIN) {
     EXIT_CRITICAL();
-    return NULL; // would collide with the stack — region too small
+    return NULL; // would escape the block / collide with the stack
   }
   Heap_Mem_Block *blk = (Heap_Mem_Block *)nb;
   blk->magic_number = SANITY_MAGIC_NUMBER;
@@ -466,16 +488,24 @@ void *realloc(void *ptr, size_t size) {
     free(ptr);
     return NULL;
   }
+  TCB *t = current_task;
   Heap_Mem_Block *blk = (Heap_Mem_Block *)((uint8_t *)ptr - THDR);
+  // Validate the pointer against the caller's OWN heap before dereferencing its
+  // header — the same guard free() uses. Without it, realloc reads (and can copy
+  // out) a header/payload at an arbitrary or another task's address, a
+  // privileged read / cross-task disclosure from an unprivileged caller.
+  if (!t || (uint8_t *)blk < t->heap_base || (uint8_t *)blk >= t->heap_brk ||
+      blk->magic_number != SANITY_MAGIC_NUMBER || blk->status != MEM_ALOC)
+    return NULL; // foreign / corrupt: not ours to realloc
   uint32_t need =
       (uint32_t)((size + (VHEAP_ALIGN - 1)) & ~(size_t)(VHEAP_ALIGN - 1));
   // Fits in place: keep it (no shrink-split, for simplicity).
-  if (blk->magic_number == SANITY_MAGIC_NUMBER && blk->size >= need)
+  if (blk->size >= need)
     return ptr;
   void *np = malloc(size);
   if (!np)
     return NULL; // original left intact
-  uint32_t old = (blk->magic_number == SANITY_MAGIC_NUMBER) ? blk->size : 0;
+  uint32_t old = blk->size;
   v_memcpy(np, ptr, old < size ? old : size);
   free(ptr);
   return np;

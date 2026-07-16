@@ -466,7 +466,7 @@ static void test_task_block_idle_is_noop(void) {
   full_reset();
   scheduler_init();
   current_task = idle_task;
-  int before = current_task->status;
+  Task_Status before = current_task->status;
   task_block();
   TEST_ASSERT_EQ(current_task->status, before); /* idle cannot block */
 }

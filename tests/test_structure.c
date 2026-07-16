@@ -399,7 +399,10 @@ static int handoff_server_step(void) {
 
 /* A correct requester: take the token, DRAIN any stale response, request, let
  * the server answer, take the response, release the token. */
-static uint32_t handoff_call(uint32_t id) {
+/* Writes the response to *out. Void (not uint32_t-returning) so the TEST_ASSERT
+ * early-return — which yields no value — is well-formed. */
+static void handoff_call(uint32_t id, uint32_t *out) {
+  *out = 0;
   uint8_t tok;
   TEST_ASSERT(mpmc_try_pop(&hs_lock, &tok));
   uint32_t junk;
@@ -410,14 +413,17 @@ static uint32_t handoff_call(uint32_t id) {
   uint32_t res = 0;
   TEST_ASSERT(mpmc_try_pop(&hs_res, &res));
   mpmc_try_push(&hs_lock, &tok);
-  return res;
+  *out = res;
 }
 
 /* Normal operation: every request gets its own response, repeatedly. */
 static void test_handoff_pairs_request_with_response(void) {
   handoff_setup();
-  for (uint32_t id = 1u; id <= 32u; id++)
-    TEST_ASSERT_EQ(handoff_call(id), HS_ANSWER(id));
+  for (uint32_t id = 1u; id <= 32u; id++) {
+    uint32_t r;
+    handoff_call(id, &r);
+    TEST_ASSERT_EQ(r, HS_ANSWER(id));
+  }
 }
 
 /* After a requester abandons its wait (a stale response left parked), the next
@@ -432,7 +438,9 @@ static void test_handoff_drain_recovers_after_abandon(void) {
   mpmc_try_push(&hs_lock, &tok);        /* A releases WITHOUT popping its res */
   TEST_ASSERT(!mpmc_is_empty(&hs_res)); /* a stale response is parked */
 
-  TEST_ASSERT_EQ(handoff_call(11u), HS_ANSWER(11u)); /* B gets B's answer */
+  uint32_t r11;
+  handoff_call(11u, &r11);
+  TEST_ASSERT_EQ(r11, HS_ANSWER(11u)); /* B gets B's answer */
 }
 
 /* Documents WHY the drain is required: a naive requester that skips it reads the

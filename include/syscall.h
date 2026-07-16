@@ -78,6 +78,28 @@ void v_syscall_deliver_result(void);
 
 #if VAIOS_SYSCALL_SVC
 
+#if defined(VAIOS_HOST_TEST)
+// Host test model of the SVC trap (no ARM svc/mrs). v_svc* funnel through
+// v_host_svc, which flips v_test_in_handler around v_syscall_dispatch so the
+// dispatch-reached primitive bodies see handler mode and run directly — exactly
+// as on target. Tests drive the public API and it routes through the dispatch.
+// Both live in tests/stubs/syscall_stubs.c.
+extern int v_test_in_handler; // 0 = thread mode (a task), nonzero = in dispatch
+int32_t v_host_svc(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2);
+static inline int v_in_thread_mode(void) { return v_test_in_handler == 0; }
+static inline int32_t v_svc0(uint32_t n) { return v_host_svc(n, 0, 0, 0); }
+static inline int32_t v_svc1(uint32_t n, uint32_t a0) {
+  return v_host_svc(n, a0, 0, 0);
+}
+static inline int32_t v_svc2(uint32_t n, uint32_t a0, uint32_t a1) {
+  return v_host_svc(n, a0, a1, 0);
+}
+static inline int32_t v_svc3(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
+  return v_host_svc(n, a0, a1, a2);
+}
+
+#else
+
 // True in thread mode (a task), false in a handler (the syscall dispatch). A
 // task-facing API whose implementation IS the dispatch target uses this to trap
 // exactly once: a task (thread) traps via svc; the same function reached from
@@ -120,6 +142,8 @@ v_svc3(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
   __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1), "r"(r2) : "memory");
   return (int32_t)r0;
 }
+
+#endif // VAIOS_HOST_TEST
 
 #endif // VAIOS_SYSCALL_SVC
 

@@ -122,6 +122,16 @@ int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait);
 int v_mutex_unlock_recursive(MutexHandle_t mtx);
 
 //-----------------------------------------------------------------------------
+// Task teardown
+//-----------------------------------------------------------------------------
+// Release everything a terminating task holds or waits on (held mutexes handed
+// off to their waiters, wait-queue / multi-wait memberships unlinked) so no
+// later give/unlock/wake dereferences its freed TCB. Called from the task exit
+// paths (kernel/task.c) with the scheduler critical section already held.
+struct Task_Control_Block;
+void v_ipc_task_teardown(struct Task_Control_Block *t);
+
+//-----------------------------------------------------------------------------
 // Return Codes
 //-----------------------------------------------------------------------------
 

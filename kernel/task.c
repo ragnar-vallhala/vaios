@@ -369,6 +369,7 @@ void set_next_task(void) {
 // is why task_exit — not this — is the noreturn entry.
 void v_task_exit_impl(void) {
   ENTER_CRITICAL();
+  v_ipc_task_teardown(current_task); // release held mutexes / wait memberships
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
@@ -403,7 +404,14 @@ int v_access_ok(const void *p, uint32_t len, int write) {
   if (!t || !t->mem_block)
     return 0;
   uintptr_t base = (uintptr_t)t->mem_block;
-  uintptr_t end = base + t->stack_size;
+#if VAIOS_MPU_STACK_GUARD
+  // The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack guard (MPU
+  // AP_NONE) — not readable/writable even by the kernel, and no user object
+  // lives there. Exclude it, or a pointer into the guard would pass validation
+  // and then fault the kernel's own copy. (STAGE5_REVIEW_FINDINGS #11.)
+  base += VAIOS_MPU_GUARD_SIZE;
+#endif
+  uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
   uintptr_t a = (uintptr_t)p;
   if (a < base || a > end)
     return 0;
@@ -418,7 +426,10 @@ long v_strnlen_user(const char *s, uint32_t max) {
   if (!t || !t->mem_block)
     return -1;
   uintptr_t base = (uintptr_t)t->mem_block;
-  uintptr_t end = base + t->stack_size;
+#if VAIOS_MPU_STACK_GUARD
+  base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (see v_access_ok)
+#endif
+  uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
   uintptr_t a = (uintptr_t)s;
   if (a < base || a >= end)
     return -1;
@@ -441,6 +452,15 @@ void task_exit_request(uint32_t task_id) {
     remove_from_ready_list(task);
   else if (task->status == TASK_DELAYED)
     remove_from_delayed_list(task);
+  else if (task->status == TASK_BLOCKED)
+    // A blocked task already sits on blocked_list (via next/prev); unlink it
+    // before re-enqueuing below, or enqueue_task self-links the node and
+    // corrupts the list. Its wait-queue membership is cleared by the teardown.
+    remove_from_blocked_list(task);
+
+  // Release held mutexes and unlink any wait-queue memberships so a later
+  // give/unlock/wake never touches this soon-freed TCB.
+  v_ipc_task_teardown(task);
 
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);

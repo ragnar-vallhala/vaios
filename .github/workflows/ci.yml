@@ -18,9 +18,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-              gcc cmake make python3 python3-pip
+              gcc cmake make python3 python3-pip cppcheck
           # kconfiglib drives the Kconfig config generation the host build now
-          # runs at configure time (tools/kconfig.py).
+          # runs at configure time (tools/kconfig.py). cppcheck backs the static
+          # analysis gate run_tests.sh invokes (tools/run_static_analysis.sh);
+          # gcc -fanalyzer ships with gcc above.
           python3 -m pip install --break-system-packages kconfiglib
 
       - name: Run host test suite
@@ -64,3 +66,9 @@ jobs:
 
       - name: Stage-5 isolation regression in Renode
         run: bash tools/renode_isolation.sh
+
+      - name: Stage-5 task-teardown regression in Renode
+        run: bash tools/renode_lifecycle.sh
+
+      - name: Stage-5 fd-typed IPC regression in Renode
+        run: bash tools/renode_fdipc.sh

@@ -4,8 +4,8 @@
  *
  * SVCall_Handler decodes the exception frame and calls v_syscall_dispatch with
  * the syscall number (stacked r12) and a pointer to the stacked {r0..r3}. The
- * return value is written back into the stacked r0 by the handler. Stage 1 keeps
- * tasks privileged, so these handlers simply call the existing kernel
+ * return value is written back into the stacked r0 by the handler. Stage 1
+ * keeps tasks privileged, so these handlers simply call the existing kernel
  * primitives; pointer validation and the unprivileged flip come later.
  */
 
@@ -21,18 +21,26 @@
 #include <stdint.h>
 
 #if VAIOS_MPU_USER_SEPARATION
-// Caller's CONTROL.nPRIV (bit 0). Exception entry does not modify CONTROL.nPRIV,
-// so inside the SVCall handler this still reflects the trapping thread's
-// privilege. Handler mode reads it fine (SPSEL is what's forced there, not nPRIV).
+// Caller's CONTROL.nPRIV (bit 0). Exception entry does not modify
+// CONTROL.nPRIV, so inside the SVCall handler this still reflects the trapping
+// thread's privilege. Handler mode reads it fine (SPSEL is what's forced there,
+// not nPRIV).
 static inline int v_caller_unprivileged(void) {
+#if defined(VAIOS_HOST_TEST)
+  // No CONTROL register on the host; a test sets the simulated caller privilege
+  // (tests/stubs/syscall_stubs.c) so the validation switch is host-exercisable.
+  extern int v_test_caller_unprivileged;
+  return v_test_caller_unprivileged;
+#else
   uint32_t control;
   __asm__ volatile("mrs %0, control" : "=r"(control));
   return (control & 1u) != 0u;
+#endif
 }
-// The raw-handle (non-fd) IPC syscalls dereference a user-supplied kernel object
-// pointer (args[0] -> sema_t*/rmutex_t*), which can't be bounds-checked. Under
-// the unprivileged flip they are privileged-only; unprivileged tasks use the
-// fd-typed IPC (SYS_sem_open ... SYS_wait). Pure predicate — host-testable.
+// The raw-handle (non-fd) IPC syscalls dereference a user-supplied kernel
+// object pointer (args[0] -> sema_t*/rmutex_t*), which can't be bounds-checked.
+// Under the unprivileged flip they are privileged-only; unprivileged tasks use
+// the fd-typed IPC (SYS_sem_open ... SYS_wait). Pure predicate — host-testable.
 static inline int v_syscall_privileged_only(uint32_t num) {
   return num == SYS_sem_give || num == SYS_sem_take || num == SYS_mutex_lock ||
          num == SYS_mutex_unlock;
@@ -57,7 +65,8 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
     case SYS_open:
     case SYS_sem_open:
     case SYS_mtx_open:
-      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) <
+          0)
         return V_EFAULT;
       break;
     case SYS_write:
@@ -68,11 +77,19 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
       if (!v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
         return V_EFAULT;
       break;
+#if VAIOS_IPC_FD
     case SYS_wait:
+      // Reject an oversized nfds BEFORE computing the byte length: args[1] *
+      // sizeof(int) is a 32-bit multiply that would otherwise wrap (e.g.
+      // nfds=0x40000000 -> 0) and slip a huge count past v_access_ok. The count
+      // can never legitimately exceed the fd table.
+      if (args[1] > (uint32_t)VAIOS_MAX_FDS)
+        return V_EFAULT;
       if (!v_access_ok((const void *)(uintptr_t)args[0],
                        args[1] * (uint32_t)sizeof(int), 0))
         return V_EFAULT;
       break;
+#endif
     default:
       break;
     }
@@ -112,7 +129,8 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
   case SYS_open:
     return v_file_open((const char *)(uintptr_t)args[0], (int)args[1]);
   case SYS_write:
-    return v_file_write((int)args[0], (const void *)(uintptr_t)args[1], args[2]);
+    return v_file_write((int)args[0], (const void *)(uintptr_t)args[1],
+                        args[2]);
   case SYS_read:
     return v_file_read((int)args[0], (void *)(uintptr_t)args[1], args[2]);
   case SYS_close:
@@ -131,10 +149,12 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
     /* Non-blocking. args[0] = fd. */
     return v_sem_give((int)args[0]);
   case SYS_mtx_open:
-    /* find-or-create a named mutex, allocate an fd. args[0]=name, args[1]=flags. */
+    /* find-or-create a named mutex, allocate an fd. args[0]=name,
+     * args[1]=flags. */
     return v_mtx_open((const char *)(uintptr_t)args[0], (int)args[1]);
   case SYS_mtx_lock_fd:
-    /* Blocking, deferred-result (like SYS_mutex_lock). args[0]=fd, args[1]=ticks. */
+    /* Blocking, deferred-result (like SYS_mutex_lock). args[0]=fd,
+     * args[1]=ticks. */
     return v_mtx_lock((int)args[0], args[1]);
   case SYS_mtx_unlock_fd:
     /* Non-blocking direct handoff. args[0]=fd. */

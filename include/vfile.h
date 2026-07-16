@@ -60,6 +60,12 @@ void *v_fd_obj(int fd, const v_file_ops *ops);
 // Initialise a task's fd table (all slots free). Called from task creation.
 void v_fd_table_init(struct Task_Control_Block *t);
 
+// Close every open descriptor a task holds (calling each op-table's close, so
+// fd-typed IPC objects drop their refcount). Called from the task exit paths so
+// a terminating task doesn't leak named-object slots. Operates on `t`, not the
+// current task.
+void v_fd_close_all(struct Task_Control_Block *t);
+
 // Register the built-in devices (/dev/console). Called once at boot.
 void v_devfs_init(void);
 

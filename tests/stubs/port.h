@@ -36,6 +36,17 @@
 /* CPU-relax spin hint — no-op on host. */
 static inline void v_port_cpu_relax(void) {}
 
+/* Scheduler / CPU control seam. Same prototypes as the real port.h; the host
+ * implementations are no-ops/counters in tests/stubs/{stubs,port_hw_stub}.c.
+ * Declared here so the kernel TUs don't hit -Wimplicit-function-declaration. */
+uint32_t v_port_get_psp(void);
+void v_port_disable_interrupts(void);
+void v_port_halt(void);
+void v_port_trigger_pendsv(void);
+void v_port_mpu_init(void);
+void v_port_hw_cpu_idle(void);
+uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
+
 /* Port hardware facade — same prototypes as the real port.h. Host
  * implementations are no-op/stub equivalents in tests/stubs/port_hw_stub.c. */
 void v_port_hw_clock_init(uint8_t internal_clock_setup);

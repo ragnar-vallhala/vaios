@@ -244,7 +244,18 @@ static void v_panic_vprintf(const char *fmt, va_list args) {
       while (*s)
         PANIC_PUT(*s++);
     } else if (*p == 's') {
+      // Best-effort panic formatter: -fanalyzer traces a call path where a
+      // caller's argument type doesn't match "%s". A mistyped panic argument
+      // only garbles the already-fatal message; the NULL guard below keeps it
+      // from faulting. Not worth constraining every panic call site over.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-va-arg-type-mismatch"
+#endif
       const char *s = va_arg(args, const char *);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
       while (s && *s)
         PANIC_PUT(*s++);
     } else {
@@ -701,22 +712,24 @@ void v_log(Log_Type type, const char *msg, ...) {
   if (scheduler_running && current_task && current_task->magic == TCB_MAGIC) {
     uint32_t psp = v_port_get_psp();
     // 300 bytes is safe for most panics, but let's be even safer with 320
-    if (psp != 0 && psp < (uint32_t)current_task->mem_block + 320) {
+    if (psp != 0 && psp < (uint32_t)(uintptr_t)current_task->mem_block + 320) {
       v_panic(__FILE__, __LINE__,
               "Stack overflow detected in task %u during log! SP: 0x%x, Limit: "
               "0x%x",
               (unsigned)current_task->task_id, (unsigned)psp,
-              (unsigned)((uint32_t)current_task->mem_block + 320));
+              (unsigned)((uint32_t)(uintptr_t)current_task->mem_block + 320));
     }
   }
 
   if (type < MIN_LOG_LEVEL || !module_allowed(msg))
     return;
 
+#if LOGGING_ENABLED == 1
+  // Opened inside the logging guard so it is always paired with a va_end below;
+  // when logging is compiled out the variadic args are simply never read.
   va_list args;
   va_start(args, msg);
 
-#if LOGGING_ENABLED == 1
 #if BUFFERED_LOGGING == 1
   const char *typeName;
   const char *typeColor;
@@ -862,7 +875,7 @@ void v_log(Log_Type type, const char *msg, ...) {
 
   EXIT_CRITICAL();
   va_end(args);
-#elif BUFFERED_LOGGING == 0
+#else // unbuffered — the only other value of the BUFFERED_LOGGING bool
   const char *typeName;
   const char *typeColor;
   switch (type) {
@@ -900,6 +913,7 @@ void v_log(Log_Type type, const char *msg, ...) {
   print_fmt("%s[%s %u]%s ", typeColor, typeName, v_get_ticks(), COLOR_RESET);
   vaprint_fmt(msg, args);
   print_fmt("\r\n");
+  va_end(args);
 #endif // BUFFERED_LOGGING
 #endif // LOGGING_ENABLED
 }
