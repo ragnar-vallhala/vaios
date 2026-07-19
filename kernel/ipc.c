@@ -456,7 +456,7 @@ int v_sem_open(const char *name, int flags) {
       return -1;
     }
     int j = 0;
-    while (name[j] && j < 15) {
+    while (j < 15 && name[j]) {
       ns->name[j] = name[j];
       j++;
     }
@@ -549,7 +549,7 @@ int v_mtx_open(const char *name, int flags) {
       return -1;
     }
     int j = 0;
-    while (name[j] && j < 15) {
+    while (j < 15 && name[j]) {
       nm->name[j] = name[j];
       j++;
     }
