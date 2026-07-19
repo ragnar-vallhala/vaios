@@ -13,6 +13,22 @@ name: codeql
 #                   dispatch + pointer validation and port*.c — which the host
 #                   build stubs out. Distinct `category` per target so both
 #                   result sets coexist in the Security tab.
+#
+# Two scope caveats, both learned the hard way:
+#
+# 1. NO paths-ignore. A codeql-config.yml with `paths-ignore: [extern, tests]`
+#    would be SILENTLY IGNORED here: those keys only apply to interpreted
+#    languages or to a C/C++ analysis with build-mode `none`, and this is a
+#    built analysis. Excluding via the build system is not an option either —
+#    arm-firmware must compile against extern/NavHAL. Submodule findings are
+#    therefore triaged by dismissing them in the Security tab (reason: "won't
+#    fix", they belong upstream in the NavHAL repo), which is sticky per alert.
+#
+# 2. Do NOT rename a `category` casually. Alerts auto-close only when the SAME
+#    category re-uploads without them, so a rename strands every open alert
+#    from the old category permanently — they must then be dismissed by hand.
+#    Renaming the bare "/language:c-cpp" to the per-target categories above
+#    stranded the two kernel/ipc.c alerts that 1285048 had already fixed.
 on:
   push:
     branches: [dev, stable]
