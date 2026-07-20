@@ -10,8 +10,10 @@ verified against the tree at time of writing (branch `dev`, 2026-07-21).
 > items 2a–2d implemented (2e deferred); Phase 3 implemented (3a header
 > relocations + 3b NVIC-priority cluster); Phase 4 port-selection mechanism
 > implemented (Kconfig symbol moves/renames deferred); Phase 5 implemented;
-> Phase 6's MMIO tripwire landed early with its `kernel/utils.c` fix (commit
-> `3b2ad1b`). 2e, Phase 4's Kconfig cleanup, and the rest of 6 outstanding.
+> Phase 6 implemented (full portability tripwire + CI, its MMIO fix having landed
+> early in commit `3b2ad1b`). All six phases done. Remaining, as deferred
+> sub-items: 2e (stack-size validation) and Phase 4's Kconfig symbol
+> moves/renames — both tracked in their sections.
 
 ---
 
@@ -594,6 +596,25 @@ time.
 ---
 
 ## Phase 6 — Tripwire
+
+> **Status: IMPLEMENTED.** `tools/check_portability.sh` is the standalone
+> portability gate: it fails if inline asm, an arch macro/`#ifdef`, a vendor/
+> CMSIS include, or an integer-literal-cast-to-pointer (MMIO) appears in
+> `kernel/` or `include/`. Four detectors, all verified against injected
+> violations; the clean tree passes with **no allowlist** — the exception the
+> plan anticipated (the `ipc.c` priority comparator) is moot, since Phase 3b
+> moved it into the port as `v_port_prio_is_more_urgent`. Wired into CI two ways:
+> a dedicated fast-failing `Portability tripwire` step in `ci.yml`'s host job,
+> and inside `run_static_analysis.sh` (which absorbed and replaced its earlier
+> inline MMIO pass — one authoritative script now).
+>
+> **On the "second arch in CI" acceptance:** already satisfied without a new
+> target. The host-tests job builds the entire kernel with x86 gcc under
+> `VAIOS_ARCH_HOST` (no ARM macro anywhere) — that *is* a non-ARM build of the
+> kernel, exactly the property the plan wanted proven. A `VAIOS_PORT=host`
+> compile-only target would need a `portable/host/` port that doesn't exist
+> (Phase 4's `FATAL_ERROR` would fire) and would only duplicate what the host
+> suite already proves, so it was not added.
 
 Add `tools/check_portability.sh`, run in CI:
 

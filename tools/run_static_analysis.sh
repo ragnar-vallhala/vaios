@@ -3,11 +3,13 @@
 #
 # Complements the ASan/UBSan runtime suite (tools/run_tests.sh): those only see
 # paths the tests execute, this reasons about the shipping sources statically.
-# Two passes, both must be clean:
+# Three passes, all must be clean:
 #   1. cppcheck   — warning+error severities over kernel/ + portable/, minus a
 #                   justified false-positive baseline (tools/cppcheck-suppressions.txt).
 #   2. -fanalyzer — a GCC static-analyzer build of the host test suite
 #                   (VAIOS_TEST_ANALYZER=ON); any -Wanalyzer finding fails.
+#   3. portability — tools/check_portability.sh: no inline asm, arch macros,
+#                   vendor includes, or MMIO in kernel/ or include/.
 #
 # Missing tools are treated as SKIP (exit 0) so the same script is safe on a
 # machine without cppcheck/gcc, mirroring the renode_*.sh convention.
@@ -71,35 +73,10 @@ else
 fi
 
 echo ""
-echo "=== static analysis: no MMIO outside portable/ ==="
-# An integer literal cast to a pointer is memory-mapped I/O. In kernel/ or
-# include/ that is ALWAYS a missing v_port_* facade function, never something to
-# suppress: the address, the access width and the ordering rules are all
-# properties of a specific core or SoC, so the kernel cannot own them. There is
-# deliberately no escape hatch — a hit here is a design fix, not a baseline
-# entry. portable/ is out of scope (raw access there is the whole point), and so
-# are examples/ and tools/, where poking a known address IS the experiment.
-#
-# Scoped by directory rather than by CodeQL config on purpose: `paths-ignore`
-# is silently ignored for a built C/C++ analysis (see the header comment in
-# .github/workflows/codeql.yml), so grep is the tool that can actually express
-# "everywhere except this directory".
-#
-# Deliberately NOT clang-tidy's performance-no-int-to-ptr: that check fires on
-# casts from integer *variables* and exempts constant addresses, which is the
-# exact inverse of what is wanted here — it misses every MMIO site in this tree
-# while flagging four legitimate uintptr_t conversions in kernel/memory/memory.c.
-MMIO_RE='\([[:space:]]*[A-Za-z_][A-Za-z0-9_[:space:]]*\*[[:space:]]*\)[[:space:]]*0[xX][0-9A-Fa-f]'
-mmio="$( cd "$ROOT_DIR" && grep -rnE --include='*.c' --include='*.h' \
-         "$MMIO_RE" kernel/ include/ || true )"
-if [ -z "$mmio" ]; then
-  echo "  PASS: no memory-mapped access in kernel/ or include/"
-else
-  echo "  FAIL: $(printf '%s\n' "$mmio" | wc -l) memory-mapped access(es) outside portable/:"
-  printf '%s\n' "$mmio" | sed 's/^/    /'
-  echo "    -> move behind a v_port_* function in portable/<arch>/"
-  rc=1
-fi
+# Portability tripwire: no inline asm, arch macros, vendor includes, or memory-
+# mapped I/O in kernel/ or include/. Owns the full grep-based check (it prints
+# its own header + PASS/FAIL); run standalone with tools/check_portability.sh.
+bash "$ROOT_DIR/tools/check_portability.sh" || rc=1
 
 echo ""
 if [ "$rc" -eq 0 ]; then
