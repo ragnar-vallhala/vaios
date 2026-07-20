@@ -52,14 +52,14 @@ static void full_reset(void) {
 }
 
 /* When the scheduler is running, v_delay(ms) computes ticks from
- * SYSTICK_PERIOD and delegates to task_delay(); task_delay parks the
+ * TICK_PERIOD_US and delegates to task_delay(); task_delay parks the
  * current task on the delayed_list with delay_ticks = now + ticks. */
 static void test_v_delay_delegates_to_task_delay_when_scheduler_running(void) {
   full_reset();
   scheduler_running = 1;
   stub_set_ticks(100);
 
-  /* SYSTICK_PERIOD is 1000 us, so delay_ticks = ms (10 -> 10 ticks). */
+  /* TICK_PERIOD_US is 1000 us, so delay_ticks = ms (10 -> 10 ticks). */
   v_delay(10);
 
   TEST_ASSERT_EQ(_vaios_fake_task.status, TASK_DELAYED);

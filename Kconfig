@@ -74,15 +74,17 @@ config VAIOS_ARCH_HAS_IRQ_PRIORITY
 config VAIOS_ARCH_STACK_DESCENDING
     bool
 
-config NVIC_PRIO_BITS
-    int "NVIC priority bits implemented by the silicon"
-    depends on VAIOS_ARCH_HAS_IRQ_PRIORITY
-    default 4
-config SYSTICK_PERIOD
-    int "SysTick period (microseconds)"
+# Port-specific symbols (e.g. NVIC_PRIO_BITS) live with the port.
+rsource "portable/cortex-m4/Kconfig"
+
+# Generic knobs, named for the concept rather than the ARM peripheral that
+# happens to implement it on this port: a kernel tick has a period and a console
+# has a baud rate on any target.
+config TICK_PERIOD_US
+    int "Kernel tick period (microseconds)"
     default 1000
-config UART_BAUDRATE
-    int "UART console baud rate"
+config CONSOLE_BAUDRATE
+    int "Console baud rate"
     default 115200
 config UART_LOGGING_ENABLE
     bool "Route logging to the UART console"

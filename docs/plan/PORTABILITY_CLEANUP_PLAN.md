@@ -6,13 +6,14 @@ Phased plan to remove hardware-specific code that has leaked outside
 `CMakeLists.txt`, and 12 build scripts. Every `file:line` anchor below was
 verified against the tree at time of writing (branch `dev`, 2026-07-21).
 
-> **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 2
-> implemented (2a–2d, and 2e after its deferral); Phase 3 implemented (3a header
-> relocations + 3b NVIC-priority cluster); Phase 4 port-selection mechanism
-> implemented (Kconfig symbol moves/renames deferred); Phase 5 implemented;
-> Phase 6 implemented (full portability tripwire + CI, its MMIO fix having landed
-> early in commit `3b2ad1b`). All six phases done. One deferred sub-item remains:
-> Phase 4's Kconfig symbol moves/renames — tracked in its section.
+> **Status: COMPLETE.** Phase 1 (arch-capability Kconfig); Phase 2 (2a–2d, and 2e
+> after its deferral); Phase 3 (3a header relocations + 3b NVIC-priority cluster);
+> Phase 4 (port-selection mechanism + the Kconfig symbol moves/renames); Phase 5
+> (examples/tools); Phase 6 (portability tripwire + CI, its MMIO fix having landed
+> early in commit `3b2ad1b`). All phases and deferred sub-items done. The kernel
+> is architecture-neutral and the tripwire keeps it that way; what remains for a
+> real second port (word size, stack model) is the out-of-scope work in the
+> Deferred section below.
 
 ---
 
@@ -436,8 +437,8 @@ question to answer.
 
 ## Phase 4 — Make `portable/` the real port-selection point
 
-> **Status: port-selection mechanism IMPLEMENTED; Kconfig symbol moves/renames
-> DEFERRED.** Host 245/245; ARM firmware byte-comparable (identical `-mcpu`/
+> **Status: IMPLEMENTED** (port-selection mechanism, then the Kconfig symbol
+> moves/renames — see deviation 3 below). Host 245/245; ARM firmware byte-comparable (identical `-mcpu`/
 > `-mthumb`/FPU flags and `arm-none-eabi-` toolchain) under `NAVHAL=OFF`/`ON`;
 > the non-NAVHAL example and a `VAIOS_GCOV` build compile; `cmake
 > -DVAIOS_PORT=nonsense` fails with the explicit `FATAL_ERROR`.
@@ -468,12 +469,16 @@ question to answer.
 >    is *config*-derived (the NavHAL `CONFIG_USE_FPU` mirror). `arch.cmake` owns
 >    only what is genuinely arch; the root appends the board/config parts. The
 >    plan's `PORT_LINKER_SCRIPT` would misattribute a board fact to the arch.
-> 3. **Kconfig symbol moves/renames deferred.** Relocating `CORTEX_M4`/
->    `NVIC_PRIO_BITS` into a `portable/cortex-m4/Kconfig` needs a Kconfig
->    `source` mechanism, and renaming `SYSTICK_PERIOD`→`TICK_PERIOD_US` /
->    `UART_BAUDRATE`→`CONSOLE_BAUDRATE` touches every macro consumer across the
->    tree — a config-schema change, separable from the CMake port-selection work
->    and better done on its own.
+> 3. **Kconfig symbol moves/renames — landed later, on their own.** `NVIC_PRIO_BITS`
+>    moved into a new `portable/cortex-m4/Kconfig`, `rsource`d from the top-level
+>    tree (the same mechanism `examples/Kconfig` already uses, so no new
+>    machinery) — so a port's arch-specific config lives with its `arch.cmake`.
+>    (`CORTEX_M4` needed no move: Phase 1 had already replaced the standalone
+>    symbol with the `VAIOS_ARCH_*` choice.) `SYSTICK_PERIOD`→`TICK_PERIOD_US` and
+>    `UART_BAUDRATE`→`CONSOLE_BAUDRATE` renamed with their handful of consumers
+>    (`kernel/vaios.c`, `include/task.h`). Host 246/246; ARM clean under
+>    `NAVHAL=OFF`/`NAVHAL=ON`, with `NVIC_PRIO_BITS` still emitted on ARM and
+>    gated out on host.
 
 **Problem.** `portable/CMakeLists.txt:1-7` is the only arch conditional, and it
 fails unsafely:
@@ -539,10 +544,10 @@ exactly one place. That retires the third copy noted in
 today `CMakeLists.txt:10`, `Kconfig`, and `navhal.config` each independently
 name the toolchain and target.
 
-Remaining `Kconfig:33-44` cleanup: `CORTEX_M4` and `NVIC_PRIO_BITS` move into
-`portable/cortex-m4/Kconfig` (per Phase 1). `SYSTICK_PERIOD` and
-`UART_BAUDRATE` are named after peripherals but are genuinely generic knobs —
-rename to `TICK_PERIOD_US` and `CONSOLE_BAUDRATE`, keep central.
+Kconfig cleanup (done — see the status block's deviation 3): `NVIC_PRIO_BITS`
+moved into `portable/cortex-m4/Kconfig` (`rsource`d); `SYSTICK_PERIOD` →
+`TICK_PERIOD_US` and `UART_BAUDRATE` → `CONSOLE_BAUDRATE` renamed. `CORTEX_M4`
+needed no move — Phase 1's `VAIOS_ARCH_*` choice already replaced it.
 
 **Acceptance:** `cmake -DVAIOS_PORT=nonsense` fails with the explicit
 `FATAL_ERROR`; the cortex-m4 firmware build is byte-comparable to before.
