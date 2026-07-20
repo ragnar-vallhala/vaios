@@ -2,7 +2,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 message(STATUS "Startup File: ${STARTUP_FILE}")
 
 if(NOT NAVHAL)
-  set(STARTUP_FILE ${CMAKE_CURRENT_SOURCE_DIR}/../portable/cortex-m4/startup.s)
+  # From the selected port's arch.cmake (included by the root CMakeLists), not a
+  # hardcoded reach into one port's startup.s.
+  set(STARTUP_FILE ${PORT_STARTUP_SOURCE})
 endif()
 
 if(VAIOS_EXAMPLE STREQUAL "DMA_DUMP")
