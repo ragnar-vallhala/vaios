@@ -32,6 +32,10 @@ uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
   return g_stub_active_irq_prio;
 }
 
+/* Shares the seam above: VECTACTIVE 0 (the default) is thread mode, so the
+ * host build reports "not in an ISR" unless a test says otherwise. */
+int v_port_hw_in_isr(void) { return g_stub_active_vectactive != 0u; }
+
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
   (void)baudrate;
   (void)dma_tx_done_cb;
