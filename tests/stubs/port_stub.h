@@ -16,8 +16,4 @@
   do {                                                                         \
   } while (0)
 
-/* Cortex-M4 initial stack frame constants */
-#define INITIAL_XPSR 0x01000000UL
-#define TASK_ENTRY_MASK 0xFFFFFFFEUL
-
 #endif /* VAIOS_PORT_STUB_H */

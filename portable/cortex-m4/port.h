@@ -139,6 +139,15 @@ __attribute__((always_inline)) static inline void v_port_cpu_relax(void) {
   __asm volatile("nop" ::: "memory");
 }
 
+// Non-zero if the CPU is currently privileged (ARMv7-M: CONTROL.nPRIV == 0).
+// Lets examples/tests probing the unprivileged-task flip ask the question
+// without spelling `mrs control` themselves.
+static inline int v_port_is_privileged(void) {
+  uint32_t control;
+  __asm volatile("mrs %0, control" : "=r"(control));
+  return (control & 1u) == 0u;
+}
+
 // ---------------------------------------------------------------------------
 // Port hardware facade.
 //
