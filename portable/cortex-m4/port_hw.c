@@ -99,11 +99,23 @@ void v_port_hw_cpu_idle(void) {
   /* No-HAL target: fall through — the idle loop stays a busy-spin. */
 }
 
+/* SCB->ICSR. Architectural (ARMv7-M), not vendor, so it is read directly here
+ * rather than through NavHAL — which has no wrapper for it. VECTACTIVE lives in
+ * bits [8:0]. */
+#define SCB_ICSR (*(volatile uint32_t *)0xE000ED04u)
+#define SCB_ICSR_VECTACTIVE 0x1FFu
+
+int v_port_hw_in_isr(void) {
+  /* VECTACTIVE == 0 is thread mode; anything else means an exception handler is
+   * executing (a system handler or an external IRQ). */
+  return (SCB_ICSR & SCB_ICSR_VECTACTIVE) != 0u;
+}
+
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
   /* ICSR.VECTACTIVE (bits [8:0]) is the active exception number: 0 = thread
    * mode, 1..15 = system handlers, >=16 = external IRQ (IRQn = VECTACTIVE-16).
    * Only external IRQs carry an NVIC priority that BASEPRI masks. */
-  uint32_t vectactive = (*(volatile uint32_t *)0xE000ED04u) & 0x1FFu;
+  uint32_t vectactive = SCB_ICSR & SCB_ICSR_VECTACTIVE;
   uint32_t prio = 0u;
   if (vectactive >= 16u) {
     uint32_t irqn = vectactive - 16u;

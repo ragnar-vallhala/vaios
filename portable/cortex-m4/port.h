@@ -121,6 +121,11 @@ void v_port_hw_sched_irq_init(void);
 // of the portable kernel — the idle task calls only this.
 void v_port_hw_cpu_idle(void);
 
+// Non-zero when an exception handler is executing (ICSR.VECTACTIVE != 0), zero
+// in thread mode. Used by the logger to avoid spinning for a DMA completion IRQ
+// that cannot fire from inside an ISR.
+int v_port_hw_in_isr(void);
+
 // Active-exception NVIC priority, for the FromISR priority assert. Returns the
 // priority byte of the currently-executing external IRQ (or 0 in thread mode /
 // a system handler) and writes ICSR.VECTACTIVE to *vectactive_out.

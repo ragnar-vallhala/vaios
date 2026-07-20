@@ -808,7 +808,7 @@ void v_log(Log_Type type, const char *msg, ...) {
   // Drop message if we are in a critical section/ISR and buffer is near full
   // to avoid deadlocking on DMA synchronization.
   extern volatile uint32_t critical_nesting;
-  uint32_t is_in_isr = (*(volatile uint32_t *)0xE000ED04) & 0x1FF;
+  int is_in_isr = v_port_hw_in_isr();
 
   // Wait/Flush loop
   while (1) {

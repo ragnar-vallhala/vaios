@@ -46,6 +46,7 @@ void v_port_trigger_pendsv(void);
 void v_port_mpu_init(void);
 void v_port_hw_cpu_idle(void);
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
+int v_port_hw_in_isr(void);
 
 /* Port hardware facade — same prototypes as the real port.h. Host
  * implementations are no-op/stub equivalents in tests/stubs/port_hw_stub.c. */
