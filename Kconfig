@@ -73,10 +73,6 @@ config VAIOS_ARCH_HAS_IRQ_PRIORITY
     bool
 config VAIOS_ARCH_STACK_DESCENDING
     bool
-config VAIOS_ARCH_MPU_MIN_REGION
-    int
-    default 128 if VAIOS_ARCH_CORTEX_M4   # ARMv7-M: power-of-two, >= frame
-    default 0
 
 config NVIC_PRIO_BITS
     int "NVIC priority bits implemented by the silicon"

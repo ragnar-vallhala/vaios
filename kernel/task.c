@@ -185,22 +185,27 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
 uint32_t task_create_named(void (*entry)(void *), void *arg,
                            uint32_t size, uint32_t priority,
                            const char *name) {
-  // MPU-backed stack protection maps each stack onto a single power-of-two MPU
-  // region, so the requested size must be an exact power of two (>= 128 B to
-  // hold the initial exception frame). Reject anything else outright: silently
-  // rounding the size would desync the caller's view of the stack from the
-  // actual region geometry, so fail the creation instead of hiding the change.
-  // NOTE: Phase 2e of the portability plan proposes gating the power-of-two
-  // rule on VAIOS_MPU_STACK_GUARD so non-MPU ports accept arbitrary sizes, but
-  // that changes the contract of test_task_create_rejects_non_power_of_two
-  // (non-power-of-two sizes become valid) and needs the universal minimum-stack
-  // floor separated from the MPU rule; deferred to its own change.
-  if (size < 128 || (size & (size - 1)) != 0) {
+  // Universal floor: a stack too small to hold the port's initial context frame
+  // can't run. Rejected on every build, MPU or not.
+  if (size < VAIOS_ARCH_MIN_STACK) {
     V_KLOG(LOG_ERROR,
-           "[TASK] size %u is not a power of two >= 128; task not created",
+           "[TASK] size %u below the %u B minimum stack; task not created",
+           (unsigned)size, (unsigned)VAIOS_ARCH_MIN_STACK);
+    return 0;
+  }
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+  // With per-task MPU regions on, each stack maps onto a single power-of-two MPU
+  // region, so the size must be an exact power of two. Reject anything else
+  // rather than silently rounding, which would desync the caller's view of the
+  // stack from the region geometry. This constraint follows the *feature*, not
+  // the chip: with MPU stack protection off, any size >= the minimum is fine.
+  if ((size & (size - 1)) != 0) {
+    V_KLOG(LOG_ERROR,
+           "[TASK] size %u is not a power of two; task not created",
            (unsigned)size);
     return 0;
   }
+#endif
 
   TCB *task = (TCB *)v_malloc(sizeof(TCB));
   if (!task)

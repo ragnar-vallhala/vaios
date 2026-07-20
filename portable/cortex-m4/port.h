@@ -107,6 +107,13 @@ v_exit_critical_from_isr(uint32_t saved) {
 // Stack setup for new task
 #define INITIAL_XPSR 0x01000000UL // Thumb bit set
 
+// Smallest task stack this port can initialise: init_task_stack pushes a 17-word
+// (~68 B) initial context frame, so anything below this can't even hold the
+// frame, let alone run. The kernel rejects smaller stacks on every build. Kept
+// in the port (not Kconfig) because the frame size is an arch fact and the host
+// test build needs the real value, not the 0 a Kconfig int would take there.
+#define VAIOS_ARCH_MIN_STACK 128u
+
 // Architecture-specific portable wrappers
 uint32_t v_port_get_psp(void);
 void v_port_disable_interrupts(void);
