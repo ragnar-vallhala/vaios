@@ -158,6 +158,11 @@ TCB *get_highest_priority_task(void);
 // Task Stack Initialization (port-specific)
 //-----------------------------------------------------------------------------
 void init_task_stack(TCB *task); // Implemented in port.c
+// Release any port-owned per-task context that init_task_stack allocated
+// separately from mem_block (the host port's ucontext stack). Called by the
+// dead-task GC just before mem_block/TCB are freed. A no-op on ports that keep
+// the context inside mem_block (Cortex-M). Implemented in port.c.
+void v_port_free_task_stack(TCB *task);
 
 //-----------------------------------------------------------------------------
 // Task Creation and Management

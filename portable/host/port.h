@@ -50,13 +50,11 @@ void v_exit_critical_from_isr(uint32_t saved);
 #define ENTER_CRITICAL_FROM_ISR() v_enter_critical_from_isr()
 #define EXIT_CRITICAL_FROM_ISR(saved) v_exit_critical_from_isr(saved)
 
-// Smallest task stack the host port can initialise. A ucontext stack must clear
-// MINSIGSTKSZ (kilobytes), plus we store the ucontext_t itself at the base of
-// the block — far larger than the 128 B the Cortex-M frame needs. Callers create
-// host tasks with at least this much. The stack-overflow watermark is off on
-// host (this port's stacks are ucontext-managed), so storing the context pointer
-// in task->sp does not trip it.
-#define VAIOS_ARCH_MIN_STACK (32u * 1024u)
+// Same floor as the Cortex-M port, so app code is portable between them: the
+// large ucontext stack the host actually runs on is allocated separately by
+// init_task_stack, decoupled from this requested size. task->mem_block is not
+// used as the execution stack here, and the overflow watermark is off on host.
+#define VAIOS_ARCH_MIN_STACK 128u
 
 // --- Core port wrappers ------------------------------------------------------
 uint32_t v_port_get_psp(void);        // returns 0 on host -> SP-based guards skip

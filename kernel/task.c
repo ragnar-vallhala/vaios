@@ -508,6 +508,7 @@ void idle_task_function(void *arg) {
       if (to_free) {
         V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
               to_free->task_id);
+        v_port_free_task_stack(to_free); // release any separate port context
         if (to_free->mem_block) {
           v_free(to_free->mem_block);
           to_free->mem_block = NULL;

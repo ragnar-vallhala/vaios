@@ -477,6 +477,10 @@ void init_task_stack(TCB *task) {
 #endif
 }
 
+// No-op: the Cortex-M initial frame lives inside the task's mem_block, so it is
+// released when the GC frees mem_block — nothing separate to free.
+void v_port_free_task_stack(TCB *task) { (void)task; }
+
 // Apply the running task's MPU region set — the context-switch fast path, called
 // from PendSV/ISR switch after set_next_task updates current_task.
 void v_port_apply_current_mpu(void) {

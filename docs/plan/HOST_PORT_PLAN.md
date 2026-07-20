@@ -46,9 +46,11 @@ The kernel funnels every switch through two seams — `v_port_trigger_pendsv()`
 (request) and `set_next_task()` (pick next) — so the whole engine hangs off
 those.
 
-- `init_task_stack` carves a `ucontext_t` from the base of the task's block,
-  points its stack at the rest, and `makecontext`s a shared trampoline;
-  `task->sp` (never a raw SP on host) carries the context pointer.
+- `init_task_stack` allocates a `ucontext_t` + a large execution stack
+  (separate from the task's small `mem_block`, so requested sizes stay
+  on-target-normal) and `makecontext`s a shared trampoline; `task->sp` (never a
+  raw SP on host) carries the allocation, and the GC frees it via
+  `v_port_free_task_stack()`.
 - `v_port_trigger_pendsv()` sets a pending flag — **deferred**, exactly like
   pending PendSV. The switch is performed at a safe point by `host_maybe_switch`:
   the outermost `EXIT_CRITICAL`, or the tick handler's exit. Never mid-critical,
@@ -76,14 +78,18 @@ its native default (no cross), drops the FPU flags, and links a normal executabl
 against the system libc instead of the NavHAL board linker script + newlib specs.
 `kernel/CMakeLists.txt` excludes `syscalls.c` on host (its newlib `_sbrk`/`_write`
 stubs clash with glibc). The port seeds from `portable/host/defconfig` (host arch,
-ucontext-sized stacks, watermark off, SVC off).
+watermark off, SVC off).
 
 ## Caveats (worth knowing before relying on it)
 
-- **Stack sizes are large.** A ucontext stack must clear `MINSIGSTKSZ` plus the
-  `ucontext_t`, so `VAIOS_ARCH_MIN_STACK` is 32 KB on host and the idle stack /
-  heap are sized up in the defconfig. Real overflow detection is off (host stacks
-  are ucontext-managed).
+- **Stacks: apps use normal on-target sizes.** A ucontext stack must clear
+  `MINSIGSTKSZ` (kilobytes), but that is *decoupled* from the requested size:
+  `init_task_stack` allocates the real ucontext stack separately (default 64 KB,
+  or larger if a task asks for more), so `VAIOS_ARCH_MIN_STACK` is 128 B as on
+  target and the same app code runs on both. The port allocation is released by
+  the dead-task GC via `v_port_free_task_stack()` (a no-op on Cortex-M, which
+  keeps its frame inside `mem_block`). Real stack-overflow detection is off on
+  host (the task runs on the port's ucontext stack, not `mem_block`).
 - **Use `v_log`, not raw `printf`, from tasks.** Output should go through vaios's
   logger, which routes to the port console (`v_port_hw_console_*`) and serializes
   with a critical section — the `HOST_DEMO` example does this. Raw `printf`/stdio

@@ -47,8 +47,10 @@ int main(void) {
   v_init(&cfg);
   v_heap_memory_init();
   scheduler_init();
-  task_create(worker, (void *)0, 64 * 1024, 1);
-  task_create(worker, (void *)1, 64 * 1024, 1);
+  // Normal on-target stack sizes — the host port gives each task a real large
+  // stack internally, so no host-specific sizing is needed.
+  task_create(worker, (void *)0, 1024, 1);
+  task_create(worker, (void *)1, 1024, 1);
   v_log(LOG_INFO, "starting scheduler...");
   scheduler_start();
   return 0;

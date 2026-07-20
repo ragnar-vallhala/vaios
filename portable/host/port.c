@@ -23,6 +23,7 @@
 #include <sched.h> // sched_yield
 #include <signal.h>
 #include <stddef.h>
+#include <stdlib.h> // malloc / free
 #include <ucontext.h>
 #include <unistd.h>
 
@@ -134,20 +135,45 @@ static void task_trampoline(void) {
   __builtin_unreachable();
 }
 
-// init_task_stack builds the ucontext instead of a fake exception frame. The
-// context lives at the base of the task's own block; the rest is its execution
-// stack. task->sp (never a raw SP on host) carries the context pointer.
+// A ucontext execution stack must clear MINSIGSTKSZ — kilobytes. Rather than
+// force callers to size task->mem_block that big (they'd have to write host-only
+// stack sizes), the port allocates the ucontext + its stack SEPARATELY, sized to
+// a host-appropriate default, so a task created with a normal on-target stack
+// size (>= VAIOS_ARCH_MIN_STACK, 128 B) just works. A caller that asks for more
+// than the default gets it.
+#define HOST_STACK_MIN (64u * 1024u)
+
+// init_task_stack builds the ucontext instead of a fake exception frame. task->sp
+// (never a raw SP on host) carries the port allocation so the switch engine and
+// the teardown hook can find it; task->mem_block is left to the kernel.
 void init_task_stack(TCB *task) {
-  ucontext_t *uc = (ucontext_t *)task->mem_block;
-  char *stack = (char *)task->mem_block + sizeof(ucontext_t);
-  // 16-byte align the stack base.
-  size_t adj = (16u - ((size_t)stack & 15u)) & 15u;
+  size_t stacksz = task->stack_size;
+  if (stacksz < HOST_STACK_MIN)
+    stacksz = HOST_STACK_MIN;
+  // malloc is not reentrant; mask the tick so a preemption into another
+  // allocating task can't corrupt the arena.
+  v_enter_critical();
+  char *blk = (char *)malloc(sizeof(ucontext_t) + stacksz);
+  v_exit_critical();
+  ucontext_t *uc = (ucontext_t *)blk;
   getcontext(uc);
-  uc->uc_stack.ss_sp = stack + adj;
-  uc->uc_stack.ss_size = task->stack_size - sizeof(ucontext_t) - adj;
+  uc->uc_stack.ss_sp = blk + sizeof(ucontext_t); // makecontext aligns internally
+  uc->uc_stack.ss_size = stacksz;
   uc->uc_link = NULL; // trampoline never returns
   makecontext(uc, task_trampoline, 0);
   task->sp = (uint32_t *)uc;
+}
+
+// Free the ucontext allocation of a terminated task (called by the dead-task GC).
+// The task is dead — swapped away for good — so its frozen context is safe to
+// release.
+void v_port_free_task_stack(TCB *task) {
+  if (task->sp) {
+    v_enter_critical();
+    free(task->sp);
+    v_exit_critical();
+    task->sp = NULL;
+  }
 }
 
 // scheduler_start: launch the current task (the idle task, seeded by
