@@ -12,18 +12,11 @@
  * All definitions are #ifndef-guarded so a command-line -D still wins.
  */
 
-/* NVIC priority split. The kernel/port code spells the CMSIS name with leading
- * underscores; source it from the Kconfig NVIC_PRIO_BITS. */
-#ifndef __NVIC_PRIO_BITS
-#define __NVIC_PRIO_BITS NVIC_PRIO_BITS
-#endif
-
-/* Register value BASEPRI/critical sections compare against: the configured
- * priority LEVEL shifted into the implemented high bits. */
-#ifndef MAX_SYSCALL_INTERRUPT_PRIORITY
-#define MAX_SYSCALL_INTERRUPT_PRIORITY                                          \
-  (VAIOS_MAX_SYSCALL_PRIO_LEVEL << (8 - __NVIC_PRIO_BITS))
-#endif
+/* NOTE: the NVIC priority model (__NVIC_PRIO_BITS, MAX_SYSCALL_INTERRUPT_PRIORITY)
+ * used to live here. It is ARMv7-M-specific — an 8-bit, high-bit-justified
+ * priority register with lower-is-more-urgent ordering — so it moved into the
+ * port (portable/cortex-m4/port.h, mirrored by tests/stubs/port.h). This header
+ * stays arch-neutral. */
 
 /* Heap allocator selector. VAIOS_HEAP_SEGLIST / VAIOS_HEAP_TLSF are fixed index
  * constants; VAIOS_HEAP_ALGO is the active one. The seglist.c / tlsf.c bodies

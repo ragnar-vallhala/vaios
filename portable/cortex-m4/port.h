@@ -1,8 +1,43 @@
 #ifndef VAIOS_CORTEX_M4_PORT_H
 #define VAIOS_CORTEX_M4_PORT_H
 
-#include "vaios_config.h" // VAIOS_USE_BASEPRI, MAX_SYSCALL_INTERRUPT_PRIORITY
+#include "vaios_config.h" // VAIOS_USE_BASEPRI, VAIOS_MAX_SYSCALL_PRIO_LEVEL
 #include <stdint.h>
+
+// NVIC priority model. ARMv7-M's priority register is 8-bit and high-bit
+// justified, with a numerically LOWER value meaning MORE urgent. __NVIC_PRIO_BITS
+// is how many top bits the silicon implements (Kconfig NVIC_PRIO_BITS);
+// MAX_SYSCALL_INTERRUPT_PRIORITY is the BASEPRI threshold — the configured
+// syscall level shifted into those bits. This whole model is ARMv7-M, so it
+// lives in the port, not in the portable config header. The host build's
+// tests/stubs/port.h mirrors it.
+//
+// NVIC_PRIO_BITS comes from Kconfig on a real ARM build (VAIOS_ARCH_HAS_IRQ_
+// PRIORITY is set, so the symbol is emitted). The fallback covers the host test
+// build, which compiles this header via portable/cortex-m4/syscall.c — a
+// same-directory "port.h" include that outranks the tests/stubs shadow — where
+// the arch config symbol is absent.
+#ifndef NVIC_PRIO_BITS
+#define NVIC_PRIO_BITS 4
+#endif
+#ifndef __NVIC_PRIO_BITS
+#define __NVIC_PRIO_BITS NVIC_PRIO_BITS
+#endif
+#ifndef MAX_SYSCALL_INTERRUPT_PRIORITY
+#define MAX_SYSCALL_INTERRUPT_PRIORITY                                          \
+  (VAIOS_MAX_SYSCALL_PRIO_LEVEL << (8 - __NVIC_PRIO_BITS))
+#endif
+
+// Exception number of the first external IRQ: ARMv7-M has 16 system exceptions
+// (thread mode = 0, system handlers 1..15) before IRQ0. Anything below this is
+// thread mode or a system handler with no maskable NVIC priority.
+#define VAIOS_ARCH_FIRST_EXTERNAL_IRQ 16u
+
+// Arch priority ordering: on ARM a numerically LOWER value is MORE urgent. The
+// kernel's FromISR priority predicate calls this instead of hardcoding `<`.
+static inline int v_port_prio_is_more_urgent(uint32_t a, uint32_t b) {
+  return a < b;
+}
 
 // Critical-section nesting counter (defined in port.c).
 extern volatile uint32_t critical_nesting;

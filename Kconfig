@@ -80,6 +80,7 @@ config VAIOS_ARCH_MPU_MIN_REGION
 
 config NVIC_PRIO_BITS
     int "NVIC priority bits implemented by the silicon"
+    depends on VAIOS_ARCH_HAS_IRQ_PRIORITY
     default 4
 config SYSTICK_PERIOD
     int "SysTick period (microseconds)"

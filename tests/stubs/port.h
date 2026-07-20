@@ -33,6 +33,20 @@
 #define INITIAL_XPSR 0x01000000UL
 #define TASK_ENTRY_MASK 0xFFFFFFFEUL
 
+/* NVIC priority model, host-emulated to match portable/cortex-m4/port.h — the
+ * FromISR priority predicate (vaios_isr_priority_is_safe) is exercised by
+ * test_ipc.c. __NVIC_PRIO_BITS is hardcoded here, not taken from Kconfig: the
+ * host arch has no VAIOS_ARCH_HAS_IRQ_PRIORITY, so NVIC_PRIO_BITS isn't emitted. */
+#define __NVIC_PRIO_BITS 4
+#ifndef MAX_SYSCALL_INTERRUPT_PRIORITY
+#define MAX_SYSCALL_INTERRUPT_PRIORITY                                          \
+  (VAIOS_MAX_SYSCALL_PRIO_LEVEL << (8 - __NVIC_PRIO_BITS))
+#endif
+#define VAIOS_ARCH_FIRST_EXTERNAL_IRQ 16u
+static inline int v_port_prio_is_more_urgent(uint32_t a, uint32_t b) {
+  return a < b;
+}
+
 /* CPU-relax spin hint — no-op on host. */
 static inline void v_port_cpu_relax(void) {}
 
