@@ -7,13 +7,12 @@ Phased plan to remove hardware-specific code that has leaked outside
 verified against the tree at time of writing (branch `dev`, 2026-07-21).
 
 > **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 2
-> items 2a–2d implemented (2e deferred); Phase 3 implemented (3a header
+> implemented (2a–2d, and 2e after its deferral); Phase 3 implemented (3a header
 > relocations + 3b NVIC-priority cluster); Phase 4 port-selection mechanism
 > implemented (Kconfig symbol moves/renames deferred); Phase 5 implemented;
 > Phase 6 implemented (full portability tripwire + CI, its MMIO fix having landed
-> early in commit `3b2ad1b`). All six phases done. Remaining, as deferred
-> sub-items: 2e (stack-size validation) and Phase 4's Kconfig symbol
-> moves/renames — both tracked in their sections.
+> early in commit `3b2ad1b`). All six phases done. One deferred sub-item remains:
+> Phase 4's Kconfig symbol moves/renames — tracked in its section.
 
 ---
 
@@ -240,7 +239,8 @@ selected shows no MPU menu.
 
 ## Phase 2 — Migrate the three unguarded leaks in `kernel/`
 
-> **Status: 2a–2d IMPLEMENTED; 2e DEFERRED.** Host suite 245/245; ARM firmware
+> **Status: 2a–2d IMPLEMENTED; 2e IMPLEMENTED separately (see its section).**
+> Host suite 245/245 for 2a–2d; ARM firmware
 > clean under `NAVHAL=OFF` and `NAVHAL=ON`. 2a shipped earlier with the MMIO
 > gate (commit `3b2ad1b`, `v_port_hw_in_isr`). 2b/2c/2d migrated here. Notes:
 >
@@ -255,16 +255,13 @@ selected shows no MPU menu.
 >   relying on pointer-underflow wraparound. The core `v_port_get_psp` /
 >   `v_port_ptr_is_ram` stubs moved to the shared `tests/stubs/stubs.c` so every
 >   target linking `memory.c`/`task.c` resolves them.
-> - **2e DEFERRED.** Gating the power-of-two rule on the MPU feature is correct,
->   but it changes the contract of `test_task_create_rejects_non_power_of_two`:
->   under a non-MPU build, sizes like 700 B become *valid*, so the test's "no
->   task created, no heap used" assertions break, not just its return-value
->   check. Doing it right means separating the universal minimum-stack floor
->   (every port needs room for the initial context frame) from the MPU-only
->   power-of-two rule, and rewriting the test to assert per-regime. That is a
->   deliberate behaviour + test-semantics change deserving its own commit, not a
->   silent rider on the clean migrations. The `VAIOS_ARCH_MPU_MIN_REGION` symbol
->   Phase 1 added is ready for it.
+> - **2e** was deferred out of this batch and landed on its own (see its status
+>   under section 2e below): gating the power-of-two rule on the MPU feature
+>   changed the contract of `test_task_create_rejects_non_power_of_two` (non-MPU
+>   builds accept non-power-of-two sizes), so it needed the universal
+>   minimum-stack floor separated from the MPU rule and the test rewritten
+>   per-regime — a deliberate behaviour + test change, not a silent rider on the
+>   clean migrations.
 
 Each of these has a facade to migrate *to*; none needs a new concept.
 
@@ -334,10 +331,31 @@ if (size < 128 || (size & (size - 1)) != 0) { ... return 0; }
 
 Power-of-two and ≥128 B are ARMv7-M MPU region constraints, but the check is
 **not** under `#if VAIOS_MPU_*` — so a port with no MPU still can't create a
-3 KB stack. Gate on `VAIOS_MPU_ENABLE` and take the bound from
-`VAIOS_ARCH_MPU_MIN_REGION` (Phase 1). Note this makes the constraint follow
-the *feature*, not the *chip*: a Cortex-M4 build with the MPU switched off also
-regains arbitrary stack sizes, which is correct and is not true today.
+3 KB stack.
+
+> **Status: IMPLEMENTED** (after the Phase 2 deferral). The single old check
+> conflated two independent constraints, which is what made it awkward to gate:
+>
+> - **A universal minimum stack** — a stack too small to hold the port's initial
+>   context frame can't run, MPU or not. This is now `if (size <
+>   VAIOS_ARCH_MIN_STACK)`, always enforced. `VAIOS_ARCH_MIN_STACK` (128 on
+>   cortex-m4, sized to the 17-word init frame) lives in `port.h` + the stub, not
+>   Kconfig — the host test build needs the real value, and a Kconfig int would
+>   be 0 there (same host-emulation reason as `VAIOS_ARCH_FIRST_EXTERNAL_IRQ`).
+> - **The power-of-two rule** — purely an MPU-region constraint, now under
+>   `#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION` (the features that
+>   actually map a per-task region, per `task.c:206-212`), not the coarser
+>   `VAIOS_MPU_ENABLE` the note first suggested. So a non-MPU build accepts any
+>   size ≥ the minimum — the constraint follows the *feature*, not the *chip*.
+>
+> The `VAIOS_ARCH_MPU_MIN_REGION` symbol Phase 1 added for this turned out
+> **unused and was removed**: the 128 B universal floor already subsumes it
+> (power-of-two ≥ 128 is always a valid ARMv7-M region). The test that blocked
+> the Phase 2 deferral split in two: `test_task_create_rejects_undersized_stack`
+> (below-minimum sizes, always rejected, no side effects) and
+> `test_task_create_non_power_of_two_stack` (rejected only under an MPU-region
+> config, accepted otherwise — asserted per-regime with `#if`). Host 246/246;
+> ARM clean under `NAVHAL=OFF`/`NAVHAL=ON`.
 
 **Acceptance:** `grep -rnE '0xE000|0x2000[0-9A-F]{4}|__asm|SysTick_Handler' kernel/ include/`
 returns nothing.

@@ -124,18 +124,19 @@ static void test_task_create_oom(void) {
  * power-of-two MPU region for stack protection, so an off-size request must not
  * create a task. Rejection happens before any allocation, so no heap leaks and
  * task_count / the ready lists stay untouched. */
-static void test_task_create_rejects_non_power_of_two(void) {
+/* A stack too small to hold the initial context frame (and zero) is invalid on
+ * every build, MPU or not. Rejected with no side effects. */
+static void test_task_create_rejects_undersized_stack(void) {
   full_reset();
   scheduler_init();
 
   uint32_t count_before = task_count;
   uint32_t heap_before = v_get_heap_allocation_count();
 
-  /* Non-power-of-two, sub-minimum, and zero are all invalid. */
-  static const uint32_t bad[] = {0u, 1u, 64u, 127u, 129u, 200u,
-                                 700u, 1000u, 1536u, 2560u, 6144u};
-  for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-    uint32_t id = task_create(dummy_task, NULL, bad[i], 3);
+  /* All below VAIOS_ARCH_MIN_STACK (128 on this port). */
+  static const uint32_t too_small[] = {0u, 1u, 64u, 127u};
+  for (unsigned i = 0; i < sizeof(too_small) / sizeof(too_small[0]); i++) {
+    uint32_t id = task_create(dummy_task, NULL, too_small[i], 3);
     TEST_ASSERT_EQ(id, 0u); /* creation refused */
   }
 
@@ -143,6 +144,24 @@ static void test_task_create_rejects_non_power_of_two(void) {
   TEST_ASSERT_EQ(task_count, count_before);
   TEST_ASSERT_EQ(v_get_heap_allocation_count(), heap_before); /* no leak */
   TEST_ASSERT_NULL(ready_lists[3]); /* nothing queued at the target priority */
+}
+
+/* The power-of-two requirement is an MPU-region constraint, not a universal one.
+ * Non-power-of-two sizes at/above the minimum are rejected only when per-task MPU
+ * regions are on; without them they are valid. This binary's config decides. */
+static void test_task_create_non_power_of_two_stack(void) {
+  full_reset();
+  scheduler_init();
+
+  static const uint32_t np2[] = {200u, 700u, 1000u, 1536u};
+  for (unsigned i = 0; i < sizeof(np2) / sizeof(np2[0]); i++) {
+    uint32_t id = task_create(dummy_task, NULL, np2[i], 3);
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+    TEST_ASSERT_EQ(id, 0u);      /* not a valid MPU region size */
+#else
+    TEST_ASSERT_EQ(id != 0u, 1); /* accepted: no per-task MPU region here */
+#endif
+  }
 }
 
 /* Exact powers of two >= 128 B are accepted, including the 128 B minimum. */
@@ -515,7 +534,8 @@ static const test_case_t scheduler_cases[] = {
     TEST_CASE(test_task_create_increments_count),
     TEST_CASE(test_task_create_in_ready_list),
     TEST_CASE(test_task_create_oom),
-    TEST_CASE(test_task_create_rejects_non_power_of_two),
+    TEST_CASE(test_task_create_rejects_undersized_stack),
+    TEST_CASE(test_task_create_non_power_of_two_stack),
     TEST_CASE(test_task_create_accepts_power_of_two),
     TEST_CASE(test_task_create_multi_priority),
     TEST_CASE(test_wake_up_delayed_tasks),

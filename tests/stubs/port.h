@@ -43,6 +43,10 @@ static inline int v_port_prio_is_more_urgent(uint32_t a, uint32_t b) {
   return a < b;
 }
 
+/* Minimum task stack, mirroring portable/cortex-m4/port.h so the scheduler's
+ * size validation behaves identically under host test as on target. */
+#define VAIOS_ARCH_MIN_STACK 128u
+
 /* CPU-relax spin hint — no-op on host. */
 static inline void v_port_cpu_relax(void) {}
 
