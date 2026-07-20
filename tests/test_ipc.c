@@ -10,6 +10,7 @@
 #include "framework.h"
 #include "ipc.h"
 #include "memory.h"
+#include "port.h" // MAX_SYSCALL_INTERRUPT_PRIORITY (host stub mirrors the port)
 #include "task.h"
 #include <string.h>
 

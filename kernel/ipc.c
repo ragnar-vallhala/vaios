@@ -744,9 +744,13 @@ int v_wait(const int *fds, int nfds, uint32_t ticks) {
 #endif // VAIOS_IPC_FD
 
 int vaios_isr_priority_is_safe(uint32_t vectactive, uint32_t irq_prio) {
-  if (vectactive < 16u)
-    return 1; // thread mode or a system handler — no NVIC priority to violate
-  return irq_prio >= (uint32_t)MAX_SYSCALL_INTERRUPT_PRIORITY;
+  if (vectactive < VAIOS_ARCH_FIRST_EXTERNAL_IRQ)
+    return 1; // thread mode or a system handler — no maskable priority to violate
+  // Safe iff the IRQ is not MORE urgent than the syscall band, i.e. BASEPRI can
+  // still mask it. The arch's priority ordering (which numeric direction is more
+  // urgent) is the port's to define, not this portable predicate's.
+  return !v_port_prio_is_more_urgent(irq_prio,
+                                     (uint32_t)MAX_SYSCALL_INTERRUPT_PRIORITY);
 }
 
 int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
