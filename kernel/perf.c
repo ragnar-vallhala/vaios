@@ -96,7 +96,7 @@ uint32_t v_perf_sched_switches(void) { return _perf_sched_switches; }
 uint64_t v_perf_idle_cycles(void)    { return _perf_idle_cycles; }
 
 /* --------------------------------------------------------------------------
- * ISR accounting. Hooked from SysTick_Handler via PERF_ISR_SYSTICK_BEGIN /
+ * ISR accounting. Hooked from v_kernel_tick via PERF_ISR_SYSTICK_BEGIN /
  * PERF_ISR_SYSTICK_END (see perf_hooks.h).
  *
  * Stats are bare 32-bit globals; the single writer is SysTick itself,

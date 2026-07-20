@@ -78,6 +78,12 @@ void v_port_disable_interrupts(void);
 void v_port_halt(void);
 void v_port_trigger_pendsv(void);
 
+// True if `p` points into RAM: the ARMv7-M SRAM region base (0x20000000, an
+// architectural constant) up to this board's top of RAM (the linker's _estack).
+// A corruption sanity check on scheduler-popped TCB pointers; ports with no
+// known map (the host stub) return 1.
+int v_port_ptr_is_ram(const void *p);
+
 // --- MPU (memory protection) — implemented in port_hw.c, no-ops without an MPU
 // or when VAIOS_MPU_ENABLE is off. See docs/plan/MPU_CACHE_INTEGRATION_PLAN.md.
 // Enable the MPU (background region privileged) + MemManage fault, once at init.

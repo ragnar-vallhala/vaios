@@ -967,19 +967,11 @@ void v_log_flush(void) {
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
-#ifdef NAVHAL
-// Defined in NavHAL's timebase.c. In SUBMODULE builds NavHAL compiles out its
-// own SysTick_Handler and cedes the vector to us, so its millisecond timebase
-// (which backs every hal_delay_*()) only advances if we drive it from here.
-void hal_timebase_tick(void);
-#endif
-
-void SysTick_Handler(void) {
+// SysTick body. The ARM vector handler (portable/cortex-m4/port_hw.c) and its
+// NavHAL timebase poke wrap this; the kernel keeps only the arch-neutral work.
+void v_kernel_tick(void) {
   PERF_ISR_SYSTICK_BEGIN();
   systick_count++;
-#ifdef NAVHAL
-  hal_timebase_tick();
-#endif
   int preempted = 0;
   if (scheduler_running) {
     // Drain any tasks whose absolute wakeup tick is now due. This runs

@@ -6,9 +6,10 @@ Phased plan to remove hardware-specific code that has leaked outside
 `CMakeLists.txt`, and 12 build scripts. Every `file:line` anchor below was
 verified against the tree at time of writing (branch `dev`, 2026-07-21).
 
-> **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 6's
-> MMIO tripwire landed early with its `kernel/utils.c` fix (commit `3b2ad1b`).
-> Phases 2–5 and the rest of 6 outstanding.
+> **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 2
+> items 2a–2d implemented (2e deferred, see its note); Phase 6's MMIO tripwire
+> landed early with its `kernel/utils.c` fix (commit `3b2ad1b`). Phases 3–5, 2e,
+> and the rest of 6 outstanding.
 
 ---
 
@@ -234,6 +235,32 @@ selected shows no MPU menu.
 ---
 
 ## Phase 2 — Migrate the three unguarded leaks in `kernel/`
+
+> **Status: 2a–2d IMPLEMENTED; 2e DEFERRED.** Host suite 245/245; ARM firmware
+> clean under `NAVHAL=OFF` and `NAVHAL=ON`. 2a shipped earlier with the MMIO
+> gate (commit `3b2ad1b`, `v_port_hw_in_isr`). 2b/2c/2d migrated here. Notes:
+>
+> - **2c** uses the linker's `_estack` for the upper bound and `0x20000000` —
+>   the ARMv7-M *architectural* SRAM region base, not a vendor literal — for the
+>   lower, so `v_port_ptr_is_ram` is correct for any Cortex-M4 board, not just
+>   the STM32F4 the old `0x20020000` literal assumed.
+> - **2d** revealed the host stub `v_port_get_psp()` returns 0, not the
+>   `UINTPTR_MAX` the old `task_live_sp()` used. The migration adds an explicit
+>   `live_sp != 0` sentinel at the one grow-guard caller (mirroring the `psp !=
+>   0` guard already in `utils.c`) so host stays a clean no-op rather than
+>   relying on pointer-underflow wraparound. The core `v_port_get_psp` /
+>   `v_port_ptr_is_ram` stubs moved to the shared `tests/stubs/stubs.c` so every
+>   target linking `memory.c`/`task.c` resolves them.
+> - **2e DEFERRED.** Gating the power-of-two rule on the MPU feature is correct,
+>   but it changes the contract of `test_task_create_rejects_non_power_of_two`:
+>   under a non-MPU build, sizes like 700 B become *valid*, so the test's "no
+>   task created, no heap used" assertions break, not just its return-value
+>   check. Doing it right means separating the universal minimum-stack floor
+>   (every port needs room for the initial context frame) from the MPU-only
+>   power-of-two rule, and rewriting the test to assert per-regime. That is a
+>   deliberate behaviour + test-semantics change deserving its own commit, not a
+>   silent rider on the clean migrations. The `VAIOS_ARCH_MPU_MIN_REGION` symbol
+>   Phase 1 added is ready for it.
 
 Each of these has a facade to migrate *to*; none needs a new concept.
 

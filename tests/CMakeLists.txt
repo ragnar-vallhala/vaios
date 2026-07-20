@@ -195,7 +195,7 @@ add_executable(vaios_utils_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/utils_stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # v_port_hw_* facade
     "${VAIOS_ROOT}/kernel/utils.c"
-    "${VAIOS_ROOT}/kernel/perf.c"  # SysTick_Handler in utils.c hooks perf.
+    "${VAIOS_ROOT}/kernel/perf.c"  # v_kernel_tick in utils.c hooks perf.
 )
 target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
 # Force VFS off so kernel/perf.c's CSV writer doesn't drag vfs_open/etc into

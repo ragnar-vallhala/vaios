@@ -340,13 +340,9 @@ extern TCB *current_task;
 // syscall it sits one exception frame below the task's pre-call SP, a safe,
 // slightly conservative bound. Host builds have no PSP, so the check is a no-op.
 static inline uint8_t *task_live_sp(void) {
-#if defined(__arm__) || defined(__thumb__) || defined(__thumb2__)
-  void *sp;
-  __asm volatile("mrs %0, psp" : "=r"(sp));
-  return (uint8_t *)sp;
-#else
-  return (uint8_t *)UINTPTR_MAX;
-#endif
+  // Through the port facade rather than inline asm. The host stub returns 0
+  // ("no PSP"), which the single caller below treats as a no-op sentinel.
+  return (uint8_t *)(uintptr_t)v_port_get_psp();
 }
 
 // Repoint the physically-following block's prev link after blk->size changed.
@@ -405,8 +401,9 @@ void *malloc(size_t size) {
   uint8_t *nb = t->heap_brk;
   uint8_t *new_brk = nb + THDR + need;
   uint8_t *block_end = (uint8_t *)t->mem_block + t->stack_size;
+  uint8_t *live_sp = task_live_sp(); // 0 on host => live-SP cap disabled
   if (new_brk > block_end ||
-      new_brk > task_live_sp() - TASK_HEAP_STACK_MARGIN) {
+      (live_sp && new_brk > live_sp - TASK_HEAP_STACK_MARGIN)) {
     EXIT_CRITICAL();
     return NULL; // would escape the block / collide with the stack
   }

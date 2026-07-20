@@ -91,6 +91,23 @@ void v_port_hw_sched_irq_init(void) {
 #endif
 }
 
+// SysTick vector. The kernel tick body (tick count, delayed-task wakeups, PendSV
+// pend) lives in kernel/utils.c as v_kernel_tick(); this shim keeps the CMSIS
+// vector name and NavHAL's timebase poke in the port. In SUBMODULE builds NavHAL
+// compiles out its own SysTick_Handler and cedes the vector to us, so its
+// millisecond timebase (backing every hal_delay_*()) only advances if we drive
+// it here.
+extern void v_kernel_tick(void);
+#ifdef NAVHAL
+void hal_timebase_tick(void); // NavHAL timebase.c; not in the public navhal.h
+#endif
+void SysTick_Handler(void) {
+#ifdef NAVHAL
+  hal_timebase_tick();
+#endif
+  v_kernel_tick();
+}
+
 void v_port_hw_cpu_idle(void) {
 #ifdef NAVHAL
   /* WFI until the next interrupt; NavHAL owns the barriers/event handling. */

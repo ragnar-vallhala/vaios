@@ -190,6 +190,11 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   // hold the initial exception frame). Reject anything else outright: silently
   // rounding the size would desync the caller's view of the stack from the
   // actual region geometry, so fail the creation instead of hiding the change.
+  // NOTE: Phase 2e of the portability plan proposes gating the power-of-two
+  // rule on VAIOS_MPU_STACK_GUARD so non-MPU ports accept arbitrary sizes, but
+  // that changes the contract of test_task_create_rejects_non_power_of_two
+  // (non-power-of-two sizes become valid) and needs the universal minimum-stack
+  // floor separated from the MPU rule; deferred to its own change.
   if (size < 128 || (size & (size - 1)) != 0) {
     V_KLOG(LOG_ERROR,
            "[TASK] size %u is not a power of two >= 128; task not created",
@@ -325,19 +330,12 @@ TCB *get_next_task(void) {
   int p = highest_ready_prio();
   if (p >= 0) {
     TCB *t = rl_pop_head((uint32_t)p);
-#if defined(VAIOS_HOST_TEST)
-    /* Host TCBs come from the host heap, not target SRAM, so the address
-     * range check below is meaningless (and (uint32_t)-truncating a 64-bit
-     * host pointer is undefined). Keep the priority sanity check only. */
-    if (t->priority > MAX_PRIORITY) {
-      v_panic(__FILE__, __LINE__, "invalid task priority: %u", t->priority);
+    /* Corruption sanity check on the popped TCB. The RAM-range test lives in
+     * the port (v_port_ptr_is_ram); the host stub returns 1 since host TCBs
+     * come from the host heap, not a known target map. */
+    if (!v_port_ptr_is_ram(t) || t->priority > MAX_PRIORITY) {
+      v_panic(__FILE__, __LINE__, "invalid task pointer: %p", (void *)t);
     }
-#else
-    if ((uint32_t)t < 0x20000000 || (uint32_t)t > 0x20020000 ||
-        t->priority > MAX_PRIORITY) {
-      v_panic(__FILE__, __LINE__, "invalid task pointer: 0x%x", (uint32_t)t);
-    }
-#endif
     current_task = t;
   } else {
     if (current_task->status != TASK_RUNNING) {

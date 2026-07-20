@@ -43,6 +43,16 @@ void task_yield(void) { _yield_count++; }
  * refactored internal callers (task_delay/exit/block) keep the old semantics. */
 void v_port_trigger_pendsv(void) { _yield_count++; }
 
+/* Port facade the kernel calls on host. get_psp returns 0 ("no PSP"), which
+ * memory.c's grow-guard and utils.c's overflow check both treat as a no-op;
+ * ptr_is_ram returns 1 since host TCBs come from the host heap, not a known
+ * target map, so the scheduler's range check is a no-op here. */
+uint32_t v_port_get_psp(void) { return 0; }
+int v_port_ptr_is_ram(const void *p) {
+  (void)p;
+  return 1;
+}
+
 /* -------------------------------------------------------------------------
  * init_task_stack stub – trivial host implementation
  * ---------------------------------------------------------------------- */
