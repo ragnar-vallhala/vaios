@@ -1,0 +1,18 @@
+# vaios host-run defconfig — configures a build that RUNS the scheduler on the
+# host (VAIOS_PORT=host). Differences from a target build, all forced by the
+# ucontext execution model:
+#
+#   - VAIOS_ARCH_HOST selects the host port.
+#   - Task stacks must clear MINSIGSTKSZ + a ucontext_t (kilobytes), so the idle
+#     stack and the heap are sized up. Application tasks are created with >= 32 KB
+#     (VAIOS_ARCH_MIN_STACK) by their callers.
+#   - The stack-overflow watermark is off: host stacks are ucontext-managed and
+#     task->sp holds the ucontext pointer, not a descending SP.
+#   - SVC syscalls off: there is no privilege boundary on host, so the public API
+#     calls straight through (no trap).
+CONFIG_VAIOS_ARCH_HOST=y
+CONFIG_IDLE_TASK_STACK_SIZE=65536
+CONFIG_TASK_STACK_WATERMARK_ENABLE=n
+CONFIG_HEAP_WATERMARK_ENABLE=n
+CONFIG_VAIOS_SYSCALL_SVC=n
+CONFIG_HEAP_SIZE=0x100000

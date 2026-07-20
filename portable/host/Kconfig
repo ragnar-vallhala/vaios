@@ -1,0 +1,6 @@
+# vim: ft=kconfig
+#
+# Host (POSIX) port configuration, rsourced from the top-level Kconfig. The host
+# port has no silicon-specific knobs (no NVIC, no board), so this is empty for
+# now — it exists to complete the per-port symmetry (portable/<arch>/{arch.cmake,
+# Kconfig}) and as the home for any future host-only options.
