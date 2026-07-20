@@ -31,6 +31,16 @@ void v_port_halt(void) {
 
 void v_port_trigger_pendsv(void) { ICSR |= ICSR_PENDSVSET; }
 
+// Top of RAM, from the linker script (startup.s / the board linker.ld both
+// export it). Only its address is taken, never dereferenced.
+extern uint32_t _estack;
+int v_port_ptr_is_ram(const void *p) {
+  uintptr_t a = (uintptr_t)p;
+  // 0x20000000 is the ARMv7-M architectural SRAM region base (M7 §B3.1), not a
+  // vendor literal; _estack bounds it above for whatever board is linked.
+  return a >= 0x20000000u && a < (uintptr_t)&_estack;
+}
+
 // Exception stack frame automatically pushed by Cortex-M on exception
 typedef struct {
   uint32_t r0;

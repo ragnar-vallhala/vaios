@@ -24,6 +24,11 @@ int v_kmsg_read(char *out, uint32_t len);
 
 uint32_t v_get_ticks(void);
 
+// Kernel SysTick body: advance the tick, wake delayed tasks, pend PendSV. The
+// arch vector handler (portable/<arch>/) calls this, so the CMSIS vector name
+// stays out of the kernel.
+void v_kernel_tick(void);
+
 typedef enum {
   LOG_TRACE, // Extremely fine-grained information (every function call,
              // variable value changes)

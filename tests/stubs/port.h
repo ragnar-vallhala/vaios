@@ -43,6 +43,7 @@ uint32_t v_port_get_psp(void);
 void v_port_disable_interrupts(void);
 void v_port_halt(void);
 void v_port_trigger_pendsv(void);
+int v_port_ptr_is_ram(const void *p);
 void v_port_mpu_init(void);
 void v_port_hw_cpu_idle(void);
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
