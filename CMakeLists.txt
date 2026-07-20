@@ -6,8 +6,23 @@ set(CMAKE_OSX_ARCHITECTURES "" CACHE STRING "" FORCE)
 set(CMAKE_C_FLAGS_INIT "" CACHE STRING "" FORCE)
 set(CMAKE_CXX_FLAGS_INIT "" CACHE STRING "" FORCE)
 
-# Toolchain settings
-set(TOOLCHAIN_PREFIX arm-none-eabi-)
+# Port selection. VAIOS_PORT picks portable/<port>/, and that port's arch.cmake
+# is the source of truth for the toolchain and arch flags — included here, before
+# the toolchain block below and project(), so it can set the cross compiler.
+# (Not derived from Kconfig: the toolchain must be known before project(), but
+# Kconfig generation runs after it, so the arch is chosen by this cache var —
+# override with -DVAIOS_PORT=<port>.)
+set(VAIOS_PORT "cortex-m4" CACHE STRING "Target port (selects portable/<port>/)")
+set(_vaios_port_arch "${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT}/arch.cmake")
+if(NOT EXISTS "${_vaios_port_arch}")
+  message(FATAL_ERROR
+    "Unknown vaios port '${VAIOS_PORT}': ${_vaios_port_arch} not found. "
+    "Add portable/${VAIOS_PORT}/arch.cmake, or -DVAIOS_PORT=cortex-m4.")
+endif()
+include("${_vaios_port_arch}")
+
+# Toolchain settings (prefix from the selected port's arch.cmake)
+set(TOOLCHAIN_PREFIX ${PORT_TOOLCHAIN_PREFIX})
 set(CMAKE_C_COMPILER ${TOOLCHAIN_PREFIX}gcc)
 set(CMAKE_ASM_COMPILER ${TOOLCHAIN_PREFIX}gcc)
 set(CMAKE_OBJCOPY ${TOOLCHAIN_PREFIX}objcopy)
@@ -38,10 +53,12 @@ add_custom_target(vaios_copy_compile_commands ALL
   BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json"
   COMMENT "Mirroring compile_commands.json to repo root")
 
-# Defaults
+# Defaults. CMAKE_SYSTEM_PROCESSOR is now a derived mirror of VAIOS_PORT (the
+# real selection knob above), not an independent input — FORCE keeps the two in
+# sync even if a stale cache set the processor directly.
 set(CMAKE_SYSTEM_PROCESSOR
-    cortex-m4
-    CACHE STRING "Target processor" FORCE) # Processor on board
+    "${VAIOS_PORT}"
+    CACHE STRING "Target processor (mirrors VAIOS_PORT)" FORCE)
 set(BOARD
     nucleo_f401re
     CACHE STRING "Target board")
@@ -247,16 +264,12 @@ else()
     message(STATUS "VAIOS: FPU Support Disabled")
 endif()
 
-set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS}")
-
+# Arch flags (-mcpu/-mthumb) come from the port's arch.cmake; FPU_FLAGS is
+# config-derived (above) and appended here, since the float ABI is not an arch
+# fact on this project.
 set(CMAKE_C_STANDARD 11)
-
-set(CMAKE_C_FLAGS
-"-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS} -Wall -O2 -g -std=c11") # C++
-# standard
-# 11
-
-set(CMAKE_ASM_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb ${FPU_FLAGS}")
+set(CMAKE_ASM_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS}")
+set(CMAKE_C_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS} -Wall -O2 -g -std=c11")
 
 set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs") # can be
 
@@ -366,9 +379,10 @@ add_compile_options("SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/vaios_co
 # cannot reach (context switch, MPU, SVC dispatch, fault handlers, semihosting).
 # NavHAL was added above and keeps its own uninstrumented flags. Plain
 # --coverage (NOT -fprofile-info-section) so the embedded .gcda path survives for
-# __gcov_info_to_gcda; tools/gcov_sections.ld (prepended -> parsed first) bounds
-# .init_array; --coverage at link pulls the correct multilib libgcov. The dumper
-# lives in portable/cortex-m4/gcov_dump.c; drive it via tools/coverage_target.sh.
+# __gcov_info_to_gcda; portable/cortex-m4/gcov_sections.ld (prepended -> parsed
+# first) bounds .init_array; --coverage at link pulls the correct multilib
+# libgcov. The linker fragment sits with its companion dumper
+# (portable/cortex-m4/gcov_dump.c); drive it via tools/coverage_target.sh.
 # Default OFF: normal builds are byte-for-byte unaffected.
 # ---------------------------------------------------------------------------
 option(VAIOS_GCOV "Instrument vaios for on-target gcov coverage (.gcda streamed over UART)" OFF)
@@ -381,7 +395,7 @@ if(VAIOS_GCOV)
   # slower and better exercised on real hardware, which runs at full speed).
   string(APPEND CMAKE_C_FLAGS " --coverage -O0")
   set(CMAKE_EXE_LINKER_FLAGS
-      "-T ${CMAKE_CURRENT_SOURCE_DIR}/tools/gcov_sections.ld ${CMAKE_EXE_LINKER_FLAGS} --coverage")
+      "-T ${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT}/gcov_sections.ld ${CMAKE_EXE_LINKER_FLAGS} --coverage")
   add_compile_definitions(VAIOS_GCOV)
   # gcov's per-arc counter arrays inflate .bss substantially, pushing _heap_start
   # up. The default 88 KB heap (memset in full by v_heap_memory_init) then runs

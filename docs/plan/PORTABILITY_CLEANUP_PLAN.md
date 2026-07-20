@@ -8,9 +8,10 @@ verified against the tree at time of writing (branch `dev`, 2026-07-21).
 
 > **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 2
 > items 2a–2d implemented (2e deferred); Phase 3 implemented (3a header
-> relocations + 3b NVIC-priority cluster); Phase 6's MMIO tripwire landed early
-> with its `kernel/utils.c` fix (commit `3b2ad1b`). Phases 4–5, 2e, and the rest
-> of 6 outstanding.
+> relocations + 3b NVIC-priority cluster); Phase 4 port-selection mechanism
+> implemented (Kconfig symbol moves/renames deferred); Phase 6's MMIO tripwire
+> landed early with its `kernel/utils.c` fix (commit `3b2ad1b`). Phase 5, 2e,
+> Phase 4's Kconfig cleanup, and the rest of 6 outstanding.
 
 ---
 
@@ -414,6 +415,45 @@ question to answer.
 ---
 
 ## Phase 4 — Make `portable/` the real port-selection point
+
+> **Status: port-selection mechanism IMPLEMENTED; Kconfig symbol moves/renames
+> DEFERRED.** Host 245/245; ARM firmware byte-comparable (identical `-mcpu`/
+> `-mthumb`/FPU flags and `arm-none-eabi-` toolchain) under `NAVHAL=OFF`/`ON`;
+> the non-NAVHAL example and a `VAIOS_GCOV` build compile; `cmake
+> -DVAIOS_PORT=nonsense` fails with the explicit `FATAL_ERROR`.
+>
+> **Done**: a per-port `portable/cortex-m4/arch.cmake` exports
+> `PORT_TOOLCHAIN_PREFIX`, `PORT_ARCH_FLAGS` (`-mcpu=cortex-m4 -mthumb`), and
+> `PORT_STARTUP_SOURCE`; the root `CMakeLists.txt` `include()`s it before
+> `project()` and consumes those instead of hardcoding the toolchain, `-mcpu`/
+> `-mthumb`, or a startup path (the duplicate `CMAKE_ASM_FLAGS` is gone too).
+> `portable/CMakeLists.txt` selects `portable/${VAIOS_PORT}/` explicitly and
+> `FATAL_ERROR`s on an unknown port, replacing the empty-glob that swept every
+> port's sources into one library. `examples/CMakeLists.txt` consumes
+> `PORT_STARTUP_SOURCE`. `tools/gcov_sections.ld` → `portable/cortex-m4/`, beside
+> its companion `gcov_dump.c`.
+>
+> **Three deviations from the written design**, forced by how this project's
+> build is actually layered:
+>
+> 1. **Port is selected by `VAIOS_PORT` (a cache var), not by Kconfig.** The
+>    plan wanted `VAIOS_PORT` to derive from `CONFIG_ARCH_*`, but the cross
+>    toolchain must be set *before* `project()`, and Kconfig generation runs
+>    *after* it — an ordering the CMake language can't invert here. So the arch
+>    is chosen by `-DVAIOS_PORT=` (default `cortex-m4`), and `arch.cmake` (not
+>    Kconfig) is the source of truth for the toolchain.
+> 2. **The linker script and FPU flags stay in the root, not `arch.cmake`.**
+>    Neither is a pure arch fact on this project: the linker script is a
+>    *per-board* file under `extern/NavHAL/src/board/<board>/`, and the float ABI
+>    is *config*-derived (the NavHAL `CONFIG_USE_FPU` mirror). `arch.cmake` owns
+>    only what is genuinely arch; the root appends the board/config parts. The
+>    plan's `PORT_LINKER_SCRIPT` would misattribute a board fact to the arch.
+> 3. **Kconfig symbol moves/renames deferred.** Relocating `CORTEX_M4`/
+>    `NVIC_PRIO_BITS` into a `portable/cortex-m4/Kconfig` needs a Kconfig
+>    `source` mechanism, and renaming `SYSTICK_PERIOD`→`TICK_PERIOD_US` /
+>    `UART_BAUDRATE`→`CONSOLE_BAUDRATE` touches every macro consumer across the
+>    tree — a config-schema change, separable from the CMake port-selection work
+>    and better done on its own.
 
 **Problem.** `portable/CMakeLists.txt:1-7` is the only arch conditional, and it
 fails unsafely:

@@ -1,10 +1,17 @@
-set(PORTABLE_DIR "")
-
-if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "cortex-m4")
-  set(PORTABLE_DIR "cortex-m4")
+# The port is VAIOS_PORT (set in the root CMakeLists, default cortex-m4).
+# portable/<port>/ is the ONLY source tree compiled. Fail loudly on an unknown
+# port rather than the old behaviour: an empty PORTABLE_DIR made the glob match
+# ALL of portable/**, sweeping every port's sources (avr/*.c AND cortex-m4/*.c +
+# startup.s) into one library.
+if(NOT VAIOS_PORT OR NOT IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT}")
+  message(FATAL_ERROR
+    "portable: no port directory for VAIOS_PORT='${VAIOS_PORT}' "
+    "(expected ${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT}/).")
 endif()
 
-FILE(GLOB_RECURSE PORTABLE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/${PORTABLE_DIR}/*.c ${CMAKE_CURRENT_SOURCE_DIR}/${PORTABLE_DIR}/*.s)
+file(GLOB_RECURSE PORTABLE_SOURCES
+     "${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT}/*.c"
+     "${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT}/*.s")
 
 # qemu_irq.c is the non-NAVHAL interrupt shim (it defines
 # hal_interrupt_attach_callback / hal_enable_interrupt). On a NAVHAL build the
