@@ -25,6 +25,13 @@ jobs:
           # gcc -fanalyzer ships with gcc above.
           python3 -m pip install --break-system-packages kconfiglib
 
+      # Fails fast, before the build, if any hardware-specific code (inline asm,
+      # arch macros, vendor includes, memory-mapped I/O) leaked into kernel/ or
+      # include/. Pure grep, no deps. Also runs inside run_tests.sh's static
+      # analysis gate; this dedicated step makes it a first-class check.
+      - name: Portability tripwire
+        run: bash tools/check_portability.sh
+
       - name: Run host test suite
         run: bash tools/run_tests.sh
 
