@@ -77,74 +77,11 @@ void v_syscall_wake_result(struct Task_Control_Block *t, int32_t result);
 void v_syscall_deliver_result(void);
 
 #if VAIOS_SYSCALL_SVC
-
-#if defined(VAIOS_HOST_TEST)
-// Host test model of the SVC trap (no ARM svc/mrs). v_svc* funnel through
-// v_host_svc, which flips v_test_in_handler around v_syscall_dispatch so the
-// dispatch-reached primitive bodies see handler mode and run directly — exactly
-// as on target. Tests drive the public API and it routes through the dispatch.
-// Both live in tests/stubs/syscall_stubs.c.
-extern int v_test_in_handler; // 0 = thread mode (a task), nonzero = in dispatch
-int32_t v_host_svc(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2);
-static inline int v_in_thread_mode(void) { return v_test_in_handler == 0; }
-static inline int32_t v_svc0(uint32_t n) { return v_host_svc(n, 0, 0, 0); }
-static inline int32_t v_svc1(uint32_t n, uint32_t a0) {
-  return v_host_svc(n, a0, 0, 0);
-}
-static inline int32_t v_svc2(uint32_t n, uint32_t a0, uint32_t a1) {
-  return v_host_svc(n, a0, a1, 0);
-}
-static inline int32_t v_svc3(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
-  return v_host_svc(n, a0, a1, a2);
-}
-
-#else
-
-// True in thread mode (a task), false in a handler (the syscall dispatch). A
-// task-facing API whose implementation IS the dispatch target uses this to trap
-// exactly once: a task (thread) traps via svc; the same function reached from
-// the dispatch (handler) runs its body. (task_yield needs no such guard — its
-// implementation is the separate v_port_trigger_pendsv.)
-__attribute__((always_inline)) static inline int v_in_thread_mode(void) {
-  uint32_t ipsr;
-  __asm__ volatile("mrs %0, ipsr" : "=r"(ipsr));
-  return ipsr == 0u;
-}
-
-// Thin `svc 1` trampolines: number in r12, args in r0-r3, result in r0.
-__attribute__((always_inline)) static inline int32_t v_svc0(uint32_t n) {
-  register uint32_t r12 __asm__("r12") = n;
-  register int32_t ret __asm__("r0");
-  __asm__ volatile("svc 1" : "=r"(ret) : "r"(r12) : "memory");
-  return ret;
-}
-__attribute__((always_inline)) static inline int32_t v_svc1(uint32_t n,
-                                                            uint32_t a0) {
-  register uint32_t r12 __asm__("r12") = n;
-  register uint32_t r0 __asm__("r0") = a0;
-  __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12) : "memory");
-  return (int32_t)r0;
-}
-__attribute__((always_inline)) static inline int32_t
-v_svc2(uint32_t n, uint32_t a0, uint32_t a1) {
-  register uint32_t r12 __asm__("r12") = n;
-  register uint32_t r0 __asm__("r0") = a0;
-  register uint32_t r1 __asm__("r1") = a1;
-  __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1) : "memory");
-  return (int32_t)r0;
-}
-__attribute__((always_inline)) static inline int32_t
-v_svc3(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
-  register uint32_t r12 __asm__("r12") = n;
-  register uint32_t r0 __asm__("r0") = a0;
-  register uint32_t r1 __asm__("r1") = a1;
-  register uint32_t r2 __asm__("r2") = a2;
-  __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1), "r"(r2) : "memory");
-  return (int32_t)r0;
-}
-
-#endif // VAIOS_HOST_TEST
-
+// SVC trap ABI (svc/mrs + register pinning on ARM; a host model in the test
+// build). Provided by the port so the arch inline asm lives in
+// portable/<arch>/port_syscall.h, not in this portable header. v_in_thread_mode
+// and v_svc0..v_svc3 come from there.
+#include "port_syscall.h"
 #endif // VAIOS_SYSCALL_SVC
 
 #endif // !VAIOS_SYSCALL_H

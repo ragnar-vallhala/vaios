@@ -7,9 +7,10 @@ Phased plan to remove hardware-specific code that has leaked outside
 verified against the tree at time of writing (branch `dev`, 2026-07-21).
 
 > **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 2
-> items 2a–2d implemented (2e deferred, see its note); Phase 6's MMIO tripwire
-> landed early with its `kernel/utils.c` fix (commit `3b2ad1b`). Phases 3–5, 2e,
-> and the rest of 6 outstanding.
+> items 2a–2d implemented (2e deferred); Phase 3a implemented (arch-owned header
+> relocations, 3b NVIC-priority cluster outstanding); Phase 6's MMIO tripwire
+> landed early with its `kernel/utils.c` fix (commit `3b2ad1b`). Phases 4–5, 2e,
+> 3b, and the rest of 6 outstanding.
 
 ---
 
@@ -341,6 +342,29 @@ returns nothing.
 ---
 
 ## Phase 3 — Relocate arch-owned headers out of `include/`
+
+> **Status: header relocations (3a) IMPLEMENTED; NVIC-priority cluster (3b)
+> OUTSTANDING.** Split by cohesion: moving arch-owned *headers* out of
+> `include/` is mechanical and low-risk; retargeting the NVIC *priority-model
+> constants* is a distinct concern that also pairs with the `NVIC_PRIO_BITS`
+> gating deferred from Phase 1, so it lands separately.
+>
+> **3a done** (host 245/245; ARM clean under `NAVHAL=OFF`/`NAVHAL=ON`; examples
+> build): `include/semihosting.h` → `portable/cortex-m4/`; the
+> `#if VAIOS_SYSCALL_SVC` block of `include/syscall.h` → a port-supplied
+> `port_syscall.h` (ARM asm in `portable/cortex-m4/`, host model in
+> `tests/stubs/`, selected by include-path shadowing since `portable/cortex-m4`
+> is not on the host path); `include/qemu_irq.h` deleted with its two vestigial
+> includes; `kernel/CMakeLists.txt` NavHAL include export narrowed `PUBLIC` →
+> `PRIVATE`.
+>
+> **3b outstanding** — the `vaios_config_derived.h:17-26` NVIC-priority row
+> below, plus the `ipc.c` interpretation note, plus Phase 1's deferred
+> `NVIC_PRIO_BITS` `depends on VAIOS_ARCH_HAS_IRQ_PRIORITY`. Entangled because
+> `MAX_SYSCALL_INTERRUPT_PRIORITY` is on the critical-section hot path
+> (`port.h` `v_enter_critical`) and used by the host `test_ipc.c`, so moving its
+> definition to the port needs the port/stub-mirroring treatment and the new
+> `VAIOS_ARCH_FIRST_EXTERNAL_IRQ` symbol. Its own change.
 
 These don't hard-break other ports (nothing forces their inclusion) but they
 violate the layering rule outright, and they're what makes the seam ambiguous

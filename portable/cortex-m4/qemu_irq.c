@@ -1,4 +1,3 @@
-#include "qemu_irq.h"
 #include <stddef.h>
 
 #define MAX_IRQ 64

@@ -43,7 +43,11 @@ target_compile_definitions(vaios PUBLIC
 # but no NavHAL present) from erroring on undefined targets.
 if(NAVHAL AND TARGET hal)
 target_link_libraries(vaios PUBLIC -Wl,--start-group hal common -Wl,--end-group -lc -lgcc portable)
-target_include_directories(vaios PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../extern/NavHAL/include)
+# PRIVATE, not PUBLIC: only vaios's own TUs may resolve NavHAL headers, and even
+# they shouldn't — the kernel reaches the HAL through the portable/ facade. A
+# PUBLIC export put vendor headers on every consumer's include path, which is
+# what let a stray hal_* call in kernel/ compile silently instead of erroring.
+target_include_directories(vaios PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../extern/NavHAL/include)
 else()
 target_link_libraries(vaios PUBLIC -lgcc -lc portable)
 endif()

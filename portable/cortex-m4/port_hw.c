@@ -20,7 +20,6 @@
 #ifdef NAVHAL
 #include "navhal.h"
 #else
-#include "qemu_irq.h"
 #include "semihosting.h"
 
 /* QEMU SysTick model: program the ARMv7-M system timer registers directly.
