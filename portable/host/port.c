@@ -107,6 +107,15 @@ static void host_maybe_switch(void) {
 // exactly like pending PendSV: the switch happens at the next safe point.
 void v_port_trigger_pendsv(void) { g_switch_pending = 1; }
 
+// Task-facing cooperative yield. On target this pends PendSV (or traps via SVC);
+// on host we request the switch and perform it now, since we are in task context
+// at a safe point. get_next_task re-appends the caller, so an equal-priority peer
+// gets a turn.
+void task_yield(void) {
+  g_switch_pending = 1;
+  host_maybe_switch();
+}
+
 // Called from the SIGALRM handler (port_hw.c) — the SysTick ISR analogue. Do the
 // tick work "in ISR", then perform any pended switch on the way out (PendSV
 // tail-chaining after SysTick).
