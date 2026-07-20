@@ -9,9 +9,9 @@ verified against the tree at time of writing (branch `dev`, 2026-07-21).
 > **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 2
 > items 2a–2d implemented (2e deferred); Phase 3 implemented (3a header
 > relocations + 3b NVIC-priority cluster); Phase 4 port-selection mechanism
-> implemented (Kconfig symbol moves/renames deferred); Phase 6's MMIO tripwire
-> landed early with its `kernel/utils.c` fix (commit `3b2ad1b`). Phase 5, 2e,
-> Phase 4's Kconfig cleanup, and the rest of 6 outstanding.
+> implemented (Kconfig symbol moves/renames deferred); Phase 5 implemented;
+> Phase 6's MMIO tripwire landed early with its `kernel/utils.c` fix (commit
+> `3b2ad1b`). 2e, Phase 4's Kconfig cleanup, and the rest of 6 outstanding.
 
 ---
 
@@ -530,6 +530,35 @@ rename to `TICK_PERIOD_US` and `CONSOLE_BAUDRATE`, keep central.
 ---
 
 ## Phase 5 — Examples and tools
+
+> **Status: IMPLEMENTED.** Host 245/245; the touched examples build (11 now
+> compiles under `NAVHAL=OFF`, which was the bug). Fixed: `33_mpu_user_demo.c`
+> reads privilege through a new `v_port_is_privileged()` port accessor instead of
+> `mrs control`; `11_block_wake_task.c` guards its `navhal.h` include and `TIM5`
+> timer block with `#ifdef NAVHAL`; `tools/coverage_target.sh` derives the port
+> subdir from the build cache's `VAIOS_PORT` instead of hardcoding `cortex-m4`.
+>
+> Two deviations from the written list:
+>
+> 1. **`22_mpu_fault.c`'s `dsb`/`isb` stay.** The plan suggested replacing them
+>    with `V_PORT_MB()`, but that macro is `dmb` (data memory barrier only),
+>    while the example injects a Thumb `BX LR` (`0x4770`) into RAM and executes
+>    it — self-modifying code needs `dsb` (complete the write) + `isb` (flush the
+>    pipeline), which `dmb` does not provide. The whole example is an irreducibly
+>    ARMv7-M W^X/MPU probe (Thumb opcode, MMFSR values), so it belongs in the
+>    "legitimately arch-specific" bucket; the barriers are correct as written.
+> 2. **The stub-drift item was fixed by deletion, not by include/assert.**
+>    `TASK_ENTRY_MASK` is used by no `.c` in the tree, and `INITIAL_XPSR`'s only
+>    consumer is `port.c` (via the real `port.h`) — so the copies in
+>    `tests/stubs/port.h` and `tests/stubs/port_stub.h` were dead. Removed them.
+>    (A shared header can't fix this cleanly anyway: `portable/cortex-m4` is not
+>    on the host include path, so the stub can't include a port-side constants
+>    header.) The one live duplicate, `INITIAL_XPSR`, is a fixed ARMv7-M ABI
+>    constant (the xPSR Thumb bit) that does not change; left as-is.
+>
+> Skipped as optional polish: the repeated/inconsistent QEMU machine name across
+> the `qemu_*.sh` scripts, and the literal `arm-none-eabi-gcc` toolchain checks
+> (now that `PORT_TOOLCHAIN_PREFIX` exists, they could read it).
 
 **Genuinely misplaced (fix):**
 

@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "port.h" // v_port_is_privileged
 #include "task.h"
 #include "utils.h"
 #include "vaios.h"
@@ -20,9 +21,7 @@
  */
 
 static uint32_t read_npriv(void) {
-  uint32_t c;
-  __asm volatile("mrs %0, control" : "=r"(c));
-  return c & 1u; // 1 = unprivileged
+  return v_port_is_privileged() ? 0u : 1u; // 1 = unprivileged
 }
 
 static void uputs(const char *s) {

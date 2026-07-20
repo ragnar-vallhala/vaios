@@ -1,4 +1,6 @@
-#include "navhal.h"
+#ifdef NAVHAL
+#include "navhal.h" // hal_timer_* / TIM5 — the wakeup source needs real HW
+#endif
 #include "memory.h"
 #include "task.h"
 #include "utils.h"
@@ -26,12 +28,14 @@ int main() {
                              .internal_sd_card_setup = 0};
   v_init(&cfg);
   v_heap_memory_init();
+#ifdef NAVHAL
   {
     hal_timer_init_freq(TIM5, 1000);
     hal_timer_attach_callback(TIM5, callback);
     hal_timer_enable_interrupt(TIM5);
     hal_timer_start(TIM5);
   }
+#endif
   scheduler_init();
   task_id = task_create(task, NULL, 1024, 1);
   scheduler_start();

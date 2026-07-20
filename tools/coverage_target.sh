@@ -87,7 +87,11 @@ cov_for() {
       '
 }
 
-PORT_DIR="$BUILD_DIR/portable/CMakeFiles/portable.dir/cortex-m4"
+# The port subdir mirrors VAIOS_PORT; read it from the build's cache rather than
+# hardcoding cortex-m4, so this keeps working when another port is added.
+PORT="$(sed -n 's/^VAIOS_PORT:STRING=//p' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null)"
+PORT="${PORT:-cortex-m4}"
+PORT_DIR="$BUILD_DIR/portable/CMakeFiles/portable.dir/$PORT"
 echo
 echo "on-target coverage — ARM-only sources (host gcov cannot reach these):"
 printf "%-16s %9s %9s   %s\n" "FILE" "LINE%" "BRANCH%" "(lines covered / total)"

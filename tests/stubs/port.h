@@ -29,10 +29,6 @@
   do {                                                                         \
   } while (0)
 
-/* Cortex-M4 initial stack frame constants (same values as the real header) */
-#define INITIAL_XPSR 0x01000000UL
-#define TASK_ENTRY_MASK 0xFFFFFFFEUL
-
 /* NVIC priority model, host-emulated to match portable/cortex-m4/port.h — the
  * FromISR priority predicate (vaios_isr_priority_is_safe) is exercised by
  * test_ipc.c. __NVIC_PRIO_BITS is hardcoded here, not taken from Kconfig: the
@@ -49,6 +45,9 @@ static inline int v_port_prio_is_more_urgent(uint32_t a, uint32_t b) {
 
 /* CPU-relax spin hint — no-op on host. */
 static inline void v_port_cpu_relax(void) {}
+
+/* Host is always privileged (no CONTROL.nPRIV). Mirrors the real port.h. */
+static inline int v_port_is_privileged(void) { return 1; }
 
 /* Scheduler / CPU control seam. Same prototypes as the real port.h; the host
  * implementations are no-ops/counters in tests/stubs/{stubs,port_hw_stub}.c.
