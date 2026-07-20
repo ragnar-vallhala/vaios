@@ -1,7 +1,6 @@
 #ifndef NAVHAL
 #error "NAVHAL is required for this example"
 #endif
-#define CORTEX_M4
 #include "navhal.h"
 #include "vaios.h"
 #include "utils.h"

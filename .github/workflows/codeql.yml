@@ -89,7 +89,7 @@ jobs:
         run: |
           cmake -S tests -B build_codeql \
               -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Debug \
-              -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_C_FLAGS="-DCORTEX_M4" \
+              -DCMAKE_SYSTEM_NAME=Linux \
               -DVAIOS_TEST_SANITIZE=OFF
           cmake --build build_codeql --parallel
 

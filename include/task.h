@@ -10,12 +10,17 @@
 #include "vfile.h" // v_fd_entry (per-task fd table)
 
 //-----------------------------------------------------------------------------
-// Architecture Validation
-// Require CORTEX_M to be defined by the build system/port.
+// Architecture validation
+// The Kconfig arch `choice` always selects exactly one port, so this is a
+// sanity check that the generated config actually reached this TU (i.e. the
+// build force-includes vaios_autoconf.h) rather than a hand-maintained arch
+// gate. The kernel below reads capability symbols (VAIOS_ARCH_HAS_MPU, ...),
+// never an arch name.
 //-----------------------------------------------------------------------------
-#ifndef CORTEX_M4
+#if !defined(VAIOS_ARCH_CORTEX_M4) && !defined(VAIOS_ARCH_HOST) &&             \
+    !defined(VAIOS_ARCH_AVR)
 #error                                                                         \
-    "Define a valid architecture macro (e.g., CORTEX_M) before including task.h"
+    "No vaios arch selected -- is vaios_autoconf.h on the include path? Run the Kconfig step."
 #endif
 
 //-----------------------------------------------------------------------------
