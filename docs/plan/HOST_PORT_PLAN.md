@@ -84,11 +84,13 @@ ucontext-sized stacks, watermark off, SVC off).
   `ucontext_t`, so `VAIOS_ARCH_MIN_STACK` is 32 KB on host and the idle stack /
   heap are sized up in the defconfig. Real overflow detection is off (host stacks
   are ucontext-managed).
-- **`printf` is not reentrant.** All tasks share one OS thread, so a tick landing
-  mid-`printf` can let another task re-enter it (glibc's stdio lock is
-  recursive-per-thread). Guard shared non-reentrant resources with a critical
-  section — the `HOST_DEMO` example shows the pattern. vaios's own `v_log` path is
-  already critical-section protected.
+- **Use `v_log`, not raw `printf`, from tasks.** Output should go through vaios's
+  logger, which routes to the port console (`v_port_hw_console_*`) and serializes
+  with a critical section — the `HOST_DEMO` example does this. Raw `printf`/stdio
+  is *not* reentrant, and all tasks share one OS thread, so a tick landing mid-
+  `printf` can let another task re-enter it (glibc's stdio lock is recursive-per-
+  thread) and corrupt the output; if you must call it directly, wrap it in
+  `ENTER_CRITICAL()` / `EXIT_CRITICAL()`.
 - **Blocking host syscalls stall the scheduler.** `getchar()` and friends block
   the single execution thread. This port is for logic/dev, not host I/O
   concurrency.
