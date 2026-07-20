@@ -7,7 +7,6 @@
  * so the FAT cluster chain is NEVER modified after the first boot —
  * making the filesystem nearly crash-safe against hard resets.
  */
-#define CORTEX_M4
 #include "memory.h"
 #include "navhal.h"
 #include "port.h"

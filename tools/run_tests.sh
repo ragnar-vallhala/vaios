@@ -23,7 +23,6 @@ cmake -S "$ROOT_DIR/tests" \
       -DCMAKE_C_COMPILER=gcc \
       -DCMAKE_BUILD_TYPE=Debug \
       -DCMAKE_SYSTEM_NAME=Linux \
-      -DCMAKE_C_FLAGS="-DCORTEX_M4" \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       --fresh
 

@@ -34,7 +34,7 @@ cmake -S "$ROOT_DIR/tests" -B "$BUILD_DIR" \
       -DCMAKE_C_COMPILER=gcc \
       -DCMAKE_BUILD_TYPE=Debug \
       -DCMAKE_SYSTEM_NAME=Linux \
-      -DCMAKE_C_FLAGS="-DCORTEX_M4 --coverage -O0 -g" \
+      -DCMAKE_C_FLAGS="--coverage -O0 -g" \
       -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
       --fresh >/dev/null 2>&1 || { echo "cmake configure failed" >&2; exit 1; }
 

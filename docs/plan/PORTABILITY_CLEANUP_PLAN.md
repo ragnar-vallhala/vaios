@@ -6,7 +6,9 @@ Phased plan to remove hardware-specific code that has leaked outside
 `CMakeLists.txt`, and 12 build scripts. Every `file:line` anchor below was
 verified against the tree at time of writing (branch `dev`, 2026-07-21).
 
-> **Status: PROPOSED.** No phase implemented yet.
+> **Status: IN PROGRESS.** Phase 1 implemented (arch-capability Kconfig); Phase 6's
+> MMIO tripwire landed early with its `kernel/utils.c` fix (commit `3b2ad1b`).
+> Phases 2–5 and the rest of 6 outstanding.
 
 ---
 
@@ -53,6 +55,37 @@ proves it with a compile-only second target; finishing AVR is separate work
 
 ## Phase 1 — Break the arch-macro monopoly
 
+> **Status: IMPLEMENTED** (branch `feat/arch-capability-kconfig`). Host suite
+> 245/245; ARM firmware builds clean under both `NAVHAL=OFF` and `NAVHAL=ON`;
+> `grep CORTEX_M4 kernel/ include/ tests/ tools/ .github/ examples/` is empty.
+> Three deltas from the design as first written, all forced by the config
+> system and reflected in the snippets below:
+>
+> 1. **Symbols are `VAIOS_ARCH_*`, not bare `ARCH_*`.** NavHAL already defines
+>    `config ARCH_CORTEX_M4` inside its own `choice`
+>    (`extern/NavHAL/src/arch/armv7e-m/Kconfig.choice`); a second bare
+>    `ARCH_CORTEX_M4` in vaios's choice would put one symbol in two choices,
+>    which kconfiglib rejects — the `NAVHAL=ON` config would not parse. The
+>    `VAIOS_` prefix avoids the collision, and the arch **follows** NavHAL via
+>    the choice default `default VAIOS_ARCH_CORTEX_M4 if ARCH_CORTEX_M4` (single
+>    source of truth: NavHAL picks, vaios mirrors; standalone/QEMU fall through
+>    to the plain default; the host build overrides to `VAIOS_ARCH_HOST`).
+> 2. **The autoconf macros are unprefixed** (`VAIOS_ARCH_HAS_MPU`, not
+>    `CONFIG_VAIOS_ARCH_HAS_MPU`). `tools/kconfig.py` emits vaios symbols into
+>    `vaios_autoconf.h` without the `CONFIG_` prefix (it keeps `CONFIG_` only
+>    for the CMake cache-var emitter). C code reads `VAIOS_ARCH_*`; CMake reads
+>    `CONFIG_VAIOS_ARCH_*`.
+> 3. **`NVIC_PRIO_BITS` was *not* moved under `depends on
+>    VAIOS_ARCH_HAS_IRQ_PRIORITY`.** It feeds `MAX_SYSCALL_INTERRUPT_PRIORITY`
+>    in `vaios_config_derived.h`, which is compiled on *every* build including
+>    the host ipc tests; gating it off on host breaks them. It moves with the
+>    derived macro in Phase 3. The MPU menu *was* gated (`depends on
+>    VAIOS_ARCH_HAS_MPU`) — safe because the host MPU tests force
+>    `-DVAIOS_MPU_*` per target, bypassing Kconfig.
+>
+> The host build selects the port through a new `tests/host.defconfig`
+> (`CONFIG_VAIOS_ARCH_HOST=y`), replacing the `-DCORTEX_M4` it used to inject.
+
 **Problem.** `include/task.h:14-19` gates the central kernel header on an
 architecture macro:
 
@@ -95,38 +128,48 @@ namespace as everything else — discoverable in `menuconfig`, one place to look
 
 ### Arch capability symbols
 
-`portable/<arch>/Kconfig` declares the arch and `select`s what it can do; the
-capability symbols are hidden (no prompt), so only the arch sets them:
+The arch `choice` lives in the main `Kconfig` (Phase 4 may split per-arch
+members into `portable/<arch>/Kconfig` once the sourcing machinery exists). Each
+member `select`s what it can do; the capability symbols are hidden (no prompt),
+so only the arch sets them. As shipped (`Kconfig:38-79`):
 
 ```kconfig
 choice
     prompt "Target architecture"
-    default ARCH_CORTEX_M4
+    default VAIOS_ARCH_CORTEX_M4 if ARCH_CORTEX_M4   # follow NavHAL when sourced
+    default VAIOS_ARCH_AVR if ARCH_AVR8
+    default VAIOS_ARCH_CORTEX_M4
 
-config ARCH_CORTEX_M4
+config VAIOS_ARCH_CORTEX_M4
     bool "ARM Cortex-M4"
-    select ARCH_HAS_MPU
-    select ARCH_HAS_IRQ_PRIORITY
-    select ARCH_STACK_DESCENDING
+    select VAIOS_ARCH_HAS_MPU
+    select VAIOS_ARCH_HAS_IRQ_PRIORITY
+    select VAIOS_ARCH_STACK_DESCENDING
 
-config ARCH_HOST
-    bool "Host (POSIX — test and analysis builds)"
-    select ARCH_STACK_DESCENDING
+config VAIOS_ARCH_HOST
+    bool "Host (POSIX — test and static-analysis builds)"
+    select VAIOS_ARCH_STACK_DESCENDING
 
-config ARCH_AVR
+config VAIOS_ARCH_AVR
     bool "AVR (8-bit)"
 endchoice
 
-config ARCH_HAS_MPU          # hidden — selected by the arch, never by the user
+config VAIOS_ARCH_HAS_MPU          # hidden — selected by the arch, never the user
     bool
-config ARCH_HAS_IRQ_PRIORITY
+config VAIOS_ARCH_HAS_IRQ_PRIORITY
     bool
-config ARCH_STACK_DESCENDING
+config VAIOS_ARCH_STACK_DESCENDING
     bool
-config ARCH_MPU_MIN_REGION
+config VAIOS_ARCH_MPU_MIN_REGION
     int
-    default 128 if ARCH_CORTEX_M4   # ARMv7-M: power-of-two, ≥ exception frame
+    default 128 if VAIOS_ARCH_CORTEX_M4   # ARMv7-M: power-of-two, ≥ frame
+    default 0
 ```
+
+`default VAIOS_ARCH_CORTEX_M4 if ARCH_CORTEX_M4` references NavHAL's symbol,
+which is in scope after the `osource` at the bottom of `Kconfig` (kconfiglib
+resolves references post-parse). Under `NAVHAL=OFF` that symbol is undefined and
+evaluates to `n`, so the plain default wins.
 
 ### What this fixes beyond the `#error`
 
@@ -139,7 +182,7 @@ and its help text defers the question to a **runtime** check
 ```kconfig
 config VAIOS_MPU_ENABLE
     bool "Enable hardware memory protection (MPU)"
-    depends on ARCH_HAS_MPU          # <-- new
+    depends on VAIOS_ARCH_HAS_MPU          # <-- new
 ```
 
 and the entire MPU subtree — stack guard, static protect, flash RO, null guard,
@@ -147,25 +190,29 @@ user separation — disappears from `menuconfig` on an arch that has no MPU. Tha
 is strictly better than an `#error` or a port `#define`: the invalid
 configuration becomes unrepresentable rather than diagnosed after the fact. The
 same applies to `NVIC_PRIO_BITS` (`Kconfig:36-38`, "implemented by the
-silicon"), which moves under `depends on ARCH_HAS_IRQ_PRIORITY`.
+silicon"), which moves under `depends on VAIOS_ARCH_HAS_IRQ_PRIORITY`.
 
 ### The `task.h` guard
 
 With a Kconfig `choice`, exactly one arch is always selected — the invariant the
 `#error` was hand-checking is now structural. The guard reduces to a sanity
-check that generated config is actually on the include path:
+check that generated config actually reached this TU. As shipped
+(`include/task.h`), it tests that some arch member is defined — bools emit as
+explicit `0`/`1`, so all three are present once autoconf is force-included, and
+their absence means the config step didn't run:
 
 ```c
-#include "vaios_autoconf.h"
-#ifndef CONFIG_ARCH_STACK_DESCENDING   /* any always-defined arch symbol */
-#error "vaios_autoconf.h not found — run the Kconfig step before building"
+#if !defined(VAIOS_ARCH_CORTEX_M4) && !defined(VAIOS_ARCH_HOST) &&             \
+    !defined(VAIOS_ARCH_AVR)
+#error "No vaios arch selected -- is vaios_autoconf.h on the include path? ..."
 #endif
 ```
 
-Kernel code then reads `CONFIG_ARCH_HAS_MPU` / `CONFIG_VAIOS_MPU_ENABLE`, never
-an arch name. **`CORTEX_M4` stops being a compile flag entirely** — it exists
-only as the Kconfig symbol `ARCH_CORTEX_M4`, consumed by
-`portable/cortex-m4/`.
+Kernel code then reads `VAIOS_ARCH_HAS_MPU` / `VAIOS_MPU_ENABLE`, never an arch
+name. **`CORTEX_M4` stops being a compile flag entirely** — the dead
+`add_compile_definitions(CORTEX_M4)` at `CMakeLists.txt:266` was removed; the
+name now exists only as the Kconfig symbol `VAIOS_ARCH_CORTEX_M4` and
+`portable/cortex-m4/`'s own include guards.
 
 ### What remains in a port header
 
@@ -256,8 +303,8 @@ if (size < 128 || (size & (size - 1)) != 0) { ... return 0; }
 
 Power-of-two and ≥128 B are ARMv7-M MPU region constraints, but the check is
 **not** under `#if VAIOS_MPU_*` — so a port with no MPU still can't create a
-3 KB stack. Gate on `CONFIG_VAIOS_MPU_ENABLE` and take the bound from
-`CONFIG_ARCH_MPU_MIN_REGION` (Phase 1). Note this makes the constraint follow
+3 KB stack. Gate on `VAIOS_MPU_ENABLE` and take the bound from
+`VAIOS_ARCH_MPU_MIN_REGION` (Phase 1). Note this makes the constraint follow
 the *feature*, not the *chip*: a Cortex-M4 build with the MPU switched off also
 regains arbitrary stack sizes, which is correct and is not true today.
 
@@ -276,7 +323,7 @@ to a contributor.
 |---|---|
 | `include/semihosting.h` → `portable/cortex-m4/` | Whole file is ARM: semihosting op numbers `SYS_OPEN 0x01 … SYS_EXIT 0x18` (lines 6-30) plus `set_systick_interrupt_priority()` / `set_pendsv_interrupt_priority()` (37-38) — Cortex-M system exceptions declared in the portable tree. |
 | `include/syscall.h:108-143` → `portable/cortex-m4/port_syscall.h` | `mrs %0, ipsr`, `svc 1`, and `register uint32_t r12 __asm__("r12")` pin the ARMv7-M trap ABI. Today's two configs work (`#if VAIOS_HOST_TEST` stub + `#if VAIOS_SYSCALL_SVC`), but there is no third branch, so no other port can have SVC syscalls. `include/syscall.h` keeps the portable prototypes and includes the port header. |
-| `include/vaios_config_derived.h:17-26` → port | `#define __NVIC_PRIO_BITS` and `MAX_SYSCALL_INTERRUPT_PRIORITY (… << (8 - __NVIC_PRIO_BITS))` hardcode ARM's 8-bit, high-bit-justified, lower-is-more-urgent priority register — meaningless where `CONFIG_ARCH_HAS_IRQ_PRIORITY` is unset. Also adopts the CMSIS reserved identifier `__NVIC_PRIO_BITS`. The derived composite moves to the port; the *input* stays the `NVIC_PRIO_BITS` Kconfig symbol. |
+| `include/vaios_config_derived.h:17-26` → port | `#define __NVIC_PRIO_BITS` and `MAX_SYSCALL_INTERRUPT_PRIORITY (… << (8 - __NVIC_PRIO_BITS))` hardcode ARM's 8-bit, high-bit-justified, lower-is-more-urgent priority register — meaningless where `VAIOS_ARCH_HAS_IRQ_PRIORITY` is unset. Also adopts the CMSIS reserved identifier `__NVIC_PRIO_BITS`. The derived composite moves to the port; the *input* stays the `NVIC_PRIO_BITS` Kconfig symbol. |
 | `include/qemu_irq.h` | Zero-byte file. Delete. |
 
 Also **narrow `kernel/CMakeLists.txt:44-46`**: the `vaios` target
@@ -290,11 +337,11 @@ encodes ARM exception numbering — `vectactive < 16` means system handler, and
 `>=` on priority encodes ARM's inverted ordering. Acquisition is properly
 abstracted; only the interpretation is arch-specific, and it was written this
 way deliberately for host testability (`tests/test_ipc.c:493-509` asserts it).
-Leave the logic, but source the `16` from `CONFIG_ARCH_FIRST_EXTERNAL_IRQ` (arch
+Leave the logic, but source the `16` from `VAIOS_ARCH_FIRST_EXTERNAL_IRQ` (arch
 Kconfig, `default 16 if ARCH_CORTEX_M4`) and put the inverted comparison behind a
 `v_port_prio_is_more_urgent(a, b)` inline — code-bodied, so it belongs in the
 port header per the Phase 1 rule. The block sits under
-`#if CONFIG_ARCH_HAS_IRQ_PRIORITY`: an arch with no priority levels has no
+`#if VAIOS_ARCH_HAS_IRQ_PRIORITY`: an arch with no priority levels has no
 question to answer.
 
 ---
@@ -442,7 +489,7 @@ additionally needs:
   `v_stack_t`, which touches `kernel/task.c:227`, `kernel/task.c:351-357`,
   `kernel/perf.c:257-274`, and the syscall ABI.
 - `kernel/task.c:227` — `task->sp = task->mem_block + (size / sizeof(uint32_t))`
-  assumes full-descending growth (`CONFIG_ARCH_STACK_DESCENDING` from Phase 1
+  assumes full-descending growth (`VAIOS_ARCH_STACK_DESCENDING` from Phase 1
   gives us the flag; the arithmetic still needs writing).
 - `include/task.h:79-95` — `mpu_guard[2]` is an ARMv7-M RBAR/RASR pair. The
   comment claims it "stays architecture-independent" because it's opaque; the

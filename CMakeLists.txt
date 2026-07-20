@@ -262,9 +262,11 @@ set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/boa
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${CMAKE_SYSTEM_PROCESSOR})
 
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "cortex-m4")
-  add_compile_definitions(CORTEX_M4)
-endif()
+# Arch is now a Kconfig choice (VAIOS_ARCH_CORTEX_M4, emitted into
+# vaios_autoconf.h); the kernel reads capability symbols, not a CORTEX_M4
+# compile macro, so no add_compile_definitions is needed here. Phase 4 of
+# docs/plan/PORTABILITY_CLEANUP_PLAN.md moves the remaining arch flags into a
+# per-port arch.cmake.
 
 if(NAVHAL)
   add_compile_definitions(NAVHAL)

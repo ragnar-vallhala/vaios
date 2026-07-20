@@ -49,7 +49,7 @@ if command -v gcc >/dev/null 2>&1 && command -v cmake >/dev/null 2>&1; then
   log="$(mktemp)"
   if cmake -S "$ROOT_DIR/tests" -B "$BUILD_DIR" \
         -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Debug \
-        -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_C_FLAGS="-DCORTEX_M4" \
+        -DCMAKE_SYSTEM_NAME=Linux \
         -DVAIOS_TEST_SANITIZE=OFF -DVAIOS_TEST_ANALYZER=ON \
         --fresh >/dev/null 2>&1 \
      && cmake --build "$BUILD_DIR" --parallel >"$log" 2>&1; then

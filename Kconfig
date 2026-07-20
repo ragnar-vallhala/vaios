@@ -30,9 +30,54 @@ config AUTHOR
 endmenu
 
 menu "Platform / Init"
-config CORTEX_M4
-    bool "Target is ARM Cortex-M4"
-    default y
+
+# Target port. The kernel gates on the CAPABILITY symbols below (does this build
+# have an MPU? interrupt priorities? which way does the stack grow?), never on
+# an arch name -- so adding a port means adding a choice member here, not
+# editing kernel/. VAIOS_-prefixed to avoid colliding with NavHAL's own ARCH_*
+# choice, which is sourced into the same .config when NAVHAL=ON.
+choice
+    prompt "Target architecture"
+    # Follow NavHAL's arch when its tree is sourced (single source of truth);
+    # fall through to Cortex-M4 for standalone/QEMU builds. The host test build
+    # overrides this to VAIOS_ARCH_HOST via tests/host.defconfig.
+    default VAIOS_ARCH_CORTEX_M4 if ARCH_CORTEX_M4
+    default VAIOS_ARCH_AVR if ARCH_AVR8
+    default VAIOS_ARCH_CORTEX_M4
+    help
+      Selects the portable/<arch>/ backend the kernel builds against.
+
+config VAIOS_ARCH_CORTEX_M4
+    bool "ARM Cortex-M4"
+    select VAIOS_ARCH_HAS_MPU
+    select VAIOS_ARCH_HAS_IRQ_PRIORITY
+    select VAIOS_ARCH_STACK_DESCENDING
+
+config VAIOS_ARCH_HOST
+    bool "Host (POSIX -- test and static-analysis builds)"
+    # The host harness models Cortex-M semantics through tests/stubs, so it
+    # advertises a descending stack; MPU / IRQ-priority code is exercised by the
+    # suite through -D overrides, not this capability bit.
+    select VAIOS_ARCH_STACK_DESCENDING
+
+config VAIOS_ARCH_AVR
+    bool "AVR (8-bit)"
+endchoice
+
+# Capability symbols -- set only via `select` on the arch above, never shown to
+# the user. Kernel code reads these (VAIOS_ARCH_HAS_MPU, ...) instead of an arch
+# macro; a new port declares what it can do by selecting the matching bits.
+config VAIOS_ARCH_HAS_MPU
+    bool
+config VAIOS_ARCH_HAS_IRQ_PRIORITY
+    bool
+config VAIOS_ARCH_STACK_DESCENDING
+    bool
+config VAIOS_ARCH_MPU_MIN_REGION
+    int
+    default 128 if VAIOS_ARCH_CORTEX_M4   # ARMv7-M: power-of-two, >= frame
+    default 0
+
 config NVIC_PRIO_BITS
     int "NVIC priority bits implemented by the silicon"
     default 4
@@ -163,6 +208,7 @@ endmenu
 menu "Memory protection (MPU)"
 config VAIOS_MPU_ENABLE
     bool "Enable the ARMv7-M MPU (hardware memory protection)"
+    depends on VAIOS_ARCH_HAS_MPU
     default n
     help
       Program the MPU (via NavHAL hal_mpu) for hardware memory protection.

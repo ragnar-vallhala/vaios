@@ -71,8 +71,8 @@ set(_vaios_autoconf "${CMAKE_BINARY_DIR}/vaios_autoconf.h")
 # Settable like the main build (-DVAIOS_CONFIG=<path>); defaults build-local.
 set(VAIOS_CONFIG "${CMAKE_BINARY_DIR}/.config" CACHE FILEPATH
     "Kconfig .config the host-test build reads")
-set(VAIOS_DEFCONFIG "${VAIOS_ROOT}/defconfig" CACHE FILEPATH
-    "Kconfig defconfig used to seed VAIOS_CONFIG")
+set(VAIOS_DEFCONFIG "${CMAKE_CURRENT_SOURCE_DIR}/host.defconfig" CACHE FILEPATH
+    "Kconfig defconfig used to seed VAIOS_CONFIG (selects the host port)")
 if(NOT EXISTS "${VAIOS_CONFIG}" AND EXISTS "${VAIOS_DEFCONFIG}")
   configure_file("${VAIOS_DEFCONFIG}" "${VAIOS_CONFIG}" COPYONLY)
 endif()
@@ -147,7 +147,6 @@ add_executable(vaios_tests
 target_include_directories(vaios_tests PRIVATE ${TEST_INCLUDE_DIRS})
 
 target_compile_definitions(vaios_tests PRIVATE
-    CORTEX_M4              # required by task.h build guard
     VAIOS_MODULE_VFS=1     # VFS is off by default now; this binary links
                            # kernel/vfs.c + test_vfs.c and exercises perf.c's
                            # VFS-gated CSV path, so opt it in explicitly.
@@ -201,7 +200,7 @@ add_executable(vaios_utils_tests
 target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
 # Force VFS off so kernel/perf.c's CSV writer doesn't drag vfs_open/etc into
 # this binary — vaios_utils_tests does not link vfs.c.
-target_compile_definitions(vaios_utils_tests PRIVATE CORTEX_M4 VAIOS_MODULE_VFS=0)
+target_compile_definitions(vaios_utils_tests PRIVATE VAIOS_MODULE_VFS=0)
 target_compile_options(vaios_utils_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -g -O0
@@ -231,7 +230,7 @@ add_executable(vaios_devfs_tests
 )
 target_include_directories(vaios_devfs_tests PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(vaios_devfs_tests PRIVATE
-    CORTEX_M4 VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=0)
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=0)
 target_compile_options(vaios_devfs_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -g -O0
@@ -264,7 +263,6 @@ add_executable(vaios_taskheap_tests
 )
 target_include_directories(vaios_taskheap_tests PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(vaios_taskheap_tests PRIVATE
-    CORTEX_M4
     VAIOS_HOST_TEST
     VAIOS_TASK_HEAP=1          # opt the per-task allocator in
     VAIOS_MODULE_VFS=0
@@ -324,7 +322,6 @@ target_include_directories(vaios_syscall_tests PRIVATE ${TEST_INCLUDE_DIRS})
 # so DEVFS + IPC_FD are on (that's also where VAIOS_MAX_FDS — the SYS_wait bound —
 # is defined). TASK_HEAP stays off to avoid the libc malloc-symbol clash.
 target_compile_definitions(vaios_syscall_tests PRIVATE
-    CORTEX_M4
     VAIOS_HOST_TEST
     VAIOS_SYSCALL_SVC=1            # compile the dispatch + svc host hooks
     VAIOS_MPU_USER_SEPARATION=1    # compile the validation switch + priv gate
@@ -374,7 +371,6 @@ target_include_directories(vaios_ipcfd_tests PRIVATE ${TEST_INCLUDE_DIRS})
 # on; MPU_USER off, so the dispatch routes straight to the bodies (no validation
 # switch). The test calls the public IPC API, which funnels through the dispatch.
 target_compile_definitions(vaios_ipcfd_tests PRIVATE
-    CORTEX_M4
     VAIOS_HOST_TEST
     VAIOS_SYSCALL_SVC=1
     VAIOS_DEVFS=1
@@ -415,7 +411,6 @@ add_executable(vaios_uaccess_guard_tests
 )
 target_include_directories(vaios_uaccess_guard_tests PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(vaios_uaccess_guard_tests PRIVATE
-    CORTEX_M4
     VAIOS_HOST_TEST
     VAIOS_MPU_STACK_GUARD=1
     VAIOS_MPU_GUARD_SIZE=32

@@ -24,9 +24,6 @@
 #include "vaios.h"
 
 #ifdef NAVHAL
-#ifndef CORTEX_M4
-#define CORTEX_M4
-#endif
 #include "common/hal_gpio.h"
 #include "common/hal_pwm.h"
 #include "navhal.h" /* hal_fpu_enable, GPIO, PWM */

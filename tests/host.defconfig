@@ -1,0 +1,8 @@
+# vaios host-test defconfig.
+#
+# Identical to the top-level defconfig (all Kconfig defaults) except that it
+# selects the host port instead of Cortex-M4, so the x86 test/analysis build
+# stops defining an ARM arch macro. MPU / syscall-SVC / IRQ-priority code paths
+# the suite needs are turned on per-target with -D in tests/CMakeLists.txt, not
+# here -- see the VAIOS_MPU_* and VAIOS_SYSCALL_SVC target_compile_definitions.
+CONFIG_VAIOS_ARCH_HOST=y
