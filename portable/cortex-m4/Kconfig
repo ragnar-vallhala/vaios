@@ -1,0 +1,17 @@
+# vim: ft=kconfig
+#
+# Cortex-M4 port configuration, rsourced from the top-level Kconfig. Symbols the
+# kernel needs from every port stay central (the VAIOS_ARCH_* choice and its
+# capability bits); ones specific to this core live here, so adding a port is
+# adding portable/<arch>/{arch.cmake, Kconfig} rather than editing the central
+# tree. Gated on the capability the arch selects, so it is invisible unless this
+# port is the active one.
+
+config NVIC_PRIO_BITS
+    int "NVIC priority bits implemented by the silicon"
+    depends on VAIOS_ARCH_HAS_IRQ_PRIORITY
+    default 4
+    help
+      Number of priority bits the Cortex-M NVIC implements (device-specific;
+      STM32F4 = 4). Feeds MAX_SYSCALL_INTERRUPT_PRIORITY in
+      portable/cortex-m4/port.h.

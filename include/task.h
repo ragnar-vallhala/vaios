@@ -281,7 +281,7 @@ extern TCB *current_task;
 // Delay helpers (map to ticks; define MS_TO_TICKS in config.h if desired)
 #ifndef MS_TO_TICKS
 #define MS_TO_TICKS(ms)                                                        \
-  ((ms * 1000 )/ SYSTICK_PERIOD) // systick in us
+  ((ms * 1000) / TICK_PERIOD_US) // tick period in us
 #endif
 
 #define TASK_DELAY_MS(ms) task_delay(MS_TO_TICKS(ms))
