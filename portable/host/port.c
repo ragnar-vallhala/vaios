@@ -20,12 +20,12 @@
 #include "port.h"
 #include "task.h"  // TCB, current_task, set_next_task, v_task_exit_impl
 #include "utils.h" // v_kernel_tick
-#include <sched.h> // sched_yield
+#include <sched.h>    // sched_yield
 #include <signal.h>
 #include <stddef.h>
-#include <stdlib.h> // malloc / free
+#include <sys/mman.h> // mmap / mprotect / munmap
 #include <ucontext.h>
-#include <unistd.h>
+#include <unistd.h> // sysconf
 
 // Kernel globals we drive.
 extern TCB *current_task;
@@ -155,31 +155,61 @@ static void task_trampoline(void) {
 // init_task_stack builds the ucontext instead of a fake exception frame. task->sp
 // (never a raw SP on host) carries the port allocation so the switch engine and
 // the teardown hook can find it; task->mem_block is left to the kernel.
+// Page-aligned layout of a task's allocation, so the software MPU can mprotect
+// parts of it: [ ucontext_t (meta) | guard page | execution stack ]. The guard
+// sits immediately below the stack base, so a stack overflow (SP decreasing past
+// the base) hits it. Under VAIOS_MPU_STACK_GUARD the guard is PROT_NONE; without
+// it, there is no guard page. mmap (not malloc) because mprotect works on whole
+// pages of its own mapping.
+static size_t page_round(size_t n, long pg) {
+  return (n + (size_t)pg - 1u) & ~((size_t)pg - 1u);
+}
+#if VAIOS_MPU_STACK_GUARD
+#define HOST_GUARD_PAGES 1u
+#else
+#define HOST_GUARD_PAGES 0u
+#endif
+
 void init_task_stack(TCB *task) {
+  long pg = sysconf(_SC_PAGESIZE);
   size_t stacksz = task->stack_size;
   if (stacksz < HOST_STACK_MIN)
     stacksz = HOST_STACK_MIN;
-  // malloc is not reentrant; mask the tick so a preemption into another
-  // allocating task can't corrupt the arena.
-  v_enter_critical();
-  char *blk = (char *)malloc(sizeof(ucontext_t) + stacksz);
+  size_t meta = page_round(sizeof(ucontext_t), pg);
+  size_t guard = HOST_GUARD_PAGES * (size_t)pg;
+  size_t stkpg = page_round(stacksz, pg);
+  size_t total = meta + guard + stkpg;
+
+  v_enter_critical(); // mmap/mprotect: keep the tick out of the setup
+  char *base = (char *)mmap(NULL, total, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (base != MAP_FAILED && guard)
+    mprotect(base + meta, guard, PROT_NONE); // no-access stack guard
   v_exit_critical();
-  ucontext_t *uc = (ucontext_t *)blk;
+  if (base == MAP_FAILED)
+    v_panic(__FILE__, __LINE__, "host: mmap failed for task %u stack",
+            (unsigned)task->task_id);
+
+  ucontext_t *uc = (ucontext_t *)base;
   getcontext(uc);
-  uc->uc_stack.ss_sp = blk + sizeof(ucontext_t); // makecontext aligns internally
-  uc->uc_stack.ss_size = stacksz;
+  uc->uc_stack.ss_sp = base + meta + guard; // guard sits just below this
+  uc->uc_stack.ss_size = stkpg;
   uc->uc_link = NULL; // trampoline never returns
   makecontext(uc, task_trampoline, 0);
   task->sp = (uint32_t *)uc;
 }
 
-// Free the ucontext allocation of a terminated task (called by the dead-task GC).
-// The task is dead — swapped away for good — so its frozen context is safe to
-// release.
+// Free the mapping of a terminated task (called by the dead-task GC). The task is
+// dead — swapped away for good — so its frozen context is safe to release.
 void v_port_free_task_stack(TCB *task) {
   if (task->sp) {
+    long pg = sysconf(_SC_PAGESIZE);
+    ucontext_t *uc = (ucontext_t *)task->sp;
+    size_t total =
+        page_round(sizeof(ucontext_t), pg) + HOST_GUARD_PAGES * (size_t)pg +
+        uc->uc_stack.ss_size;
     v_enter_critical();
-    free(task->sp);
+    munmap(uc, total);
     v_exit_critical();
     task->sp = NULL;
   }
@@ -204,29 +234,10 @@ int v_port_ptr_is_ram(const void *p) {
 }
 void v_port_disable_interrupts(void) { sigprocmask(SIG_BLOCK, &g_alrm, NULL); }
 void v_port_halt(void) {
+  // A halted MCU spins forever; a host tool should just stop. v_panic has already
+  // printed (and flushed) the reason, so exit non-zero for scripts/CI to catch.
   sigprocmask(SIG_BLOCK, &g_alrm, NULL);
-  for (;;)
-    pause();
+  _exit(1);
 }
 void v_port_cpu_relax(void) { sched_yield(); }
 
-// MPU: none on host.
-void v_port_mpu_init(void) {}
-int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
-  (void)base;
-  (void)size;
-  (void)out;
-  return -1; // unavailable -> kernel marks the guard invalid and skips it
-}
-#if VAIOS_MPU_USER_SEPARATION
-int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
-  (void)base;
-  (void)size;
-  (void)out;
-  return -1;
-}
-#endif
-void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
-  (void)enc;
-  (void)count;
-}

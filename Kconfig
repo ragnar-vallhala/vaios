@@ -55,10 +55,11 @@ config VAIOS_ARCH_CORTEX_M4
 
 config VAIOS_ARCH_HOST
     bool "Host (POSIX -- test and static-analysis builds)"
-    # The host harness models Cortex-M semantics through tests/stubs, so it
-    # advertises a descending stack; MPU / IRQ-priority code is exercised by the
-    # suite through -D overrides, not this capability bit.
+    # The host RUN port provides a software MPU (mprotect guard pages + a SIGSEGV
+    # -> fault translator behind the v_port_mpu_* facade), so it advertises an MPU
+    # like the target. It models Cortex-M semantics, hence a descending stack.
     select VAIOS_ARCH_STACK_DESCENDING
+    select VAIOS_ARCH_HAS_MPU
 
 config VAIOS_ARCH_AVR
     bool "AVR (8-bit)"

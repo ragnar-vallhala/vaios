@@ -26,9 +26,33 @@ things that are silicon on Cortex-M.
 | Timer tick | SysTick IRQ → `v_kernel_tick` | POSIX interval timer → `SIGALRM` → `v_kernel_tick` |
 | Critical section | `msr basepri` masks SysTick | `sigprocmask(SIGALRM)` — masks the tick, the exact analogue |
 | Console | UART / semihosting | stdio |
+| MPU | ARMv7-M MPU regions + MemManage fault | **software MPU**: `mprotect` guard pages + a `SIGSEGV`→fault translator |
 
-MPU, SDIO, FPU, and the cycle counter have no host analogue and are no-ops (or a
+SDIO, FPU, and the cycle counter have no host analogue and are no-ops (or a
 `clock_gettime`).
+
+## Software MPU
+
+The kernel touches the MPU only through `v_port_mpu_*`, so the host models the
+*peripheral's behavior* behind that facade instead of emulating the CPU:
+`mprotect()` is the region access control, and a violating access raises
+`SIGSEGV`, which `portable/host/port_mpu.c` translates into the same `v_panic`
+path as the ARM `MemManage_Handler`. `VAIOS_ARCH_HOST` therefore `select`s
+`VAIOS_ARCH_HAS_MPU`.
+
+Implemented so far — **the per-task stack-overflow guard**: `init_task_stack`
+`mmap`s each task's stack page-aligned with a `PROT_NONE` guard page just below
+its base, so an overflow faults cleanly (the `STACK_OVERFLOW` example panics with
+the offending task + address instead of silently corrupting memory). The fault
+handler runs on a `sigaltstack` so it works even when the task stack is the thing
+that overflowed.
+
+Next slices (not yet): per-task RW regions for user separation (per-switch
+`mprotect` + a privilege toggle at the syscall boundary, since the host has no CPU
+privilege level), and then authentic `v_access_ok` validation. Those need kernel
+objects in mprotect-able page-aligned memory and reckon with the 32-bit syscall
+pointer ABI — see the deferred word-size item in `PORTABILITY_CLEANUP_PLAN.md`.
+Hardware-only concerns beyond region control still belong on Renode/hardware.
 
 ## Decisions
 
@@ -88,8 +112,10 @@ watermark off, SVC off).
   or larger if a task asks for more), so `VAIOS_ARCH_MIN_STACK` is 128 B as on
   target and the same app code runs on both. The port allocation is released by
   the dead-task GC via `v_port_free_task_stack()` (a no-op on Cortex-M, which
-  keeps its frame inside `mem_block`). Real stack-overflow detection is off on
-  host (the task runs on the port's ucontext stack, not `mem_block`).
+  keeps its frame inside `mem_block`). With `VAIOS_MPU_STACK_GUARD` on, a
+  `PROT_NONE` guard page below the stack gives real overflow detection (see
+  Software MPU above); without it, an overflow is undetected as on a guard-less
+  target.
 - **Use `v_log`, not raw `printf`, from tasks.** Output should go through vaios's
   logger, which routes to the port console (`v_port_hw_console_*`) and serializes
   with a critical section — the `HOST_DEMO` example does this. Raw `printf`/stdio
