@@ -31,6 +31,12 @@ static inline int v_caller_unprivileged(void) {
   // (tests/stubs/syscall_stubs.c) so the validation switch is host-exercisable.
   extern int v_test_caller_unprivileged;
   return v_test_caller_unprivileged;
+#elif VAIOS_ARCH_HOST
+  // Host run port: no CONTROL register either. Read the task's own privilege
+  // flag (the software-MPU model tracks it), so the syscall-boundary validation
+  // runs authentically for real unprivileged tasks.
+  extern TCB *current_task;
+  return current_task ? !current_task->privileged : 0;
 #else
   uint32_t control;
   __asm__ volatile("mrs %0, control" : "=r"(control));
