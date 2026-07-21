@@ -422,7 +422,7 @@ void *malloc(size_t size) {
 void free(void *ptr) {
 #if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
   if (v_in_thread_mode()) {
-    v_svc1(SYS_free, (uint32_t)(uintptr_t)ptr);
+    v_svc1(SYS_free, (uintptr_t)ptr);
     return;
   }
 #endif
@@ -476,7 +476,7 @@ void *calloc(size_t nmemb, size_t size) {
 void *realloc(void *ptr, size_t size) {
 #if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
-    return (void *)(uintptr_t)v_svc2(SYS_realloc, (uint32_t)(uintptr_t)ptr,
+    return (void *)(uintptr_t)v_svc2(SYS_realloc, (uintptr_t)ptr,
                                      (uint32_t)size);
 #endif
   if (!ptr)

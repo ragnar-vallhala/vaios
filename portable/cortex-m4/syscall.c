@@ -47,7 +47,7 @@ static inline int v_syscall_privileged_only(uint32_t num) {
 }
 #endif
 
-int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
+intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
 #if VAIOS_MPU_USER_SEPARATION
   // Everything below applies only to UNPRIVILEGED callers (user tasks). The
   // kernel runs syscall bodies directly, never via svc; privileged tasks (flag
@@ -176,15 +176,14 @@ int32_t v_syscall_dispatch(uint32_t num, uint32_t *args) {
      privileged (their thread-mode trap guard falls through) and read
      current_task / the task block directly. Pointers round-trip through r0. */
   case SYS_malloc:
-    return (int32_t)(uintptr_t)malloc((size_t)args[0]);
+    return (intptr_t)malloc((size_t)args[0]);
   case SYS_free:
-    free((void *)(uintptr_t)args[0]);
+    free((void *)args[0]);
     return 0;
   case SYS_calloc:
-    return (int32_t)(uintptr_t)calloc((size_t)args[0], (size_t)args[1]);
+    return (intptr_t)calloc((size_t)args[0], (size_t)args[1]);
   case SYS_realloc:
-    return (int32_t)(uintptr_t)realloc((void *)(uintptr_t)args[0],
-                                       (size_t)args[1]);
+    return (intptr_t)realloc((void *)args[0], (size_t)args[1]);
   case SYS_heap_used:
     return (int32_t)v_task_heap_used();
 #endif
