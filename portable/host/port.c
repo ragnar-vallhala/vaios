@@ -85,12 +85,34 @@ static inline ucontext_t *ctx_of(TCB *t) { return (ucontext_t *)t->sp; }
 // tick can't fire mid-switch; swapcontext saves the outgoing task's mask (blocked
 // here) and restores the incoming task's, and the matching UNBLOCK below — reached
 // when this task is later resumed — re-arms preemption.
+#if VAIOS_MPU_USER_SEPARATION
+// Per-task region enforcement (portable/host/port_mpu.c): open the running
+// task's stack, PROT_NONE everyone else's, so a task can't reach another's
+// memory. g_displaced carries the just-suspended task across the swapcontext, to
+// be closed once we are safely running on the incoming task's stack.
+void v_host_region_open(TCB *t);
+void v_host_region_close(TCB *t);
+static TCB *g_displaced;
+static void host_region_on_resume(void) {
+  if (g_displaced && g_displaced != current_task)
+    v_host_region_close(g_displaced); // the task we displaced: no-access now
+}
+#endif
+
 static void host_perform_switch(void) {
   sigprocmask(SIG_BLOCK, &g_alrm, NULL);
   TCB *prev = current_task;
   set_next_task(); // updates current_task to the next runnable task
-  if (current_task != prev)
+  if (current_task != prev) {
+#if VAIOS_MPU_USER_SEPARATION
+    v_host_region_open(current_task); // open next BEFORE we run on its stack
+    g_displaced = prev;
+#endif
     swapcontext(ctx_of(prev), ctx_of(current_task));
+#if VAIOS_MPU_USER_SEPARATION
+    host_region_on_resume(); // resumed as prev: close whoever displaced us
+#endif
+  }
   sigprocmask(SIG_UNBLOCK, &g_alrm, NULL);
 }
 
@@ -106,6 +128,14 @@ static void host_maybe_switch(void) {
 // Requested from v_kernel_tick (preemption) and kernel blocking paths. Deferred,
 // exactly like pending PendSV: the switch happens at the next safe point.
 void v_port_trigger_pendsv(void) { g_switch_pending = 1; }
+
+// Perform a pended switch at the SVC return boundary. On ARM an SVC returns
+// directly into PendSV, so a blocking syscall (delay / sem take) switches away
+// BEFORE control returns to the task — the task never keeps running while marked
+// BLOCKED/DELAYED. The host SVC shim (port_syscall.c) calls this after the
+// dispatch to reproduce that tail-chain; without it a task would return from a
+// "blocking" syscall still on a wait list and could re-enqueue itself.
+void v_host_sched_after_svc(void) { host_maybe_switch(); }
 
 // Task-facing cooperative yield. On target this pends PendSV (or traps via SVC);
 // on host we request the switch and perform it now, since we are in task context
@@ -130,8 +160,12 @@ int v_port_hw_in_isr(void) { return g_in_isr; }
 
 // --- Task bring-up ===========================================================
 static void task_trampoline(void) {
-  // A newly launched task must be preemptible from its first instruction,
-  // regardless of the signal mask in effect when its context was created.
+  // Fix up the per-task region state with the tick masked (we were entered from a
+  // switch), then become preemptible from the task's first instruction.
+  sigprocmask(SIG_BLOCK, &g_alrm, NULL);
+#if VAIOS_MPU_USER_SEPARATION
+  host_region_on_resume(); // close the task that launched us
+#endif
   sigprocmask(SIG_UNBLOCK, &g_alrm, NULL);
 
   current_task->entry(current_task->arg);
@@ -197,6 +231,12 @@ void init_task_stack(TCB *task) {
   uc->uc_link = NULL; // trampoline never returns
   makecontext(uc, task_trampoline, 0);
   task->sp = (uint32_t *)uc;
+#if VAIOS_MPU_USER_SEPARATION
+  // Under user separation a task's stack is accessible only while it runs; close
+  // it now (makecontext has finished writing the initial frame) and the switch
+  // opens it when this task is scheduled in.
+  v_host_region_close(task);
+#endif
 }
 
 // Free the mapping of a terminated task (called by the dead-task GC). The task is
@@ -221,6 +261,9 @@ void v_port_free_task_stack(TCB *task) {
 void scheduler_start(void) {
   scheduler_running = 1;
   sigprocmask(SIG_BLOCK, &g_alrm, NULL);
+#if VAIOS_MPU_USER_SEPARATION
+  v_host_region_open(current_task); // open the idle task before launching it
+#endif
   swapcontext(&g_bootstrap, ctx_of(current_task));
   // Reached only if a task swaps back to the bootstrap (system halt).
   sigprocmask(SIG_UNBLOCK, &g_alrm, NULL);

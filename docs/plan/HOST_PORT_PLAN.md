@@ -47,12 +47,33 @@ the offending task + address instead of silently corrupting memory). The fault
 handler runs on a `sigaltstack` so it works even when the task stack is the thing
 that overflowed.
 
-Next slices (not yet): per-task RW regions for user separation (per-switch
-`mprotect` + a privilege toggle at the syscall boundary, since the host has no CPU
-privilege level), and then authentic `v_access_ok` validation. Those need kernel
-objects in mprotect-able page-aligned memory and reckon with the 32-bit syscall
-pointer ABI — see the deferred word-size item in `PORTABILITY_CLEANUP_PLAN.md`.
-Hardware-only concerns beyond region control still belong on Renode/hardware.
+Also implemented — **per-task region enforcement (inter-task isolation)** under
+`VAIOS_MPU_USER_SEPARATION`: a task's stack is `PROT_READ|PROT_WRITE` only while
+it runs; every *other* task's stack is `PROT_NONE`. The context switch opens the
+incoming task's stack and closes the outgoing one (`v_host_region_open/close` in
+`port_mpu.c`, driven from `host_perform_switch`), so a running task that reaches
+into another task's memory faults through the same `SIGSEGV`→`v_panic` path — the
+MPU per-task RW region, modelled with `mprotect`. `init_task_stack` closes a new
+task's stack at creation (open on first schedule-in), and `g_displaced` carries
+the just-suspended task across the `swapcontext` so it is closed only once control
+is safely on the incoming stack. The `HOST_MPU_ISOLATION` example demonstrates it:
+task A writing into suspended task B's stack panics with `MPU fault in task N`.
+
+This enforcement rides the switch (not an encoded region the kernel re-applies),
+so `v_port_task_region_encode` reports unavailable and the kernel skips its apply
+loop. It requires `VAIOS_SYSCALL_SVC`, which surfaced a host-only scheduling bug:
+on ARM an `SVC` returns straight into `PendSV`, so a blocking syscall switches away
+*before* returning to the task. The host shim deferred the switch, so a task
+returned from a "blocking" `v_delay`/`take` still marked `DELAYED` and could
+re-enqueue itself on the wait list (corrupting `delayed_list`). Fixed by having
+`v_host_svc` perform the pended switch at the outermost SVC boundary
+(`v_host_sched_after_svc`), reproducing the `SVC`→`PendSV` tail-chain.
+
+Next slices (not yet): the task↔kernel privilege boundary (a privilege toggle at
+the syscall boundary, since the host has no CPU privilege level), and then
+authentic `v_access_ok` validation. Those need kernel objects in mprotect-able
+page-aligned memory. Hardware-only concerns beyond region control still belong on
+Renode/hardware.
 
 ## Decisions
 

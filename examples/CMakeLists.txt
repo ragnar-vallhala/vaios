@@ -10,6 +10,8 @@ endif()
 if(VAIOS_EXAMPLE STREQUAL "HOST_DEMO")
   # Runs natively (VAIOS_PORT=host); STARTUP_FILE is empty for the host port.
   add_executable(main 50_host_demo.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "HOST_MPU_ISOLATION")
+  add_executable(main 52_host_mpu_isolation.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "DMA_DUMP")
   add_executable(main 19_dma_dump.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "FPU_USAGE")

@@ -19,10 +19,28 @@
 #include "utils.h" // v_panic
 #include <signal.h>
 #include <stdint.h>
+#include <sys/mman.h> // mprotect
 #include <ucontext.h>
 #include <unistd.h> // sysconf
 
 extern TCB *current_task;
+
+#if VAIOS_MPU_USER_SEPARATION
+// Per-task region enforcement: a task's stack is readable/writable only while it
+// runs. On a context switch the port opens the incoming task's stack and closes
+// the outgoing one (PROT_NONE), so a running task that reaches into another
+// task's memory faults — the MPU per-task RW region, modelled with mprotect.
+// (This isolates tasks from EACH OTHER; isolating a task from KERNEL memory needs
+// a privilege level the host lacks — deferred. See HOST_PORT_PLAN.md.)
+static void host_region_protect(TCB *t, int prot) {
+  if (!t || !t->sp)
+    return;
+  ucontext_t *uc = (ucontext_t *)t->sp;
+  mprotect(uc->uc_stack.ss_sp, uc->uc_stack.ss_size, prot);
+}
+void v_host_region_open(TCB *t) { host_region_protect(t, PROT_READ | PROT_WRITE); }
+void v_host_region_close(TCB *t) { host_region_protect(t, PROT_NONE); }
+#endif
 
 #if VAIOS_MPU_ENABLE
 
@@ -84,8 +102,11 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
   return 0;
 }
 #if VAIOS_MPU_USER_SEPARATION
-// Per-task RW-user regions (user separation) are the next slice: not yet
-// enforced on host, so report unavailable and let the kernel skip them.
+// Per-task RW regions ARE enforced on host, but by the context switch toggling
+// mprotect on the incoming/outgoing stacks (v_host_region_open/close above), not
+// by an encoded region the kernel re-applies each switch. So the encode path
+// reports unavailable and the kernel skips its apply loop — the mechanism lives
+// in the switch, where the host has the running task in hand.
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)base;
   (void)size;
