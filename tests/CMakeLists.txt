@@ -1,11 +1,11 @@
 # =========================================================================
 # tests/CMakeLists.txt  –  Host-native test build for vaios RTOS
 #
-# Build:
-#   cmake -S .. -B ../build_tests -DTEST=ON \
-#         -DCMAKE_C_COMPILER=gcc -DCMAKE_SYSTEM_NAME=Linux
-#   cmake --build ../build_tests
-#   ctest --test-dir ../build_tests --output-on-failure
+# Build (standalone — do NOT use root -DTEST=ON; VAIOS_PORT selects the arm
+# toolchain before project(), breaking the host ASan/mman link):
+#   cmake -S tests -B build_tests
+#   cmake --build build_tests
+#   ctest --test-dir build_tests --output-on-failure
 # =========================================================================
 cmake_minimum_required(VERSION 3.20)
 

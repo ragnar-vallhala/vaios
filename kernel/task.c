@@ -292,7 +292,7 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   add_to_ready_list(task);
   EXIT_CRITICAL();
   V_KLOG(LOG_DEBUG,
-        "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack "
+        "[TASK] Created Task id: %u priority: %u memory block addr: %p stack "
         "size: 0x%x",
         task->task_id, priority, task->mem_block, size);
   return task->task_id;

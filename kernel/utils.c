@@ -243,6 +243,15 @@ static void v_panic_vprintf(const char *fmt, va_list args) {
       const char *s = panic_val_buf;
       while (*s)
         PANIC_PUT(*s++);
+    } else if (*p == 'p') {
+      // pointer — full width (uintptr_t), 0x-prefixed. 32-bit on ARM, 64 on host
+      uintptr_t v = (uintptr_t)va_arg(args, void *);
+      utoa_simple(v, panic_val_buf, 16);
+      PANIC_PUT('0');
+      PANIC_PUT('x');
+      const char *s = panic_val_buf;
+      while (*s)
+        PANIC_PUT(*s++);
     } else if (*p == 's') {
       // Best-effort panic formatter: -fanalyzer traces a call path where a
       // caller's argument type doesn't match "%s". A mistyped panic argument
@@ -431,6 +440,14 @@ void vaprint_fmt(const char *fmt, va_list args) {
       PUT_STR_BUF(buffer);
       break;
     }
+    case 'p': { // pointer — full width (uintptr_t), 0x-prefixed
+      uintptr_t v = (uintptr_t)va_arg(args, void *);
+      utoa_simple(v, buffer, 16);
+      PUT_CHAR_BUF('0');
+      PUT_CHAR_BUF('x');
+      PUT_STR_BUF(buffer);
+      break;
+    }
     case 'c': {
       char c = (char)va_arg(args, int);
       PUT_CHAR_BUF(c);
@@ -592,6 +609,17 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
       int len = v_strlen(buffer);
       for (int i = len; i < width && pos < out_size - 1; i++)
         out[pos++] = zero_pad ? '0' : ' ';
+      for (int i = 0; buffer[i] && pos < out_size - 1; i++)
+        out[pos++] = buffer[i];
+      break;
+    }
+    case 'p': { // pointer — full width (uintptr_t), 0x-prefixed
+      uintptr_t v = (uintptr_t)va_arg(args, void *);
+      utoa_simple(v, buffer, 16);
+      if (pos < out_size - 1)
+        out[pos++] = '0';
+      if (pos < out_size - 1)
+        out[pos++] = 'x';
       for (int i = 0; buffer[i] && pos < out_size - 1; i++)
         out[pos++] = buffer[i];
       break;
