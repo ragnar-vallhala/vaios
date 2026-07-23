@@ -57,7 +57,11 @@ typedef enum {
 // C-side dispatch entry, called from SVCall_Handler with the stacked frame.
 // `args` points at the task's stacked {r0,r1,r2,r3}; the return value is written
 // back into args[0] by the handler.
-int32_t v_syscall_dispatch(uint32_t num, uint32_t *args);
+// Args and the return are pointer-width (uintptr_t/intptr_t), not uint32_t, so a
+// pointer argument or a pointer result (e.g. SYS_malloc) round-trips losslessly
+// on a 64-bit host as well as on 32-bit ARM, where uintptr_t == uint32_t and the
+// register ABI is unchanged.
+intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args);
 
 // --- Deferred-result blocking ------------------------------------------------
 // A blocking syscall (sem_take, mutex_lock) can't return its result inline: the

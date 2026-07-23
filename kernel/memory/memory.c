@@ -80,7 +80,7 @@ void v_heap_memory_init(void) {
   heap_mem_head->prev = NULL;
   vheap_index_insert(heap_mem_head);
 
-  V_KLOG(LOG_INFO, "[MEMORY] %s heap initialized at 0x%x size 0x%x",
+  V_KLOG(LOG_INFO, "[MEMORY] %s heap initialized at %p size 0x%x",
          vheap_index_name(), (void *)heap_mem_head, (unsigned)HEAP_SIZE);
 }
 
@@ -139,7 +139,7 @@ void *v_malloc(size_t size) {
   PERF_HEAP_ALLOC(blk->size, did_split);
 
   EXIT_CRITICAL();
-  V_KLOG(LOG_DEBUG, "[MEMORY] Allocated 0x%x size %u",
+  V_KLOG(LOG_DEBUG, "[MEMORY] Allocated %p size %u",
          (void *)((uint8_t *)blk + sizeof(Heap_Mem_Block)), (unsigned)blk->size);
   return (void *)((uint8_t *)blk + sizeof(Heap_Mem_Block));
 }
@@ -259,13 +259,13 @@ void v_free(void *ptr) {
       (Heap_Mem_Block *)((uint8_t *)ptr - sizeof(Heap_Mem_Block));
 
   if (!in_heap(block) || block->magic_number != SANITY_MAGIC_NUMBER) {
-    V_KLOG(LOG_ERROR, "[MEMORY] Invalid free or corrupted block at 0x%x", ptr);
+    V_KLOG(LOG_ERROR, "[MEMORY] Invalid free or corrupted block at %p", ptr);
     EXIT_CRITICAL();
     return;
   }
   if (block->status != MEM_ALOC) {
     V_KLOG(LOG_ERROR,
-           "[MEMORY] Double free or freeing non-allocated block at 0x%x", ptr);
+           "[MEMORY] Double free or freeing non-allocated block at %p", ptr);
     EXIT_CRITICAL();
     return;
   }
@@ -302,7 +302,7 @@ void v_free(void *ptr) {
   PERF_HEAP_FREE(coalesces);
 
   EXIT_CRITICAL();
-  V_KLOG(LOG_DEBUG, "[MEMORY] Deallocated pointer at 0x%x", ptr);
+  V_KLOG(LOG_DEBUG, "[MEMORY] Deallocated pointer at %p", ptr);
 }
 
 uint32_t v_get_heap_size(void) { return HEAP_SIZE; }
@@ -422,7 +422,7 @@ void *malloc(size_t size) {
 void free(void *ptr) {
 #if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
   if (v_in_thread_mode()) {
-    v_svc1(SYS_free, (uint32_t)(uintptr_t)ptr);
+    v_svc1(SYS_free, (uintptr_t)ptr);
     return;
   }
 #endif
@@ -476,7 +476,7 @@ void *calloc(size_t nmemb, size_t size) {
 void *realloc(void *ptr, size_t size) {
 #if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
-    return (void *)(uintptr_t)v_svc2(SYS_realloc, (uint32_t)(uintptr_t)ptr,
+    return (void *)(uintptr_t)v_svc2(SYS_realloc, (uintptr_t)ptr,
                                      (uint32_t)size);
 #endif
   if (!ptr)

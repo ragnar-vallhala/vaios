@@ -23,36 +23,38 @@ __attribute__((always_inline)) static inline int v_in_thread_mode(void) {
   return ipsr == 0u;
 }
 
-// Thin `svc 1` trampolines: number in r12, args in r0-r3, result in r0.
-__attribute__((always_inline)) static inline int32_t v_svc0(uint32_t n) {
+// Thin `svc 1` trampolines: number in r12, args in r0-r3, result in r0. Args and
+// result are pointer-width; on ARMv7-M uintptr_t/intptr_t are 32-bit, so the
+// registers and the ABI are byte-identical to a uint32_t ABI.
+__attribute__((always_inline)) static inline intptr_t v_svc0(uint32_t n) {
   register uint32_t r12 __asm__("r12") = n;
-  register int32_t ret __asm__("r0");
+  register intptr_t ret __asm__("r0");
   __asm__ volatile("svc 1" : "=r"(ret) : "r"(r12) : "memory");
   return ret;
 }
-__attribute__((always_inline)) static inline int32_t v_svc1(uint32_t n,
-                                                            uint32_t a0) {
+__attribute__((always_inline)) static inline intptr_t v_svc1(uint32_t n,
+                                                             uintptr_t a0) {
   register uint32_t r12 __asm__("r12") = n;
-  register uint32_t r0 __asm__("r0") = a0;
+  register uintptr_t r0 __asm__("r0") = a0;
   __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12) : "memory");
-  return (int32_t)r0;
+  return (intptr_t)r0;
 }
-__attribute__((always_inline)) static inline int32_t
-v_svc2(uint32_t n, uint32_t a0, uint32_t a1) {
+__attribute__((always_inline)) static inline intptr_t
+v_svc2(uint32_t n, uintptr_t a0, uintptr_t a1) {
   register uint32_t r12 __asm__("r12") = n;
-  register uint32_t r0 __asm__("r0") = a0;
-  register uint32_t r1 __asm__("r1") = a1;
+  register uintptr_t r0 __asm__("r0") = a0;
+  register uintptr_t r1 __asm__("r1") = a1;
   __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1) : "memory");
-  return (int32_t)r0;
+  return (intptr_t)r0;
 }
-__attribute__((always_inline)) static inline int32_t
-v_svc3(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
+__attribute__((always_inline)) static inline intptr_t
+v_svc3(uint32_t n, uintptr_t a0, uintptr_t a1, uintptr_t a2) {
   register uint32_t r12 __asm__("r12") = n;
-  register uint32_t r0 __asm__("r0") = a0;
-  register uint32_t r1 __asm__("r1") = a1;
-  register uint32_t r2 __asm__("r2") = a2;
+  register uintptr_t r0 __asm__("r0") = a0;
+  register uintptr_t r1 __asm__("r1") = a1;
+  register uintptr_t r2 __asm__("r2") = a2;
   __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1), "r"(r2) : "memory");
-  return (int32_t)r0;
+  return (intptr_t)r0;
 }
 
 #endif /* VAIOS_CORTEX_M4_PORT_SYSCALL_H */

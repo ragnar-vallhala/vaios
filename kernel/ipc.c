@@ -248,7 +248,7 @@ static int semaphore_take_common(sema_t *s, uint32_t ticks_to_wait) {
 int v_semaphore_take(SemaphoreHandle_t sem, uint32_t ticks_to_wait) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode()) // task-facing: trap into the kernel
-    return v_svc2(SYS_sem_take, (uint32_t)(uintptr_t)sem, ticks_to_wait);
+    return v_svc2(SYS_sem_take, (uintptr_t)sem, ticks_to_wait);
 #endif
   if (!sem)
     return VA_FAIL;
@@ -323,7 +323,7 @@ int v_mutex_lock(MutexHandle_t mtx, uint32_t ticks_to_wait) {
     return VA_FAIL;
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode()) // task-facing: trap into the kernel
-    return v_svc2(SYS_mutex_lock, (uint32_t)(uintptr_t)mtx, ticks_to_wait);
+    return v_svc2(SYS_mutex_lock, (uintptr_t)mtx, ticks_to_wait);
 #endif
   return mutex_lock_common((rmutex_t *)mtx, ticks_to_wait);
 }
@@ -376,7 +376,7 @@ static int semaphore_give_common(sema_t *s, int *pxHigherPriorityTaskWoken) {
 int v_semaphore_give(SemaphoreHandle_t sem) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode()) // task-facing: trap into the kernel
-    return v_svc1(SYS_sem_give, (uint32_t)(uintptr_t)sem);
+    return v_svc1(SYS_sem_give, (uintptr_t)sem);
 #endif
   if (!sem)
     return VA_FAIL;
@@ -435,7 +435,7 @@ static int ipc_name_ok(const char *name) {
 int v_sem_open(const char *name, int flags) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
-    return v_svc2(SYS_sem_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
+    return v_svc2(SYS_sem_open, (uintptr_t)name, (uint32_t)flags);
 #endif
   if (!ipc_name_ok(name))
     return -1;
@@ -528,7 +528,7 @@ static const v_file_ops ipc_mtx_ops = {
 int v_mtx_open(const char *name, int flags) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
-    return v_svc2(SYS_mtx_open, (uint32_t)(uintptr_t)name, (uint32_t)flags);
+    return v_svc2(SYS_mtx_open, (uintptr_t)name, (uint32_t)flags);
 #endif
   if (!ipc_name_ok(name))
     return -1;
@@ -736,7 +736,7 @@ int32_t v_wait_disarm_impl(void) {
 int v_wait(const int *fds, int nfds, uint32_t ticks) {
   if (!fds || nfds <= 0 || nfds > VAIOS_MAX_FDS)
     return -1;
-  int r = v_svc3(SYS_wait, (uint32_t)(uintptr_t)fds, (uint32_t)nfds, ticks);
+  int r = v_svc3(SYS_wait, (uintptr_t)fds, (uint32_t)nfds, ticks);
   if (r >= 0)
     return r;                   // a fd was already ready (nothing was armed)
   return v_svc0(SYS_wait_disarm); // blocked-then-woken / timeout: unlink + report
@@ -897,7 +897,7 @@ int v_mutex_unlock(MutexHandle_t mtx) {
     return VA_FAIL;
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode()) // task-facing: trap into the kernel
-    return v_svc1(SYS_mutex_unlock, (uint32_t)(uintptr_t)mtx);
+    return v_svc1(SYS_mutex_unlock, (uintptr_t)mtx);
 #endif
   return mutex_unlock_common((rmutex_t *)mtx);
 }
