@@ -151,8 +151,8 @@ watermark off, SVC off).
 ## Not done (out of scope)
 
 - Async stdin (`v_port_hw_console_rx_irq_init` is a no-op).
-- `VAIOS_SYSCALL_SVC` on host — off in the defconfig; the public API calls
-  straight through (no privilege boundary to trap). The host SVC *model* already
-  exists in `tests/stubs/port_syscall.h` (`v_host_svc` → `v_syscall_dispatch`) if
-  it is ever wanted.
+- A task↔kernel privilege boundary. `VAIOS_SYSCALL_SVC` *works* on host (off in
+  the defconfig; `HOST_MPU_ISOLATION` selects it), but `v_host_svc` only models
+  the `SVC`→`PendSV` switch — there is no privilege level to drop, so it isolates
+  nothing on its own (see Software MPU → Next slices).
 - macOS/other POSIX — Linux/glibc only for now (ucontext + `setitimer`).
