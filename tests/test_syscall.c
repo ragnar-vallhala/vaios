@@ -135,6 +135,41 @@ static void test_unpriv_pbus_finish_bad_rx_efault(void) {
   TEST_ASSERT_EQ(call(SYS_pbus_finish, 3, BAD_PTR, 8), T_EFAULT);
 }
 
+/* ---- Read-only memory every task can read (flash on target): accepted for
+ * reads, never for writes, and never past its end. */
+void stub_set_user_ro(uintptr_t lo, uintptr_t hi); /* tests/stubs/stubs.c */
+static const char fake_flash[32] = "i2c1";         /* stands in for .rodata */
+#define RO_LO ((uintptr_t)fake_flash)
+#define RO_HI ((uintptr_t)fake_flash + sizeof fake_flash)
+
+static void test_unpriv_ro_read_ok_write_refused(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  stub_set_user_ro(RO_LO, RO_HI);
+  TEST_ASSERT(call(SYS_write, 1, RO_LO, 16) != T_EFAULT); /* read from it */
+  TEST_ASSERT_EQ(call(SYS_read, 0, RO_LO, 16), T_EFAULT); /* write into it */
+  TEST_ASSERT_EQ(call(SYS_write, 1, RO_LO + 8, 32), T_EFAULT); /* runs past */
+  stub_set_user_ro(0, 0);
+}
+static void test_unpriv_ro_string_accepted(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_pbus_open, RO_LO, 0, 0), T_EFAULT); /* region off */
+  stub_set_user_ro(RO_LO, RO_HI);
+  TEST_ASSERT(call(SYS_pbus_open, RO_LO, 0, 0) != T_EFAULT);
+  stub_set_user_ro(0, 0);
+}
+static void test_unpriv_ro_pbus_tx_ok_rx_refused(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  stub_set_user_ro(RO_LO, RO_HI);
+  v_pbus_xfer_t *x = (v_pbus_xfer_t *)(uintptr_t)base;
+  *x = (v_pbus_xfer_t){.tx = fake_flash, .tx_len = 8};
+  /* Validation passes; the body then rejects fd 3 (no open bus handle). */
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), V_PBUS_EINVAL);
+  x->rx = (void *)RO_LO;
+  x->rx_len = 4;
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), T_EFAULT);
+  stub_set_user_ro(0, 0);
+}
+
 /* ---- A privileged caller bypasses the validation switch entirely. --------- */
 static void test_priv_caller_skips_validation(void) {
   (void)syscall_set_caller(BLOCK_SZ, /*unpriv=*/0);
@@ -185,6 +220,9 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+    TEST_CASE(test_unpriv_ro_read_ok_write_refused),
+    TEST_CASE(test_unpriv_ro_string_accepted),
+    TEST_CASE(test_unpriv_ro_pbus_tx_ok_rx_refused),
     TEST_CASE(test_priv_caller_skips_validation),
     TEST_CASE(test_priv_caller_ipc_not_denied),
     /* expected-fail regression test (see STAGE5_REVIEW_FINDINGS.md) */

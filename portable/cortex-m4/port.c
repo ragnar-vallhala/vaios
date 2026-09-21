@@ -41,6 +41,13 @@ int v_port_ptr_is_ram(const void *p) {
   return a >= 0x20000000u && a < (uintptr_t)&_estack;
 }
 
+int v_port_user_ro_region(uintptr_t a, uintptr_t *end) {
+  if (a < V_PORT_USER_RO_BASE || a >= V_PORT_USER_RO_BASE + V_PORT_USER_RO_SIZE)
+    return 0;
+  *end = V_PORT_USER_RO_BASE + V_PORT_USER_RO_SIZE;
+  return 1;
+}
+
 // Exception stack frame automatically pushed by Cortex-M on exception
 typedef struct {
   uint32_t r0;

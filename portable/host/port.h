@@ -62,6 +62,8 @@ void v_port_disable_interrupts(void); // block SIGALRM permanently (shutdown pat
 void v_port_halt(void);               // never returns
 void v_port_trigger_pendsv(void);     // request a context switch (deferred)
 int v_port_ptr_is_ram(const void *p); // no known map on host -> always 1
+// Executable text/rodata: readable by every task (see portable/cortex-m4).
+int v_port_user_ro_region(uintptr_t a, uintptr_t *end);
 
 // CPU-relax spin hint: yield the host CPU rather than burn it.
 void v_port_cpu_relax(void);

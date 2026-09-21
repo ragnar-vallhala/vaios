@@ -299,7 +299,7 @@ static void v_mpu_static_protect(void) {
    *        read+execute but cannot write flash; privileged code is unrestricted,
    *        so the KV store keeps working. */
   static const hal_mpu_region_t flash = {
-      .base = 0x08000000u, .size = HAL_MPU_SIZE_512KB,
+      .base = V_PORT_USER_RO_BASE, .size = HAL_MPU_SIZE_512KB, // == _SIZE
 #if VAIOS_MPU_FLASH_RO
       .ap = HAL_MPU_AP_RO,
 #else

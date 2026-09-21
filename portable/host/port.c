@@ -20,6 +20,7 @@
 #include "port.h"
 #include "task.h"  // TCB, current_task, set_next_task, v_task_exit_impl
 #include "utils.h" // v_kernel_tick
+#include <link.h>     // dl_iterate_phdr (v_port_user_ro_region)
 #include <sched.h>    // sched_yield
 #include <signal.h>
 #include <stddef.h>
@@ -274,6 +275,35 @@ uint32_t v_port_get_psp(void) { return 0; } // no PSP -> SP-based guards skip
 int v_port_ptr_is_ram(const void *p) {
   (void)p;
   return 1; // no known target map on host
+}
+
+// The "flash" of a host run: the executable's non-writable PT_LOAD segments
+// (text + rodata), where string literals and const tables live.
+typedef struct {
+  uintptr_t a, end;
+  int hit;
+} ro_query_t;
+static int ro_segment_cb(struct dl_phdr_info *info, size_t sz, void *arg) {
+  (void)sz;
+  ro_query_t *q = (ro_query_t *)arg;
+  for (int i = 0; i < info->dlpi_phnum; i++) {
+    const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+    if (ph->p_type != PT_LOAD || (ph->p_flags & PF_W))
+      continue;
+    uintptr_t lo = info->dlpi_addr + ph->p_vaddr, hi = lo + ph->p_memsz;
+    if (q->a >= lo && q->a < hi) {
+      q->end = hi;
+      q->hit = 1;
+    }
+  }
+  return 1; // the first object reported is the executable itself; stop there
+}
+int v_port_user_ro_region(uintptr_t a, uintptr_t *end) {
+  ro_query_t q = {.a = a};
+  dl_iterate_phdr(ro_segment_cb, &q);
+  if (q.hit)
+    *end = q.end;
+  return q.hit;
 }
 void v_port_disable_interrupts(void) { sigprocmask(SIG_BLOCK, &g_alrm, NULL); }
 void v_port_halt(void) {

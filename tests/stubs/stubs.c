@@ -53,6 +53,20 @@ int v_port_ptr_is_ram(const void *p) {
   return 1;
 }
 
+/* User-readable read-only region ("flash") for the validators. Empty unless a
+ * test sets it with stub_set_user_ro(). */
+static uintptr_t g_ro_lo, g_ro_hi;
+void stub_set_user_ro(uintptr_t lo, uintptr_t hi) {
+  g_ro_lo = lo;
+  g_ro_hi = hi;
+}
+int v_port_user_ro_region(uintptr_t a, uintptr_t *end) {
+  if (a < g_ro_lo || a >= g_ro_hi)
+    return 0;
+  *end = g_ro_hi;
+  return 1;
+}
+
 /* -------------------------------------------------------------------------
  * init_task_stack stub – trivial host implementation
  * ---------------------------------------------------------------------- */

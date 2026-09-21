@@ -402,10 +402,16 @@ __attribute__((noreturn)) void task_exit(void) {
 // task's own block [mem_block, mem_block+stack_size). Overflow-safe. `write` is
 // a hook for a future finer split; the whole block is RW today.
 int v_access_ok(const void *p, uint32_t len, int write) {
-  (void)write;
   TCB *t = current_task;
   if (!t || !t->mem_block)
     return 0;
+  uintptr_t a = (uintptr_t)p;
+  // Reads may also come from memory every task can already read itself (flash
+  // code + rodata: string literals, const tables). The port reports the same
+  // range its MPU grants unprivileged tasks, so this widens nothing.
+  uintptr_t ro_end;
+  if (!write && v_port_user_ro_region(a, &ro_end))
+    return len <= (uint32_t)(ro_end - a);
   uintptr_t base = (uintptr_t)t->mem_block;
 #if VAIOS_MPU_STACK_GUARD
   // The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack guard (MPU
@@ -415,27 +421,30 @@ int v_access_ok(const void *p, uint32_t len, int write) {
   base += VAIOS_MPU_GUARD_SIZE;
 #endif
   uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
-  uintptr_t a = (uintptr_t)p;
   if (a < base || a > end)
     return 0;
   return len <= (uint32_t)(end - a); // a+len <= end, no wrap (a<=end already)
 }
 
-// Bounded NUL scan for a user string, never reading past the caller's block.
+// Bounded NUL scan for a user string, never reading past the caller's block
+// or the user-readable read-only region it starts in (a literal in flash).
 // Returns the length (excluding NUL), or -1 if the pointer is out of bounds or
-// no NUL is found within `max` / the block.
+// no NUL is found within `max` / that region.
 long v_strnlen_user(const char *s, uint32_t max) {
   TCB *t = current_task;
   if (!t || !t->mem_block)
     return -1;
-  uintptr_t base = (uintptr_t)t->mem_block;
-#if VAIOS_MPU_STACK_GUARD
-  base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (see v_access_ok)
-#endif
-  uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
   uintptr_t a = (uintptr_t)s;
-  if (a < base || a >= end)
-    return -1;
+  uintptr_t end;
+  if (!v_port_user_ro_region(a, &end)) {
+    uintptr_t base = (uintptr_t)t->mem_block;
+#if VAIOS_MPU_STACK_GUARD
+    base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (v_access_ok)
+#endif
+    end = (uintptr_t)t->mem_block + t->stack_size;
+    if (a < base || a >= end)
+      return -1;
+  }
   uint32_t avail = (uint32_t)(end - a);
   uint32_t limit = avail < max ? avail : max;
   for (uint32_t i = 0; i < limit; i++)

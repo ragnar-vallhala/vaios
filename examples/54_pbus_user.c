@@ -17,7 +17,9 @@
  * (two tasks at different priorities contend for the bus), and the kernel
  * refuses user pointers into kernel memory with -14 (EFAULT) instead of
  * faulting — tx and rx buffers are both checked at submit, before the
- * transfer is queued, so a refused one never leaves the handle busy.
+ * transfer is queued, so a refused one never leaves the handle busy. Flash is
+ * readable by every task, so string literals are valid read-only arguments
+ * (the bus name, console text), but flash as rx is refused.
  * Prints "[pbus] <task> PASS" / "FAIL".
  */
 #ifndef NAVHAL
@@ -64,8 +66,8 @@ static void tim3_isr(void) {
 }
 
 // --- unprivileged side: console via fd 1, bus via the pbus syscalls ---------
-// Syscall pointers must lie in the task's own block (v_access_ok), which does
-// not include flash: string literals are formatted/copied onto the stack first.
+// Read-only syscall arguments may point into flash, so string literals go
+// straight in; results only ever land in the task's own memory.
 static void say(const char *fmt, int a, int b) {
   char buf[96];
   int n = print_fmt_buf(buf, sizeof buf, fmt, a, b);
@@ -79,8 +81,7 @@ static void user_task(void *arg) {
 
   say(id ? "[pbus] B nPRIV=%d\r\n" : "[pbus] A nPRIV=%d\r\n",
       v_port_is_privileged() ? 0 : 1, 0);
-  char bus_name[] = "i2c1"; // on the stack, not in flash
-  int fd = v_pbus_open(bus_name);
+  int fd = v_pbus_open("i2c1"); // name read straight from flash
   if (fd < 0) {
     say("[pbus] open failed %d\r\n", fd, 0);
     bad = 1;
@@ -116,7 +117,15 @@ static void user_task(void *arg) {
     say("[pbus] kernel rx rc=%d (want %d)\r\n", rc, EFAULT_RC);
     bad = 1;
   }
-  // Neither refusal left the handle busy.
+  // Flash is readable, never writable: as rx it is refused too.
+  v_pbus_xfer_t flash_rx = {.addr = addr, .tx = &reg, .tx_len = 1,
+                            .rx = (void *)"flash!", .rx_len = 4};
+  rc = v_pbus_xfer(fd, &flash_rx, 1, 100);
+  if (rc != EFAULT_RC) {
+    say("[pbus] flash rx rc=%d (want %d)\r\n", rc, EFAULT_RC);
+    bad = 1;
+  }
+  // None of the refusals left the handle busy.
   uint8_t rx[RX_LEN];
   v_pbus_xfer_t ok = {.addr = addr, .tx = &reg, .tx_len = 1,
                       .rx = rx, .rx_len = RX_LEN};
@@ -124,7 +133,9 @@ static void user_task(void *arg) {
     bad = 1;
 
   v_file_close(fd);
-  say(bad ? "[pbus] %c FAIL\r\n" : "[pbus] %c PASS\r\n", id ? 'B' : 'A', 0);
+  v_file_write(1, "[pbus] ", 7); // literals from flash
+  v_file_write(1, id ? "B" : "A", 1);
+  v_file_write(1, bad ? " FAIL\r\n" : " PASS\r\n", 7);
   for (;;)
     v_delay(1000);
 }
