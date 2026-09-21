@@ -1,0 +1,18 @@
+# vaios host-run defconfig — configures a build that RUNS the scheduler on the
+# host (VAIOS_PORT=host). Only genuine host differences, all from not being a
+# real MCU:
+#
+#   - VAIOS_ARCH_HOST selects the host port.
+#   - The stack-overflow watermark is off: the task runs on a large ucontext
+#     stack the port allocates separately, and task->sp holds the ucontext
+#     pointer, not a descending SP.
+#   - SVC syscalls off: no privilege boundary on host, so the public API calls
+#     straight through (no trap).
+#
+# Task stack sizes are NOT special-cased: apps pass the same sizes as on target
+# (>= VAIOS_ARCH_MIN_STACK, 128 B); the port gives each task a real large stack
+# under the hood.
+CONFIG_VAIOS_ARCH_HOST=y
+CONFIG_TASK_STACK_WATERMARK_ENABLE=n
+CONFIG_HEAP_WATERMARK_ENABLE=n
+CONFIG_VAIOS_SYSCALL_SVC=n

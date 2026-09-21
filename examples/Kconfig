@@ -95,6 +95,16 @@ config EXAMPLE_KMSG_TEST
 	select VAIOS_SYSCALL_SVC
 	select VAIOS_DEVFS
 
+config EXAMPLE_HOST_MPU_ISOLATION
+	bool "host_mpu_isolation"
+	# Host software-MPU per-task isolation demo: A writes into B's closed stack
+	# and faults. Needs the whole Phase-3 closure (select pulls no deps of its
+	# own): SVC path + static protect + the unprivileged/per-task separation.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_MPU_USER_SEPARATION
+
 config EXAMPLE_MPU_FAULT
 	bool "mpu_fault"
 	select VAIOS_MPU_ENABLE

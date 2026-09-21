@@ -53,6 +53,16 @@ static void test_pf_percent_x_lower(void) {
               strcmp(buf, "DEADBEEF") == 0); /* tolerate either case */
 }
 
+/* %p prints the full pointer width (uintptr_t), 0x-prefixed, and consumes
+ * exactly one arg — so a trailing specifier still reads its own value (the
+ * host-port desync regression: %p emitted literally ate the next arg). */
+static void test_pf_percent_p(void) {
+  char buf[64] = {0};
+  void *p = (void *)(uintptr_t)0xABCD;
+  print_fmt_buf(buf, sizeof(buf), "%p tail=%u", p, 7u);
+  TEST_ASSERT(strcmp(buf, "0xabcd tail=7") == 0);
+}
+
 static void test_pf_percent_s(void) {
   char buf[32] = {0};
   print_fmt_buf(buf, sizeof(buf), "value=%s", "world");
@@ -187,6 +197,7 @@ static const test_case_t utils_cases[] = {
     TEST_CASE(test_pf_percent_d_zero),
     TEST_CASE(test_pf_percent_u),
     TEST_CASE(test_pf_percent_x_lower),
+    TEST_CASE(test_pf_percent_p),
     TEST_CASE(test_pf_percent_s),
     TEST_CASE(test_pf_percent_c),
     TEST_CASE(test_pf_double_percent),

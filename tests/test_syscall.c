@@ -37,10 +37,10 @@ uint32_t syscall_set_caller(uint32_t size, int unprivileged);
 /* A pointer well outside the caller's block (integer-derived to avoid forming
  * an out-of-bounds pointer, which UBSan would flag). v_access_ok only does
  * address math — it never dereferences — so this is safe to pass. */
-#define BAD_PTR ((uint32_t)(uintptr_t)0x1000u)
+#define BAD_PTR ((uintptr_t)0x1000u)
 
-static int32_t call(uint32_t num, uint32_t a0, uint32_t a1, uint32_t a2) {
-  uint32_t args[4] = {a0, a1, a2, 0};
+static intptr_t call(uint32_t num, uintptr_t a0, uintptr_t a1, uintptr_t a2) {
+  uintptr_t args[4] = {a0, a1, a2, 0};
   return v_syscall_dispatch(num, args);
 }
 

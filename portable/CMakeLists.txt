@@ -13,6 +13,13 @@ file(GLOB_RECURSE PORTABLE_SOURCES
      "${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT}/*.c"
      "${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT}/*.s")
 
+# The SVC dispatch (v_syscall_dispatch) is portable C that happens to live under
+# cortex-m4/. The host port needs it for SVC too; pull it in (it compiles to
+# nothing when VAIOS_SYSCALL_SVC is off, being wholly #if-guarded).
+if(PORT_IS_HOSTED)
+  list(APPEND PORTABLE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/cortex-m4/syscall.c")
+endif()
+
 # qemu_irq.c is the non-NAVHAL interrupt shim (it defines
 # hal_interrupt_attach_callback / hal_enable_interrupt). On a NAVHAL build the
 # real HAL provides those, so drop the shim to avoid duplicate definitions.

@@ -64,6 +64,9 @@ void init_task_stack(TCB *task) {
   task->sp = task->mem_block;
 }
 
+/* No separate per-task context in the unit-test stubs — nothing to free. */
+void v_port_free_task_stack(TCB *task) { (void)task; }
+
 /* -------------------------------------------------------------------------
  * _heap_start – backing storage for the kernel heap on the host.
  *

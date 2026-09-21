@@ -19,6 +19,11 @@ endif()
 if(NOT VAIOS_MODULE_PERF)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "perf\\.c$")
 endif()
+# syscalls.c is bare-metal newlib retargeting (_sbrk/_write/_read/_exit ...). On
+# the host those clash with glibc's own, and the host port needs none of them.
+if(PORT_IS_HOSTED)
+  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "syscalls\\.c$")
+endif()
 
 add_library(vaios STATIC ${VAIOS_SOURCES})
 

@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
 # Prevent macOS-specific flags
-set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_OSX_ARCHITECTURES "" CACHE STRING "" FORCE)
 set(CMAKE_C_FLAGS_INIT "" CACHE STRING "" FORCE)
 set(CMAKE_CXX_FLAGS_INIT "" CACHE STRING "" FORCE)
@@ -20,6 +19,13 @@ if(NOT EXISTS "${_vaios_port_arch}")
     "Add portable/${VAIOS_PORT}/arch.cmake, or -DVAIOS_PORT=cortex-m4.")
 endif()
 include("${_vaios_port_arch}")
+
+# A bare-metal port cross-compiles (CMAKE_SYSTEM_NAME triggers cross mode); the
+# host port builds native, so it leaves the system name at CMake's default. Set
+# before project(), after arch.cmake has told us which kind of port this is.
+if(NOT PORT_IS_HOSTED)
+  set(CMAKE_SYSTEM_NAME Generic)
+endif()
 
 # Toolchain settings (prefix from the selected port's arch.cmake)
 set(TOOLCHAIN_PREFIX ${PORT_TOOLCHAIN_PREFIX})
@@ -173,7 +179,14 @@ set(VAIOS_AUTOCONF "${CMAKE_BINARY_DIR}/vaios_autoconf.h")
 # mirrors NavHAL's samples/Kconfig SAMPLE_* / --sample-override mechanism.
 set(VAIOS_CONFIG "${CMAKE_BINARY_DIR}/.config" CACHE FILEPATH
     "Kconfig .config the build reads (build-local artifact by default)")
-set(VAIOS_DEFCONFIG "${CMAKE_CURRENT_SOURCE_DIR}/defconfig" CACHE FILEPATH
+# The host port seeds from its own defconfig (host arch, ucontext-sized stacks,
+# watermark off, ...); bare-metal ports use the top-level defconfig.
+if(PORT_IS_HOSTED)
+  set(_vaios_default_defconfig "${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT}/defconfig")
+else()
+  set(_vaios_default_defconfig "${CMAKE_CURRENT_SOURCE_DIR}/defconfig")
+endif()
+set(VAIOS_DEFCONFIG "${_vaios_default_defconfig}" CACHE FILEPATH
     "Kconfig defconfig used to seed VAIOS_CONFIG on first configure")
 set(_vaios_dotconfig "${VAIOS_CONFIG}")
 # Env the generator needs to pull NavHAL's tree in: NAVHAL_KCONFIG names the file
@@ -255,7 +268,11 @@ if(NAVHAL)
     endif()
 endif()
 
-if(VAIOS_FPU)
+# The float ABI is an ARM concept. On the host there is no -mfloat-abi; the
+# native gcc uses the host's FPU directly.
+if(PORT_IS_HOSTED)
+    set(FPU_FLAGS "")
+elseif(VAIOS_FPU)
     set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
     add_compile_definitions(_FPU_ENABLED __FPU_PRESENT=1)
     message(STATUS "VAIOS: FPU Support Enabled")
@@ -271,7 +288,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_ASM_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS}")
 set(CMAKE_C_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS} -Wall -O2 -g -std=c11")
 
-set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs") # can be
+# A bare-metal port links against a board linker script with newlib specs; the
+# host port links a normal native executable against the system libc.
+if(PORT_IS_HOSTED)
+  set(CMAKE_EXE_LINKER_FLAGS "")
+else()
+  set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs")
+endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${CMAKE_SYSTEM_PROCESSOR})
 

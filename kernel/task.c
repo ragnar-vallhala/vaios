@@ -292,7 +292,7 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   add_to_ready_list(task);
   EXIT_CRITICAL();
   V_KLOG(LOG_DEBUG,
-        "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack "
+        "[TASK] Created Task id: %u priority: %u memory block addr: %p stack "
         "size: 0x%x",
         task->task_id, priority, task->mem_block, size);
   return task->task_id;
@@ -508,6 +508,7 @@ void idle_task_function(void *arg) {
       if (to_free) {
         V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
               to_free->task_id);
+        v_port_free_task_stack(to_free); // release any separate port context
         if (to_free->mem_block) {
           v_free(to_free->mem_block);
           to_free->mem_block = NULL;

@@ -22,11 +22,11 @@ int v_test_caller_unprivileged = 0;
 /* 0 = thread mode (a task), nonzero = inside the dispatch (handler mode). */
 int v_test_in_handler = 0;
 
-int32_t v_host_svc(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
-  uint32_t args[4] = {a0, a1, a2, 0};
+intptr_t v_host_svc(uint32_t n, uintptr_t a0, uintptr_t a1, uintptr_t a2) {
+  uintptr_t args[4] = {a0, a1, a2, 0};
   int prev = v_test_in_handler;
   v_test_in_handler = 1; /* dispatch runs in "handler mode" */
-  int32_t r = v_syscall_dispatch(n, args);
+  intptr_t r = v_syscall_dispatch(n, args);
   v_test_in_handler = prev;
   return r;
 }

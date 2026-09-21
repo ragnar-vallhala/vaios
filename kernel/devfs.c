@@ -112,7 +112,7 @@ void v_fd_close_all(TCB *t) {
 int v_file_open(const char *path, int flags) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
-    return v_svc2(SYS_open, (uint32_t)(uintptr_t)path, (uint32_t)flags);
+    return v_svc2(SYS_open, (uintptr_t)path, (uint32_t)flags);
 #endif
   (void)flags;
   dev_node_t *node = dev_find(path);
@@ -124,7 +124,7 @@ int v_file_open(const char *path, int flags) {
 int v_file_write(int fd, const void *buf, uint32_t len) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
-    return v_svc3(SYS_write, (uint32_t)fd, (uint32_t)(uintptr_t)buf, len);
+    return v_svc3(SYS_write, (uint32_t)fd, (uintptr_t)buf, len);
 #endif
   v_fd_entry *e = fd_lookup(fd);
   if (!e || !e->ops->write)
@@ -135,7 +135,7 @@ int v_file_write(int fd, const void *buf, uint32_t len) {
 int v_file_read(int fd, void *buf, uint32_t len) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
-    return v_svc3(SYS_read, (uint32_t)fd, (uint32_t)(uintptr_t)buf, len);
+    return v_svc3(SYS_read, (uint32_t)fd, (uintptr_t)buf, len);
 #endif
   v_fd_entry *e = fd_lookup(fd);
   if (!e || !e->ops->read)

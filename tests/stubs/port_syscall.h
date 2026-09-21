@@ -15,16 +15,17 @@
 #include <stdint.h>
 
 extern int v_test_in_handler; // 0 = thread mode (a task), nonzero = in dispatch
-int32_t v_host_svc(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2);
+intptr_t v_host_svc(uint32_t n, uintptr_t a0, uintptr_t a1, uintptr_t a2);
 static inline int v_in_thread_mode(void) { return v_test_in_handler == 0; }
-static inline int32_t v_svc0(uint32_t n) { return v_host_svc(n, 0, 0, 0); }
-static inline int32_t v_svc1(uint32_t n, uint32_t a0) {
+static inline intptr_t v_svc0(uint32_t n) { return v_host_svc(n, 0, 0, 0); }
+static inline intptr_t v_svc1(uint32_t n, uintptr_t a0) {
   return v_host_svc(n, a0, 0, 0);
 }
-static inline int32_t v_svc2(uint32_t n, uint32_t a0, uint32_t a1) {
+static inline intptr_t v_svc2(uint32_t n, uintptr_t a0, uintptr_t a1) {
   return v_host_svc(n, a0, a1, 0);
 }
-static inline int32_t v_svc3(uint32_t n, uint32_t a0, uint32_t a1, uint32_t a2) {
+static inline intptr_t v_svc3(uint32_t n, uintptr_t a0, uintptr_t a1,
+                              uintptr_t a2) {
   return v_host_svc(n, a0, a1, a2);
 }
 
