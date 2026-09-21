@@ -1,7 +1,7 @@
 # Plan — Bus IPC Subsystem
 
 **Date:** 2026-07-02 · **Revised:** 2026-09-22
-**Status:** In progress — B0–B3 done; revision notes below
+**Status:** In progress — B0–B3 + zero-copy done; revision notes below
 **Scope:** single MCU, single firmware, single address space
 **Source:** `Bus Subsystem Design Document`
 **Branch:** `feat/bus-subsystem`
@@ -611,6 +611,42 @@ it lands; nothing is declared before it works.
 
 ---
 
+### 11.1 Zero-copy path (added 2026-09-22)
+
+Hot paths that used to reach for the lock-free SPSC ring asked for a copy-free
+variant. For messages that fit one block (`block_size - V_BUS_HDR_SIZE` bytes;
+a longer one isn't contiguous):
+
+- **publish:** `v_bus_reserve(topic, max_len, &ticket)` hands out a pointer
+  into a pool block (same drop/overwrite policy as publish); the producer
+  fills it and `v_bus_commit(topic, ticket, len)` links it, or `v_bus_cancel`.
+  A reserved block is marked `used = 2`, so a stale or repeated ticket can't
+  re-link a queued message.
+- **read:** `v_bus_peek(sub, &data, &len, &missed)` points at the message in
+  place; `v_bus_release(sub)` consumes it. The message is **pinned** while
+  peeked: eviction stops at a pinned oldest message (an overwrite topic drops
+  meanwhile), so the view stays valid without a retry loop. The copying `pop`
+  keeps the epoch retry instead, so a copying reader never holds the writer up.
+
+Measured on Renode (STM32F4 model, DWT cycles, 16-byte message, 1000-message
+average; Renode doesn't model flash wait states, so compare, don't quote):
+
+| Path | cycles/msg |
+|---|---|
+| SPSC zero-copy (ptr/commit) | 100 |
+| SPSC copy | 318 |
+| **bus zero-copy, 1 subscriber** | **298** |
+| bus copy (publish + pop), 1 subscriber | 475 |
+| MPMC try_push + try_pop | 668 |
+| **bus zero-copy, fan-out to 3** | **514** |
+| bus copy, fan-out to 3 | 882 |
+| 3 × SPSC zero-copy / copy | 303 / 959 |
+
+So: point-to-point hot paths stay on SPSC; for fan-out the bus is within 1.7×
+of three zero-copy SPSC rings while giving decoupling, overwrite + `missed`,
+and (later) QoS. The bus masks the kernel IRQ band for a few short critical
+sections per operation; SPSC never masks.
+
 ## 12. Configuration knobs
 
 Kconfig symbols in the root `Kconfig`, added **by the phase that needs them**
@@ -690,6 +726,7 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **B1** | Block-pool allocator: free list, all-or-nothing multi-block, critical section (§4.1, §7) | unit: invariant H1 holds under fuzz — **done** |
 | **B2** | Topics + index-linked queue + single-producer publish + polling pop (§3, §5.1, §6.1); full pool = drop | unit: publish/pop ordering, ref-count reclaim — **done** |
 | **B3** | Unsubscribe (H6), overwrite overflow policy (§5.3), slow-subscriber recovery with `missed` (§5.2) | unit: H4/H5/H6 — **done** |
+| **ZC** | Zero-copy path for single-block messages: `v_bus_reserve`/`commit`/`cancel`, `v_bus_peek`/`release`; a peeked message is pinned against eviction (§11.1) | unit: pinning vs eviction under fuzz; Renode benchmark — **done** |
 | **B4** | QoS: guaranteed/best-effort, elastic borrowing, guard region, reclaim (§4.2–4.4) | unit: H2/H3, reclaim bounded |
 | **B5** | Multi-producer 3-stage pipeline + PI (§6.2) | unit: H7/H8/H11; concurrency on the host port (real scheduler) + SITL |
 | **B6** | Notification engine: blocking + callback worker task (§6.4) | SITL: ISR publish → callback wake |

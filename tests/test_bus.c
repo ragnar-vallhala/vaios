@@ -3,7 +3,8 @@
  * @brief Bus IPC subsystem (kernel/bus.c), per docs/plans/bus-subsystem.md:
  *        B1 the block-pool allocator (gate: invariant H1 holds under fuzz),
  *        B2 topics, publish and polling pop (gate: ordering, ref-count reclaim),
- *        B3 unsubscribe, overwrite, slow subscribers (gate: H4/H5/H6).
+ *        B3 unsubscribe, overwrite, slow subscribers (gate: H4/H5/H6),
+ *        and the zero-copy path (reserve/commit, peek/release, pinning).
  */
 #include "bus.h"
 #include "framework.h"
@@ -502,6 +503,184 @@ static void test_bus_fuzz_churn_overwrite(void) {
   TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
 }
 
+/* ---- Zero copy: reserve/commit, peek/release ------------------------------ */
+static void test_bus_zc_reserve_commit(void) {
+  mreset();
+  v_bus_subscribe(&tp, &sa);
+  uint16_t t, len;
+  uint32_t *w = v_bus_reserve(&tp, sizeof(uint32_t), &t);
+  TEST_ASSERT(w != NULL);
+  TEST_ASSERT((uint8_t *)w > mp_blocks && (uint8_t *)w < mp_blocks + sizeof mp_blocks);
+  *w = 0xC0FFEEu; /* written in place */
+  TEST_ASSERT_EQ(v_bus_pop(&sa, &len, 0, &len, NULL), VA_FAIL); /* not yet */
+  TEST_ASSERT_EQ(v_bus_commit(&tp, t, sizeof(uint32_t)), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_commit(&tp, t, sizeof(uint32_t)), V_BUS_EINVAL); /* twice */
+  TEST_ASSERT_EQ(v_bus_cancel(&tp, t), V_BUS_EINVAL); /* already published */
+  uint32_t v;
+  TEST_ASSERT_EQ(pop_u32(&sa, &v), VA_PASS);
+  TEST_ASSERT_EQ(v, 0xC0FFEEu);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+  /* limits: one block's payload; commit no longer than that */
+  TEST_ASSERT_NULL(v_bus_reserve(&tp, FIRST + 1, &t));
+  TEST_ASSERT(v_bus_reserve(&tp, FIRST, &t) != NULL);
+  TEST_ASSERT_EQ(v_bus_commit(&tp, t, FIRST + 1), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_cancel(&tp, t), VA_PASS); /* given back */
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  /* committed with nobody subscribed any more: nothing is kept */
+  v_bus_reserve(&tp, 4, &t);
+  v_bus_unsubscribe(&sa);
+  TEST_ASSERT_EQ(v_bus_commit(&tp, t, 4), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+}
+
+static void test_bus_zc_peek_release(void) {
+  mreset();
+  v_bus_subscribe(&tp, &sa);
+  v_bus_subscribe(&tp, &sb);
+  uint32_t v = 41, missed = 9;
+  v_bus_publish(&tp, &v, sizeof v);
+  const uint32_t *p;
+  uint16_t len;
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, &missed), VA_PASS);
+  TEST_ASSERT_EQ(*p, 41u);                /* read in place */
+  TEST_ASSERT_EQ(len, sizeof v);
+  TEST_ASSERT_EQ(missed, 0u);
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, NULL), V_BUS_EBUSY);
+  TEST_ASSERT_EQ(v_bus_pop(&sa, &v, sizeof v, &len, NULL), V_BUS_EBUSY);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_release(&sa), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_release(&sa), V_BUS_EINVAL); /* nothing held */
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC - 1);   /* B still owes it */
+  TEST_ASSERT_EQ(v_bus_peek(&sb, (const void **)&p, &len, NULL), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_release(&sb), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, NULL), VA_FAIL);
+  /* a multi-block message isn't contiguous: peek refuses, pop reads it */
+  static uint8_t big[FIRST + 1], back[sizeof big];
+  v_bus_publish(&tp, big, sizeof big);
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, NULL), V_BUS_ESPLIT);
+  TEST_ASSERT_EQ(v_bus_pop(&sa, back, sizeof back, &len, NULL), VA_PASS);
+}
+
+/* A peeked (pinned) oldest message is never evicted under its reader: the
+ * overwrite topic drops instead until the peek is released. */
+static void test_bus_zc_pinned_not_evicted(void) {
+  wreset();
+  v_bus_subscribe(&tw, &sa);
+  for (uint32_t i = 0; i < MC; i++)
+    v_bus_publish(&tw, &i, sizeof i); /* full */
+  const uint32_t *p;
+  uint16_t len, t;
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, NULL), VA_PASS);
+  uint32_t v = 99;
+  TEST_ASSERT_EQ(v_bus_publish(&tw, &v, sizeof v), VA_FAIL);
+  TEST_ASSERT_NULL(v_bus_reserve(&tw, 4, &t));
+  TEST_ASSERT_EQ(*p, 0u); /* still intact */
+  v_bus_release(&sa);     /* #0 consumed: a block is free again */
+  TEST_ASSERT_EQ(v_bus_publish(&tw, &v, sizeof v), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_publish(&tw, &v, sizeof v), VA_PASS); /* evicts #1 */
+  uint32_t missed;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 2u);
+  TEST_ASSERT_EQ(missed, 1u);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  /* unsubscribing with a peek held drops the pin — also when another reader
+   * still owes that message, so it stays queued and must be evictable. */
+  v_bus_subscribe(&tw, &sb);
+  v = 7;
+  v_bus_publish(&tw, &v, sizeof v); /* owed by A and B */
+  while (pop_m(&sa, &v, &missed) == VA_PASS && v != 7u)
+    ; /* A catches up to it... */
+  for (uint32_t i = 0; i < MC; i++)
+    v_bus_publish(&tw, &i, sizeof i); /* ...then fill the pool again */
+  TEST_ASSERT_EQ(v_bus_peek(&sb, (const void **)&p, &len, NULL), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_unsubscribe(&sb), VA_PASS); /* A still owes the rest */
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);       /* no stale pin left */
+  TEST_ASSERT_EQ(v_bus_publish(&tw, &v, sizeof v), VA_PASS); /* evictable */
+  TEST_ASSERT_EQ(v_bus_unsubscribe(&sa), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Randomised, overwrite topic: copy publish, reserve+commit, reserve+cancel,
+ * copy pop and peek+release — peeks HELD across other steps so pinning races
+ * eviction. Every read is in order with missed == the exact gap; nothing
+ * read in place ever changes under its reader; invariant every step. */
+static void test_bus_fuzz_zero_copy(void) {
+  wreset();
+  v_bus_sub_t *subs[3] = {&sa, &sb, &sc};
+  uint32_t expect[3] = {0, 0, 0}, next = 0, seen[3] = {0};
+  const uint32_t *held[3] = {NULL, NULL, NULL};
+  for (int k = 0; k < 3; k++)
+    v_bus_subscribe(&tw, subs[k]);
+  int failures = 0, pinned_drops = 0;
+  uint32_t x = 0x85EBCA6Bu;
+  for (int op = 0; op < 20000 && !failures; op++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    int k = (int)((x >> 4) % 3u);
+    uint16_t t, len;
+    uint32_t v, missed;
+    switch (x & 15u) {
+    case 0: case 1: case 2: /* copy publish */
+      if (v_bus_publish(&tw, &next, sizeof next) == VA_PASS)
+        next++;
+      else
+        pinned_drops++; /* only a pinned head can make overwrite fail */
+      break;
+    case 3: case 4: { /* zero-copy publish */
+      uint32_t *w = v_bus_reserve(&tw, sizeof next, &t);
+      if (!w) {
+        pinned_drops++;
+        break;
+      }
+      *w = next;
+      failures += v_bus_commit(&tw, t, sizeof next) != VA_PASS;
+      next++;
+      break;
+    }
+    case 5: /* reserve, then change our mind */
+      if (v_bus_reserve(&tw, 4, &t))
+        failures += v_bus_cancel(&tw, t) != VA_PASS;
+      break;
+    case 6: case 7: case 8: /* copy pop */
+      if (!held[k] && pop_m(subs[k], &v, &missed) == VA_PASS) {
+        failures += v != expect[k] + missed;
+        expect[k] = v + 1;
+      }
+      break;
+    case 9: case 10: case 11: /* peek and hold */
+      if (!held[k] && v_bus_peek(subs[k], (const void **)&held[k], &len,
+                                 &missed) == VA_PASS) {
+        seen[k] = *held[k];
+        failures += seen[k] != expect[k] + missed;
+      }
+      break;
+    default: /* release a held peek — its value must not have changed */
+      if (held[k]) {
+        failures += *held[k] != seen[k];
+        failures += v_bus_release(subs[k]) != VA_PASS;
+        expect[k] = seen[k] + 1;
+        held[k] = NULL;
+      }
+    }
+    for (int j = 0; j < 3; j++) /* a held view stays valid throughout */
+      failures += held[j] && *held[j] != seen[j];
+    failures += v_bus_check(&mb) != VA_PASS;
+  }
+  for (int k = 0; k < 3; k++) {
+    if (held[k])
+      v_bus_release(subs[k]);
+    v_bus_unsubscribe(subs[k]);
+  }
+  TEST_ASSERT_EQ(failures, 0);
+  TEST_ASSERT(pinned_drops > 0); /* pinning really did block eviction */
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
 static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_init_validates),
     TEST_CASE(test_bus_alloc_all_or_nothing),
@@ -523,10 +702,14 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_overwrite_no_futile_eviction),
     TEST_CASE(test_bus_evicted_mid_pop_rereads),
     TEST_CASE(test_bus_fuzz_churn_overwrite),
+    TEST_CASE(test_bus_zc_reserve_commit),
+    TEST_CASE(test_bus_zc_peek_release),
+    TEST_CASE(test_bus_zc_pinned_not_evicted),
+    TEST_CASE(test_bus_fuzz_zero_copy),
 };
 
 const test_suite_t bus_suite = {
-    .name = "Bus IPC: pool (B1), topics (B2), churn + overwrite (B3)",
+    .name = "Bus IPC: pool, topics, churn + overwrite, zero copy",
     .cases = bus_cases,
     .count = TEST_COUNT(bus_cases),
 };
