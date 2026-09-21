@@ -105,6 +105,7 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/vaios.c"
     "${VAIOS_ROOT}/kernel/terminal.c"
     "${VAIOS_ROOT}/kernel/perf.c"
+    "${VAIOS_ROOT}/kernel/bus.c"
 )
 
 # -------------------------------------------------------------------------
@@ -126,6 +127,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_task_list.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_scheduler.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_ipc.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_bus.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_structure.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vaios.c"

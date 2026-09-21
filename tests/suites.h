@@ -24,6 +24,7 @@ extern const test_suite_t memory_suite;
 extern const test_suite_t task_list_suite;
 extern const test_suite_t scheduler_suite;
 extern const test_suite_t ipc_suite;
+extern const test_suite_t bus_suite;
 extern const test_suite_t structure_suite;
 extern const test_suite_t vfs_suite;
 extern const test_suite_t vaios_suite;
