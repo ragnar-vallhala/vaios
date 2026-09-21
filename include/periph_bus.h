@@ -23,6 +23,11 @@
 //   static void i2c1_dma_done(void) { v_pbus_done_isr(&i2c1, 0); }
 //   static void i2c1_timer(void)    { v_pbus_tick_isr(&i2c1); }
 // A zero-initialised v_pbus_t is ready to use.
+//
+// Privileged callers only (kernel code, ISRs, privileged tasks): the critical
+// sections are BASEPRI writes, which an unprivileged task's MSR silently skips,
+// and there are no syscall wrappers. Under VAIOS_MPU_USER_SEPARATION, drive the
+// bus from a privileged driver task, not from user tasks.
 
 #include "ipc.h"
 #include <stdint.h>

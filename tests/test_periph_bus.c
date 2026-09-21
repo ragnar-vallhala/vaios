@@ -152,6 +152,31 @@ static void test_pbus_lock_is_per_bus(void) {
   TEST_ASSERT_EQ(bus.locked, 0);
 }
 
+/* A stray DMA-complete (late IRQ, or a sync holder's own DMA on the same
+ * callback) must not release a v_pbus_lock holder and start a queued job. */
+static void test_pbus_stray_done_keeps_lock(void) {
+  reset();
+  TEST_ASSERT_EQ(v_pbus_lock(&bus, 0, 0), VA_PASS);
+  v_pbus_job_t a = JOB(1, 0);
+  v_pbus_submit(&bus, &a);
+  v_pbus_done_isr(&bus, 0);
+  TEST_ASSERT_EQ(bus.locked, 1);
+  TEST_ASSERT_EQ(n_order, 0);
+  v_pbus_unlock(&bus);
+  TEST_ASSERT_EQ(n_order, 1);
+}
+
+/* Registering a cyclic job twice is rejected, not a self-linked list that
+ * spins v_pbus_tick_isr forever. */
+static void test_pbus_cyclic_double_add_rejected(void) {
+  reset();
+  v_pbus_job_t a = JOB(1, 0);
+  a.period = 1;
+  TEST_ASSERT_EQ(v_pbus_cyclic_add(&bus, &a), VA_PASS);
+  TEST_ASSERT_EQ(v_pbus_cyclic_add(&bus, &a), VA_FAIL);
+  TEST_ASSERT_NULL(a.cyc_next);
+}
+
 static const test_case_t bus_cases[] = {
     TEST_CASE(test_pbus_priority_then_fifo),
     TEST_CASE(test_pbus_double_submit_rejected),
@@ -161,6 +186,8 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_pbus_cyclic),
     TEST_CASE(test_pbus_abort_unsticks),
     TEST_CASE(test_pbus_lock_is_per_bus),
+    TEST_CASE(test_pbus_stray_done_keeps_lock),
+    TEST_CASE(test_pbus_cyclic_double_add_rejected),
 };
 const test_suite_t pbus_suite = {
     .name = "Bus arbiter",

@@ -18,17 +18,21 @@ static void enqueue(v_pbus_t *bus, v_pbus_job_t *job) {
   job->state = JOB_QUEUED;
 }
 
-// Give the bus up; runs the owner's done() outside the critical section.
-static void release(v_pbus_t *bus, int rc) {
+// Finish the active async job; runs its done() outside the critical section.
+// Returns 0 if none was active (a stray/late DMA-complete, or the bus is held
+// by v_pbus_lock): only v_pbus_unlock may clear a sync lock.
+static int release(v_pbus_t *bus, int rc) {
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
   v_pbus_job_t *job = bus->active;
   bus->active = NULL;
-  bus->locked = 0;
   if (job)
     job->state = JOB_IDLE; // before done(), so done() may resubmit
   EXIT_CRITICAL_FROM_ISR(s);
-  if (job && job->done)
+  if (!job)
+    return 0;
+  if (job->done)
     job->done(job, rc);
+  return 1;
 }
 
 // If the bus is idle, hand it to the head of the queue. Loops only past async
@@ -88,9 +92,10 @@ void v_pbus_done_isr(v_pbus_t *bus, int rc) {
 }
 
 int v_pbus_abort_isr(v_pbus_t *bus, int rc) {
-  if (!bus || !bus->active)
+  // Checked inside release()'s critical section, not before it, so a DMA
+  // IRQ landing in between can't make us release the NEXT owner.
+  if (!bus || !release(bus, rc))
     return VA_FAIL; // idle, or held by v_pbus_lock (its HAL call times out)
-  release(bus, rc);
   dispatch(bus);
   return VA_PASS;
 }
@@ -127,15 +132,22 @@ int v_pbus_lock(v_pbus_t *bus, uint8_t prio, uint32_t ticks_to_wait) {
 void v_pbus_unlock(v_pbus_t *bus) {
   if (!bus || !bus->locked)
     return;
-  release(bus, 0);
+  bus->locked = 0; // only the holder writes it while set; no race to guard
   dispatch(bus);
 }
 
 int v_pbus_cyclic_add(v_pbus_t *bus, v_pbus_job_t *job) {
   if (!bus || !job || !job->start || !job->period)
     return VA_FAIL;
-  job->countdown = job->period;
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  // A second add would self-link the list and spin v_pbus_tick_isr forever.
+  for (v_pbus_job_t *j = bus->cyclic; j; j = j->cyc_next) {
+    if (j == job) {
+      EXIT_CRITICAL_FROM_ISR(s);
+      return VA_FAIL;
+    }
+  }
+  job->countdown = job->period;
   job->cyc_next = bus->cyclic;
   bus->cyclic = job;
   EXIT_CRITICAL_FROM_ISR(s);
