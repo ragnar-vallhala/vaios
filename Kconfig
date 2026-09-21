@@ -139,6 +139,12 @@ config VAIOS_MODULE_FIFO
 config VAIOS_MODULE_PERF
     bool "Kernel performance counters"
     default y
+config VAIOS_MODULE_BUS
+    bool "Bus IPC subsystem (in progress: block pool only)"
+    default n
+    help
+      Payload-agnostic publish/subscribe over a fixed block pool; see
+      docs/plans/bus-subsystem.md. Off by default until the data path lands.
 endmenu
 
 menu "Scheduling"

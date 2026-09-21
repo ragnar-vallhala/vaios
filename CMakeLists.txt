@@ -98,6 +98,7 @@ option(VAIOS_MODULE_VFS         "Build the virtual file system (FatFs)"    OFF)
 option(VAIOS_MODULE_SEMIHOSTING "Build the semihosting debug I/O module"   ON)
 option(VAIOS_MODULE_FIFO        "Build the SPSC/MPMC FIFO data structures" ON)
 option(VAIOS_MODULE_PERF        "Build the kernel performance counters"    ON)
+option(VAIOS_MODULE_BUS         "Build the Bus IPC subsystem (in progress)" OFF)
 
 # Dependency resolution (Kconfig-style 'select').
 if(VAIOS_MODULE_TERMINAL AND NOT VAIOS_MODULE_SEMIHOSTING)
