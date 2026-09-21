@@ -40,7 +40,7 @@ static void record_done(v_pbus_job_t *j, int rc) { last_rc = rc; }
 /* Idle bus: submit starts at once; later jobs wait, then run by prio, FIFO. */
 static void test_pbus_priority_then_fifo(void) {
   reset();
-  v_pbus_job_t a = JOB(1, 1), b = JOB(2, 1), c = JOB(3, 5), d = JOB(4, 1);
+  static v_pbus_job_t a = JOB(1, 1), b = JOB(2, 1), c = JOB(3, 5), d = JOB(4, 1);
   TEST_ASSERT_EQ(v_pbus_submit(&bus, &a), VA_PASS);
   v_pbus_submit(&bus, &b);
   v_pbus_submit(&bus, &c);
@@ -60,7 +60,7 @@ static void test_pbus_priority_then_fifo(void) {
 /* A job can't be queued twice; it can be resubmitted once done. */
 static void test_pbus_double_submit_rejected(void) {
   reset();
-  v_pbus_job_t a = JOB(1, 0);
+  static v_pbus_job_t a = JOB(1, 0);
   v_pbus_submit(&bus, &a);
   TEST_ASSERT_EQ(v_pbus_submit(&bus, &a), VA_FAIL);
   v_pbus_done_isr(&bus, 0);
@@ -70,7 +70,7 @@ static void test_pbus_double_submit_rejected(void) {
 /* start() failure reports rc and hands the bus to the next job. */
 static void test_pbus_start_failure_moves_on(void) {
   reset();
-  v_pbus_job_t a = JOB(1, 0), bad = JOB(2, 0), c = JOB(3, 0);
+  static v_pbus_job_t a = JOB(1, 0), bad = JOB(2, 0), c = JOB(3, 0);
   bad.start = failing_start;
   v_pbus_submit(&bus, &a);
   v_pbus_submit(&bus, &bad);
@@ -84,7 +84,7 @@ static void test_pbus_start_failure_moves_on(void) {
 static void test_pbus_lock_unlock(void) {
   reset();
   TEST_ASSERT_EQ(v_pbus_lock(&bus, 0, 0), VA_PASS);
-  v_pbus_job_t a = JOB(1, 9);
+  static v_pbus_job_t a = JOB(1, 9);
   v_pbus_submit(&bus, &a);
   TEST_ASSERT_EQ(n_order, 0);
   v_pbus_unlock(&bus);
@@ -94,7 +94,7 @@ static void test_pbus_lock_unlock(void) {
 /* Lock on a busy bus times out and leaves the queue clean. */
 static void test_pbus_lock_timeout(void) {
   reset();
-  v_pbus_job_t a = JOB(1, 0), b = JOB(2, 0);
+  static v_pbus_job_t a = JOB(1, 0), b = JOB(2, 0);
   v_pbus_submit(&bus, &a);
   TEST_ASSERT_EQ(v_pbus_lock(&bus, 5, 0), VA_FAIL);
   v_pbus_submit(&bus, &b);
@@ -106,7 +106,7 @@ static void test_pbus_lock_timeout(void) {
 /* Cyclic job fires every `period` ticks; a still-busy one is an overrun. */
 static void test_pbus_cyclic(void) {
   reset();
-  v_pbus_job_t a = JOB(1, 0);
+  static v_pbus_job_t a = JOB(1, 0);
   a.period = 3;
   TEST_ASSERT_EQ(v_pbus_cyclic_add(&bus, &a), VA_PASS);
   v_pbus_tick_isr(&bus);
@@ -127,7 +127,7 @@ static void test_pbus_cyclic(void) {
 /* A wedged async job is recoverable: abort fails it and the queue moves on. */
 static void test_pbus_abort_unsticks(void) {
   reset();
-  v_pbus_job_t a = JOB(1, 0), b = JOB(2, 0);
+  static v_pbus_job_t a = JOB(1, 0), b = JOB(2, 0);
   TEST_ASSERT_EQ(v_pbus_abort_isr(&bus, -1), VA_FAIL); /* idle */
   v_pbus_submit(&bus, &a);                             /* never completes */
   v_pbus_submit(&bus, &b);
@@ -140,12 +140,12 @@ static void test_pbus_abort_unsticks(void) {
 /* Abort leaves a sync holder alone; a lock on one bus doesn't touch another. */
 static void test_pbus_lock_is_per_bus(void) {
   reset();
-  v_pbus_t other = {0};
+  static v_pbus_t other = {0};
   TEST_ASSERT_EQ(v_pbus_lock(&bus, 0, 0), VA_PASS);
   TEST_ASSERT_EQ(v_pbus_abort_isr(&bus, -1), VA_FAIL);
   v_pbus_unlock(&other); /* not locked: no-op */
   TEST_ASSERT_EQ(bus.locked, 1);
-  v_pbus_job_t a = JOB(1, 0);
+  static v_pbus_job_t a = JOB(1, 0);
   v_pbus_submit(&other, &a);
   TEST_ASSERT_EQ(n_order, 1); /* other bus is free */
   v_pbus_unlock(&bus);
@@ -157,7 +157,7 @@ static void test_pbus_lock_is_per_bus(void) {
 static void test_pbus_stray_done_keeps_lock(void) {
   reset();
   TEST_ASSERT_EQ(v_pbus_lock(&bus, 0, 0), VA_PASS);
-  v_pbus_job_t a = JOB(1, 0);
+  static v_pbus_job_t a = JOB(1, 0);
   v_pbus_submit(&bus, &a);
   v_pbus_done_isr(&bus, 0);
   TEST_ASSERT_EQ(bus.locked, 1);
@@ -170,11 +170,53 @@ static void test_pbus_stray_done_keeps_lock(void) {
  * spins v_pbus_tick_isr forever. */
 static void test_pbus_cyclic_double_add_rejected(void) {
   reset();
-  v_pbus_job_t a = JOB(1, 0);
+  static v_pbus_job_t a = JOB(1, 0);
   a.period = 1;
   TEST_ASSERT_EQ(v_pbus_cyclic_add(&bus, &a), VA_PASS);
   TEST_ASSERT_EQ(v_pbus_cyclic_add(&bus, &a), VA_FAIL);
   TEST_ASSERT_NULL(a.cyc_next);
+}
+
+/* A task killed while HOLDING the lock (task_exit_request) must not leave the
+ * bus locked forever: teardown releases it and the queued job starts. */
+static void test_pbus_teardown_releases_dead_holder(void) {
+  reset();
+  TEST_ASSERT_EQ(v_pbus_lock(&bus, 0, 0), VA_PASS);
+  static v_pbus_job_t a = JOB(1, 0);
+  v_pbus_submit(&bus, &a);
+  TEST_ASSERT_EQ(n_order, 0);
+  v_pbus_task_teardown(current_task);
+  TEST_ASSERT_EQ(bus.locked, 0);
+  TEST_ASSERT_EQ(n_order, 1);
+  v_pbus_done_isr(&bus, 0);
+}
+
+/* Only the task that took the lock can release it. */
+static void test_pbus_unlock_by_non_owner_ignored(void) {
+  reset();
+  TEST_ASSERT_EQ(v_pbus_lock(&bus, 0, 0), VA_PASS);
+  static TCB other_task;
+  current_task = &other_task;
+  v_pbus_unlock(&bus);
+  TEST_ASSERT_EQ(bus.locked, 1);
+  current_task = &_fake_task;
+  v_pbus_unlock(&bus);
+  TEST_ASSERT_EQ(bus.locked, 0);
+}
+
+/* Lock slots are a bounded pool: one more locker than it holds gets VA_FAIL,
+ * and unlocking hands the slots back. */
+static void test_pbus_lock_slots_bounded(void) {
+  reset();
+  static v_pbus_t buses[VAIOS_PBUS_MAX_LOCKERS + 1];
+  memset(buses, 0, sizeof buses);
+  for (int i = 0; i < VAIOS_PBUS_MAX_LOCKERS; i++)
+    TEST_ASSERT_EQ(v_pbus_lock(&buses[i], 0, 0), VA_PASS);
+  TEST_ASSERT_EQ(v_pbus_lock(&buses[VAIOS_PBUS_MAX_LOCKERS], 0, 0), VA_FAIL);
+  for (int i = 0; i < VAIOS_PBUS_MAX_LOCKERS; i++)
+    v_pbus_unlock(&buses[i]);
+  TEST_ASSERT_EQ(v_pbus_lock(&buses[VAIOS_PBUS_MAX_LOCKERS], 0, 0), VA_PASS);
+  v_pbus_unlock(&buses[VAIOS_PBUS_MAX_LOCKERS]);
 }
 
 static const test_case_t bus_cases[] = {
@@ -188,6 +230,9 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_pbus_lock_is_per_bus),
     TEST_CASE(test_pbus_stray_done_keeps_lock),
     TEST_CASE(test_pbus_cyclic_double_add_rejected),
+    TEST_CASE(test_pbus_teardown_releases_dead_holder),
+    TEST_CASE(test_pbus_unlock_by_non_owner_ignored),
+    TEST_CASE(test_pbus_lock_slots_bounded),
 };
 const test_suite_t pbus_suite = {
     .name = "Bus arbiter",

@@ -412,6 +412,7 @@ add_executable(vaios_uaccess_guard_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
     "${VAIOS_ROOT}/kernel/task.c"
+    "${VAIOS_ROOT}/kernel/periph_bus.c"  # task teardown -> v_pbus_task_teardown
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/perf.c"
     "${VAIOS_ROOT}/kernel/memory/memory.c"

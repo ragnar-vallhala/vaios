@@ -317,6 +317,13 @@ config VAIOS_IPC_FD
       close(fd) drops the reference (object destroyed at refcount 0). This
       removes the raw kernel pointer from user handles and gives per-task
       capability isolation. The pointer-based v_semaphore_* API still exists.
+config VAIOS_PBUS_MAX_LOCKERS
+    int "Peripheral-bus v_pbus_lock slots (system-wide)"
+    default 4
+    help
+      Tasks that can be waiting on or holding a v_pbus_lock at once. Each
+      slot is a kernel-owned queue node + semaphore, so a task killed while
+      waiting leaves nothing dangling on its freed stack.
 config VAIOS_PBUS_MAX_OPEN
     int "Peripheral-bus user handles (system-wide)"
     depends on VAIOS_DEVFS

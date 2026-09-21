@@ -127,7 +127,8 @@ static void test_pbus_xfer_async_steps(void) {
 /* Timed out while queued: cancelled, never started, gone from the bus queue. */
 static void test_pbus_xfer_timeout_queued_cancels(void) {
   setup();
-  v_pbus_job_t hog = {.start = blocker_start};
+  static v_pbus_job_t hog;
+  hog = (v_pbus_job_t){.start = blocker_start};
   v_pbus_submit(&bus, &hog);
   int fd = v_pbus_open("i2c1");
   v_pbus_xfer_t x = {.rx_len = 0};
@@ -148,7 +149,8 @@ static void test_pbus_xfer_timeout_active_then_fresh(void) {
   TEST_ASSERT_EQ(v_pbus_xfer_submit(fd, &x, 1), V_PBUS_EBUSY);
   v_pbus_done_isr(&bus, 0); /* late completion: gives the done semaphore */
 
-  v_pbus_job_t hog = {.start = blocker_start};
+  static v_pbus_job_t hog;
+  hog = (v_pbus_job_t){.start = blocker_start};
   v_pbus_submit(&bus, &hog);
   TEST_ASSERT_EQ(v_pbus_xfer(fd, &x, 1, 0), V_PBUS_ETIMEDOUT); /* not stale */
   teardown();

@@ -2,6 +2,7 @@
 #include "ipc.h"
 #include "memory.h"
 #include "perf_hooks.h"
+#include "periph_bus.h" // v_pbus_task_teardown
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL
 #include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
 #include "utils.h"
@@ -373,6 +374,7 @@ void set_next_task(void) {
 void v_task_exit_impl(void) {
   ENTER_CRITICAL();
   v_ipc_task_teardown(current_task); // release held mutexes / wait memberships
+  v_pbus_task_teardown(current_task); // ... and bus locks
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
@@ -474,6 +476,7 @@ void task_exit_request(uint32_t task_id) {
   // Release held mutexes and unlink any wait-queue memberships so a later
   // give/unlock/wake never touches this soon-freed TCB.
   v_ipc_task_teardown(task);
+  v_pbus_task_teardown(task); // queued / held v_pbus_lock slots
 
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);

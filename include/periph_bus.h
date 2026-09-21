@@ -74,9 +74,17 @@ void v_pbus_done_isr(v_pbus_t *bus, int rc);
 // can arrive and release the NEXT job. VA_FAIL if idle or held by v_pbus_lock.
 int v_pbus_abort_isr(v_pbus_t *bus, int rc);
 
-// Take the bus for a blocking transfer; VA_FAIL on timeout. Task context only.
+// Take the bus for a blocking transfer; VA_FAIL on timeout, or when more than
+// VAIOS_PBUS_MAX_LOCKERS tasks are waiting on / holding bus locks at once (a
+// waiter's queue node lives in that kernel pool, not on its stack). Task
+// context only. Only the task that took the lock can release it.
 int v_pbus_lock(v_pbus_t *bus, uint8_t prio, uint32_t ticks_to_wait);
 void v_pbus_unlock(v_pbus_t *bus);
+// Task-exit hook (kernel): drop t's queued lock requests and release any bus it
+// holds, so a killed task leaves neither a dangling queue node nor a bus
+// locked forever. Called alongside v_ipc_task_teardown.
+struct Task_Control_Block;
+void v_pbus_task_teardown(struct Task_Control_Block *t);
 
 // Register / unregister a cyclic job (task context). Does not cancel an
 // instance that is already queued; that one runs once more.

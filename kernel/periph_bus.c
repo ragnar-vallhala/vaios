@@ -5,6 +5,7 @@
 // BASEPRI locally instead of bumping the task nesting counter.
 #include "periph_bus.h"
 #include "port.h" // ENTER/EXIT_CRITICAL_FROM_ISR, v_port_trigger_pendsv
+#include "task.h" // get_current_task, TCB (lock owners)
 
 enum { JOB_IDLE = 0, JOB_QUEUED, JOB_ACTIVE };
 
@@ -57,14 +58,14 @@ static void dispatch(v_pbus_t *bus) {
     if (job) {
       bus->queue = job->next;
       job->state = JOB_ACTIVE;
-      // A lock waiter's job lives in v_pbus_lock's stack frame, gone once it
-      // returns, so the bus records only that it is locked.
+      // A lock waiter's job is its lock slot; the bus records only that it
+      // is locked, and the slot remembers who holds it.
       if (job->grant)
         bus->locked = 1;
       else
         bus->active = job;
       // Give inside the critical section: a timed-out v_pbus_lock() must not
-      // see ACTIVE and return (killing its stack semaphore) before this lands.
+      // see ACTIVE and return (freeing its slot) before this lands.
       if (job->grant)
         v_semaphore_give_from_isr(job->grant, &woken);
     }
@@ -112,35 +113,96 @@ int v_pbus_abort_isr(v_pbus_t *bus, int rc) {
   return VA_PASS;
 }
 
+// --- v_pbus_lock waiters / holders -------------------------------------------
+// A lock caller's queue node can't live on its stack: a task killed while
+// waiting (task_exit_request) would leave its dead frame queued. Nodes come
+// from this pool instead, tagged with their owner, and stay taken while the
+// lock is held, so v_pbus_task_teardown can also free a dead holder's bus.
+typedef struct {
+  v_pbus_job_t job;
+  StaticSemaphore_t sem_buf;
+  v_pbus_t *bus; // NULL = free
+  TCB *owner;
+} lock_slot_t;
+static lock_slot_t lock_slots[VAIOS_PBUS_MAX_LOCKERS];
+
 int v_pbus_lock(v_pbus_t *bus, uint8_t prio, uint32_t ticks_to_wait) {
   if (!bus)
     return VA_FAIL;
-  StaticSemaphore_t sem_buf;
-  v_pbus_job_t job = {.prio = prio};
-  job.grant = v_semaphore_create_binary_static(&sem_buf);
-
+  lock_slot_t *ls = NULL;
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
-  enqueue(bus, &job);
+  for (int i = 0; i < VAIOS_PBUS_MAX_LOCKERS && !ls; i++) {
+    if (!lock_slots[i].bus) {
+      ls = &lock_slots[i];
+      ls->bus = bus;
+      ls->owner = get_current_task();
+      ls->job.state = JOB_IDLE;
+    }
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
+  if (!ls)
+    return VA_FAIL; // more concurrent lockers than VAIOS_PBUS_MAX_LOCKERS
+  ls->job = (v_pbus_job_t){.prio = prio};
+  ls->job.grant = v_semaphore_create_binary_static(&ls->sem_buf);
+
+  s = ENTER_CRITICAL_FROM_ISR();
+  enqueue(bus, &ls->job);
   EXIT_CRITICAL_FROM_ISR(s);
   dispatch(bus);
 
-  if (v_semaphore_take(job.grant, ticks_to_wait) == VA_PASS)
+  if (v_semaphore_take(ls->job.grant, ticks_to_wait) == VA_PASS)
     return VA_PASS;
 
   // Timed out — unless the grant raced in after the take gave up.
   s = ENTER_CRITICAL_FROM_ISR();
-  int granted = job.state == JOB_ACTIVE;
-  if (!granted)
-    unqueue(bus, &job);
+  int granted = ls->job.state == JOB_ACTIVE;
+  if (!granted) {
+    unqueue(bus, &ls->job);
+    ls->bus = NULL;
+  }
   EXIT_CRITICAL_FROM_ISR(s);
   return granted ? VA_PASS : VA_FAIL;
 }
 
+// Caller holds the critical section. Give up a held slot's bus; 1 if it held.
+static int drop_slot(lock_slot_t *ls) {
+  v_pbus_t *bus = ls->bus;
+  int held = ls->job.state == JOB_ACTIVE;
+  if (ls->job.state == JOB_QUEUED)
+    unqueue(bus, &ls->job);
+  if (held)
+    bus->locked = 0;
+  ls->job.state = JOB_IDLE;
+  ls->bus = NULL;
+  return held;
+}
+
 void v_pbus_unlock(v_pbus_t *bus) {
-  if (!bus || !bus->locked)
+  if (!bus)
     return;
-  bus->locked = 0; // only the holder writes it while set; no race to guard
-  dispatch(bus);
+  TCB *me = get_current_task();
+  int held = 0;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  for (int i = 0; i < VAIOS_PBUS_MAX_LOCKERS && !held; i++) {
+    lock_slot_t *ls = &lock_slots[i];
+    if (ls->bus == bus && ls->owner == me && ls->job.state == JOB_ACTIVE)
+      held = drop_slot(ls);
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
+  if (held)
+    dispatch(bus);
+}
+
+void v_pbus_task_teardown(TCB *t) {
+  for (int i = 0; i < VAIOS_PBUS_MAX_LOCKERS; i++) {
+    lock_slot_t *ls = &lock_slots[i];
+    uint32_t s = ENTER_CRITICAL_FROM_ISR();
+    v_pbus_t *bus = ls->owner == t ? ls->bus : NULL;
+    int held = bus ? drop_slot(ls) : 0;
+    EXIT_CRITICAL_FROM_ISR(s);
+    if (held)
+      dispatch(bus); // hand the dead holder's bus to the next job
+  }
 }
 
 int v_pbus_cyclic_add(v_pbus_t *bus, v_pbus_job_t *job) {
