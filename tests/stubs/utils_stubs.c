@@ -47,3 +47,6 @@ void v_port_trigger_pendsv(void) {}
  * wake_up_delayed_tasks_isr from task.c, which isn't in this binary. */
 void sh_write0(const char *s) { (void)s; }
 int wake_up_delayed_tasks_isr(void) { return 0; }
+/* v_log's full-buffer wait sleeps via task_delay once the scheduler runs;
+ * scheduler_running is 0 here, so it is never reached. */
+void task_delay(uint32_t ticks) { (void)ticks; }
