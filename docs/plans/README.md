@@ -11,4 +11,4 @@ solution rather than only the happy path.
 
 | Plan | Status | Summary |
 |---|---|---|
-| [`bus-subsystem.md`](bus-subsystem.md) | In progress (B0–B3 done) | Kernel IPC "Bus": fixed-pool, index-linked pub/sub with guaranteed/best-effort QoS, elastic borrowing, ref-counted delivery, and a multi-producer publish pipeline. |
+| [`bus-subsystem.md`](bus-subsystem.md) | In progress (B0–B3 + zero-copy done) | Kernel IPC "Bus": fixed-pool, index-linked pub/sub with guaranteed/best-effort QoS, elastic borrowing, ref-counted delivery, and a multi-producer publish pipeline. |

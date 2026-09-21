@@ -4,8 +4,9 @@
 // Bus IPC subsystem: payload-agnostic publish/subscribe over a fixed block pool.
 // Design: docs/plans/bus-subsystem.md. Each phase adds its declarations here as
 // it lands; so far: the bus and its block pool (B0/B1), topics with
-// single-producer publish and polling pop (B2), and unsubscribe, the overwrite
-// policy and slow-subscriber recovery (B3).
+// single-producer publish and polling pop (B2), unsubscribe, the overwrite
+// policy and slow-subscriber recovery (B3), and a zero-copy path for
+// single-block messages (reserve/commit, peek/release).
 //
 // Storage is caller-owned, like the peripheral-bus arbiter (periph_bus.h): the
 // kernel keeps no object table and the data path never allocates.
@@ -35,7 +36,7 @@ extern "C" {
 typedef struct {
   uint16_t next;  // free list, or the next block of the same message
   uint16_t epoch; // bumped each time the block is freed (stale-read guard)
-  uint8_t used;
+  uint8_t used;   // 0 free, 1 in use, 2 reserved (v_bus_reserve, uncommitted)
 } v_bus_desc_t;
 
 typedef struct v_bus_sub v_bus_sub_t;
@@ -88,6 +89,7 @@ struct v_bus_sub {
   v_bus_topic_t *topic;
   v_bus_sub_t *next;  // on topic->subs
   uint16_t cursor;    // next unread message, V_BUS_NIL when caught up
+  uint16_t peeked;    // message held by v_bus_peek, V_BUS_NIL if none
   uint32_t expect;    // seq it expects next; a gap = messages it missed
 };
 
@@ -97,6 +99,8 @@ struct v_bus_sub {
 // Status codes beyond VA_PASS / VA_FAIL.
 #define V_BUS_EINVAL (-22)
 #define V_BUS_EMSGSIZE (-90) // pop buffer smaller than the message
+#define V_BUS_ESPLIT (-40)   // zero-copy call on a message wider than a block
+#define V_BUS_EBUSY (-16)    // this subscription already holds a peek
 
 // Wire caller storage into a bus, all blocks free. VA_FAIL on a NULL argument,
 // a block count of 0 or >= V_BUS_NIL, or a block size that isn't a multiple
@@ -134,6 +138,43 @@ int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len);
 // out is detected (block epoch) and the next one is read instead.
 int v_bus_pop(v_bus_sub_t *sub, void *out, uint16_t cap, uint16_t *out_len,
               uint32_t *missed);
+
+// --- Zero-copy path (single-block messages) ----------------------------------
+// For hot paths: the payload is written and read in place in a pool block,
+// no copies. Limited to messages that fit one block (block_size -
+// V_BUS_HDR_SIZE bytes) — a longer one isn't contiguous; use publish/pop.
+//
+//   uint16_t t;
+//   imu_t *s = v_bus_reserve(&imu, sizeof *s, &t);
+//   if (s) { fill(s); v_bus_commit(&imu, t, sizeof *s); }
+//
+//   const imu_t *s; uint16_t len; uint32_t missed;
+//   if (v_bus_peek(&est, (const void **)&s, &len, &missed) == VA_PASS) {
+//     use(s); v_bus_release(&est);
+//   }
+//
+// Reserve a block for up to `max_len` payload bytes and return where to write
+// them (*ticket names the reservation), or NULL: max_len wider than a block,
+// or no room (same drop/overwrite policy as v_bus_publish). Nobody sees it
+// until v_bus_commit. Task or ISR context, one producer per topic.
+void *v_bus_reserve(v_bus_topic_t *topic, uint16_t max_len, uint16_t *ticket);
+// Publish a reservation with its final length (<= what was reserved). VA_PASS;
+// V_BUS_EINVAL on a bad ticket or length.
+int v_bus_commit(v_bus_topic_t *topic, uint16_t ticket, uint16_t len);
+// Give a reservation back unpublished.
+int v_bus_cancel(v_bus_topic_t *topic, uint16_t ticket);
+
+// Point *data at the subscription's oldest unread message, in place; *len and
+// (if non-NULL) *missed as for v_bus_pop. The message is pinned — overwrite
+// won't evict it — until v_bus_release, so the view stays valid; keep it
+// short, since an overwrite topic can't evict a pinned oldest message (its
+// publishes drop meanwhile). One peek per subscription at a time. VA_PASS;
+// VA_FAIL when nothing is pending; V_BUS_ESPLIT for a multi-block message
+// (read it with v_bus_pop); V_BUS_EBUSY if a peek is already held.
+int v_bus_peek(v_bus_sub_t *sub, const void **data, uint16_t *len,
+               uint32_t *missed);
+// Done with the peeked message: consume it, like a completed v_bus_pop.
+int v_bus_release(v_bus_sub_t *sub);
 
 // --- Block pool (bus internals; used by the message phases and tests) --------
 // Take n blocks, all or nothing, chained through desc[].next and ending in

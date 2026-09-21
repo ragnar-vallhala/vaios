@@ -16,6 +16,12 @@
 // The one thing that can't be fixed up eagerly is a pop already copying the
 // evicted message: it checks the head block's epoch (bumped on every free)
 // after the copy and, if it changed, discards the copy and reads again.
+//
+// Zero copy: v_bus_reserve/commit hand out and publish a single pool block;
+// v_bus_peek/release read one in place. A peeked message is pinned, which is
+// what keeps the in-place view valid: eviction stops at a pinned oldest
+// message instead. (pop keeps the epoch retry so a copying reader never holds
+// the writer up; a peek holder does, briefly, which is the price of no copy.)
 #include "bus.h"
 #include "port.h"  // ENTER/EXIT_CRITICAL_FROM_ISR
 #include "utils.h" // v_memcpy
@@ -26,7 +32,7 @@ typedef struct {
   uint16_t link; // next (newer) message in the topic, or V_BUS_NIL
   uint16_t len;  // payload bytes
   uint16_t refs; // subscribers that still have to read it
-  uint16_t pad;
+  uint16_t pins; // v_bus_peek views open on it: overwrite won't evict it
 } msg_hdr_t;
 _Static_assert(sizeof(msg_hdr_t) == V_BUS_HDR_SIZE, "V_BUS_HDR_SIZE drift");
 
@@ -126,7 +132,7 @@ int v_bus_check(const v_bus_t *bus) {
   }
   uint16_t used = 0;
   for (uint16_t i = 0; i < bus->block_count; i++)
-    used = (uint16_t)(used + bus->desc[i].used);
+    used = (uint16_t)(used + (bus->desc[i].used != 0));
   return on_list == bus->free_count &&
                  used == bus->block_count - bus->free_count &&
                  topics_ok(bus)
@@ -218,6 +224,7 @@ int v_bus_subscribe(v_bus_topic_t *topic, v_bus_sub_t *sub) {
   *sub = (v_bus_sub_t){.topic = topic,
                        .next = topic->subs,
                        .cursor = V_BUS_NIL,
+                       .peeked = V_BUS_NIL,
                        .expect = topic->next_seq};
   topic->subs = sub;
   topic->nsubs++;
@@ -227,7 +234,7 @@ int v_bus_subscribe(v_bus_topic_t *topic, v_bus_sub_t *sub) {
 
 // Caller holds the critical section. Unlink the topic's oldest message and
 // return it for freeing; its blocks leave the topic's count.
-static uint16_t take_head(v_bus_topic_t *topic) {
+static inline uint16_t take_head(v_bus_topic_t *topic) {
   v_bus_t *bus = topic->bus;
   uint16_t msg = topic->head;
   msg_hdr_t *h = hdr(bus, msg);
@@ -253,6 +260,8 @@ int v_bus_unsubscribe(v_bus_sub_t *sub) {
   }
   *pp = sub->next;
   topic->nsubs--;
+  if (sub->peeked != V_BUS_NIL) // left holding a peek: drop its pin
+    hdr(bus, sub->peeked)->pins--;
   // Drop its claim on every message it hadn't read...
   for (uint16_t m = sub->cursor; m != V_BUS_NIL; m = hdr(bus, m)->link)
     hdr(bus, m)->refs--;
@@ -268,10 +277,11 @@ int v_bus_unsubscribe(v_bus_sub_t *sub) {
 }
 
 // V_BUS_OVERWRITE: evict the oldest message; readers that hadn't read it move
-// on to the next one (they see the gap as `missed` at their next pop).
+// on to the next one (they see the gap as `missed` at their next pop). A
+// pinned (peeked) oldest message stops eviction: its reader is looking at it.
 static int evict_oldest(v_bus_topic_t *topic) {
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
-  if (topic->head == V_BUS_NIL) {
+  if (topic->head == V_BUS_NIL || hdr(topic->bus, topic->head)->pins) {
     EXIT_CRITICAL_FROM_ISR(s);
     return 0;
   }
@@ -285,34 +295,34 @@ static int evict_oldest(v_bus_topic_t *topic) {
   return 1;
 }
 
-int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len) {
-  if (!topic || !topic->bus || (len && !payload))
-    return V_BUS_EINVAL;
+// Take n blocks for a new message on `topic`, applying its overflow policy.
+static inline uint16_t alloc_msg(v_bus_topic_t *topic, uint32_t n) {
   v_bus_t *bus = topic->bus;
-  uint32_t n = blocks_for(bus, len);
-  if (n > bus->block_count)
-    return V_BUS_EINVAL; // could never fit
-  if (!topic->nsubs)
-    return VA_PASS; // nobody to deliver to: keep nothing
   uint16_t msg = v_bus_block_alloc(bus, (uint16_t)n);
   if (msg == V_BUS_NIL && topic->cfg.overflow == V_BUS_OVERWRITE &&
       bus->free_count + topic->blocks >= n) { // evicting can make room
     while (msg == V_BUS_NIL && evict_oldest(topic))
       msg = v_bus_block_alloc(bus, (uint16_t)n);
   }
-  if (msg == V_BUS_NIL)
-    return VA_FAIL; // dropped
+  return msg;
+}
 
-  // Fill it in while nobody can see it yet.
+// Make a filled-in message visible. seq and refs are set under the same
+// critical section as subscribe, so refs counts exactly the subscribers whose
+// cursor can reach it. Nobody subscribed any more: free it instead.
+static inline void link_msg(v_bus_topic_t *topic, uint16_t msg, uint16_t len,
+                     uint32_t n) {
+  v_bus_t *bus = topic->bus;
   msg_hdr_t *h = hdr(bus, msg);
   h->link = V_BUS_NIL;
   h->len = len;
-  copy_payload(bus, msg, (void *)payload, len, 1);
-
-  // Link: from here on it's visible. seq and refs are set under the same
-  // critical section as subscribe, so refs counts exactly the subscribers
-  // whose cursor can reach this message.
+  h->pins = 0;
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  if (!topic->nsubs) {
+    EXIT_CRITICAL_FROM_ISR(s);
+    v_bus_block_free(bus, msg);
+    return;
+  }
   h->seq = topic->next_seq++;
   h->refs = topic->nsubs;
   if (topic->tail != V_BUS_NIL)
@@ -325,7 +335,75 @@ int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len) {
     if (x->cursor == V_BUS_NIL) // caught up: this is its next message
       x->cursor = msg;
   EXIT_CRITICAL_FROM_ISR(s);
+}
+
+int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len) {
+  if (!topic || !topic->bus || (len && !payload))
+    return V_BUS_EINVAL;
+  v_bus_t *bus = topic->bus;
+  uint32_t n = blocks_for(bus, len);
+  if (n > bus->block_count)
+    return V_BUS_EINVAL; // could never fit
+  if (!topic->nsubs)
+    return VA_PASS; // nobody to deliver to: keep nothing
+  uint16_t msg = alloc_msg(topic, n);
+  if (msg == V_BUS_NIL)
+    return VA_FAIL; // dropped
+  copy_payload(bus, msg, (void *)payload, len, 1); // invisible until linked
+  link_msg(topic, msg, len, n);
   return VA_PASS;
+}
+
+// desc.used values: 0 free, 1 in use, RESERVED a v_bus_reserve block not yet
+// committed — so a stale or repeated ticket can't re-link a queued message.
+#define RESERVED 2u
+
+static int ticket_ok(const v_bus_topic_t *topic, uint16_t ticket) {
+  return topic && topic->bus && ticket < topic->bus->block_count &&
+         topic->bus->desc[ticket].used == RESERVED;
+}
+
+void *v_bus_reserve(v_bus_topic_t *topic, uint16_t max_len, uint16_t *ticket) {
+  if (!topic || !topic->bus || !ticket ||
+      max_len > topic->bus->block_size - V_BUS_HDR_SIZE)
+    return 0;
+  uint16_t msg = alloc_msg(topic, 1);
+  if (msg == V_BUS_NIL)
+    return 0;
+  topic->bus->desc[msg].used = RESERVED;
+  *ticket = msg;
+  return blk(topic->bus, msg) + V_BUS_HDR_SIZE;
+}
+
+int v_bus_commit(v_bus_topic_t *topic, uint16_t ticket, uint16_t len) {
+  if (!ticket_ok(topic, ticket) ||
+      len > topic->bus->block_size - V_BUS_HDR_SIZE)
+    return V_BUS_EINVAL;
+  topic->bus->desc[ticket].used = 1;
+  link_msg(topic, ticket, len, 1);
+  return VA_PASS;
+}
+
+int v_bus_cancel(v_bus_topic_t *topic, uint16_t ticket) {
+  if (!ticket_ok(topic, ticket))
+    return V_BUS_EINVAL;
+  return v_bus_block_free(topic->bus, ticket);
+}
+
+// Caller holds the critical section. `sub` is done with `msg` (its cursor):
+// move on, drop its reference, and return msg if that freed it (the caller
+// frees the blocks after leaving the critical section).
+static inline uint16_t consume(v_bus_sub_t *sub, uint16_t msg) {
+  v_bus_topic_t *topic = sub->topic;
+  msg_hdr_t *h = hdr(topic->bus, msg);
+  sub->expect = h->seq + 1u;
+  sub->cursor = h->link; // V_BUS_NIL if we're caught up
+  if (--h->refs)
+    return V_BUS_NIL;
+  // Every reader reads in order, so the last reference always drops on the
+  // oldest message.
+  take_head(topic);
+  return msg;
 }
 
 #ifdef VAIOS_HOST_TEST
@@ -338,8 +416,9 @@ int v_bus_pop(v_bus_sub_t *sub, void *out, uint16_t cap, uint16_t *out_len,
               uint32_t *missed) {
   if (!sub || !sub->topic || !out_len || (cap && !out))
     return V_BUS_EINVAL;
-  v_bus_topic_t *topic = sub->topic;
-  v_bus_t *bus = topic->bus;
+  if (sub->peeked != V_BUS_NIL)
+    return V_BUS_EBUSY; // release the peek first
+  v_bus_t *bus = sub->topic->bus;
 
   for (;;) {
     uint32_t s = ENTER_CRITICAL_FROM_ISR();
@@ -361,7 +440,6 @@ int v_bus_pop(v_bus_sub_t *sub, void *out, uint16_t cap, uint16_t *out_len,
       v_bus_test_mid_pop();
 #endif
 
-    int reclaim = 0;
     s = ENTER_CRITICAL_FROM_ISR();
     if (bus->desc[msg].epoch != epoch) {
       // Evicted while we copied: `out` may be torn. The eviction already moved
@@ -369,22 +447,56 @@ int v_bus_pop(v_bus_sub_t *sub, void *out, uint16_t cap, uint16_t *out_len,
       EXIT_CRITICAL_FROM_ISR(s);
       continue;
     }
-    msg_hdr_t *h = hdr(bus, msg);
     if (missed)
-      *missed = h->seq - sub->expect; // overwritten before we got to them
-    sub->expect = h->seq + 1u;
-    sub->cursor = h->link; // V_BUS_NIL if we're caught up
-    if (--h->refs == 0) {
-      // Every reader reads in order, so the last reference always drops on
-      // the oldest message.
-      take_head(topic);
-      reclaim = 1;
-    }
+      *missed = hdr(bus, msg)->seq - sub->expect; // overwritten before we read
+    uint16_t freed = consume(sub, msg);
     EXIT_CRITICAL_FROM_ISR(s);
-    if (reclaim)
-      v_bus_block_free(bus, msg);
+    if (freed != V_BUS_NIL)
+      v_bus_block_free(bus, freed);
     return VA_PASS;
   }
+}
+
+int v_bus_peek(v_bus_sub_t *sub, const void **data, uint16_t *len,
+               uint32_t *missed) {
+  if (!sub || !sub->topic || !data || !len)
+    return V_BUS_EINVAL;
+  v_bus_t *bus = sub->topic->bus;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  uint16_t msg = sub->cursor;
+  int r = VA_PASS;
+  if (sub->peeked != V_BUS_NIL)
+    r = V_BUS_EBUSY;
+  else if (msg == V_BUS_NIL)
+    r = VA_FAIL;
+  else if (blocks_for(bus, hdr(bus, msg)->len) > 1)
+    r = V_BUS_ESPLIT; // not contiguous: read it with v_bus_pop
+  if (r == VA_PASS) {
+    msg_hdr_t *h = hdr(bus, msg);
+    h->pins++; // from here eviction leaves it alone
+    sub->peeked = msg;
+    *len = h->len;
+    if (missed)
+      *missed = h->seq - sub->expect;
+    *data = blk(bus, msg) + V_BUS_HDR_SIZE;
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
+  return r;
+}
+
+int v_bus_release(v_bus_sub_t *sub) {
+  if (!sub || !sub->topic || sub->peeked == V_BUS_NIL)
+    return V_BUS_EINVAL;
+  v_bus_t *bus = sub->topic->bus;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  uint16_t msg = sub->peeked;
+  hdr(bus, msg)->pins--;
+  sub->peeked = V_BUS_NIL;
+  uint16_t freed = consume(sub, msg); // pinned, so still our cursor
+  EXIT_CRITICAL_FROM_ISR(s);
+  if (freed != V_BUS_NIL)
+    v_bus_block_free(bus, freed);
+  return VA_PASS;
 }
 
 // v_bus_check, per topic: head..tail is a well-formed chain of live messages,
@@ -407,14 +519,23 @@ static int topics_ok(const v_bus_t *bus) {
     if (last != t->tail || blocks != t->blocks)
       return 0;
     uint16_t nsubs = 0;
+    uint32_t peeks = 0;
     for (const v_bus_sub_t *x = t->subs; x; x = x->next) {
       uint16_t m = t->head;
       while (m != V_BUS_NIL && m != x->cursor)
         m = hdr(b, m)->link;
       if (m != x->cursor || ++nsubs > t->nsubs) // off the chain, or list loops
         return 0;
+      if (x->peeked != V_BUS_NIL) { // a peek sits on its cursor, pinned
+        if (x->peeked != x->cursor || !hdr(b, x->peeked)->pins)
+          return 0;
+        peeks++;
+      }
     }
-    if (nsubs != t->nsubs)
+    uint32_t pins = 0;
+    for (uint16_t m = t->head; m != V_BUS_NIL; m = hdr(b, m)->link)
+      pins += hdr(b, m)->pins;
+    if (nsubs != t->nsubs || pins != peeks)
       return 0;
   }
   return 1;
