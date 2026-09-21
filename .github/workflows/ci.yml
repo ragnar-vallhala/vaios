@@ -90,3 +90,6 @@ jobs:
 
       - name: Peripheral-bus unprivileged access in Renode
         run: bash tools/renode_pbus_user.sh
+
+      - name: Bus IPC (ISR producer, overwrite + drop topics) in Renode
+        run: bash tools/renode_bus_ipc.sh

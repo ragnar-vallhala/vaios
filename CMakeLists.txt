@@ -124,9 +124,16 @@ if(VAIOS_EXAMPLE STREQUAL "VFS_PERF" OR
   endif()
 endif()
 
+# Same for the Bus IPC example: kernel/bus.c is off by default while the
+# subsystem is in progress.
+if(VAIOS_EXAMPLE STREQUAL "BUS_IPC" AND NOT VAIOS_MODULE_BUS)
+  message(STATUS "VAIOS_EXAMPLE=${VAIOS_EXAMPLE} uses the Bus IPC API -- forcing VAIOS_MODULE_BUS ON.")
+  set(VAIOS_MODULE_BUS ON CACHE BOOL "Build the Bus IPC subsystem (in progress)" FORCE)
+endif()
+
 message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
-               "perf=${VAIOS_MODULE_PERF}")
+               "perf=${VAIOS_MODULE_PERF} bus=${VAIOS_MODULE_BUS}")
 
 # Heap allocator selection. The facade kernel/memory/memory.c always compiles;
 # the free-block index backends kernel/memory/seglist.c (segregated fit) and
