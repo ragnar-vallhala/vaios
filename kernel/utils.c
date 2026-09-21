@@ -244,8 +244,17 @@ static void v_panic_vprintf(const char *fmt, va_list args) {
       while (*s)
         PANIC_PUT(*s++);
     } else if (*p == 'p') {
-      // pointer — full width (uintptr_t), 0x-prefixed. 32-bit on ARM, 64 on host
+      // pointer — full width (uintptr_t), 0x-prefixed. 32-bit on ARM, 64 on host.
+      // Same -fanalyzer false positive as "%s" below: it pairs a %u caller's
+      // argument with this branch because it can't read the format string.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-va-arg-type-mismatch"
+#endif
       uintptr_t v = (uintptr_t)va_arg(args, void *);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
       utoa_simple(v, panic_val_buf, 16);
       PANIC_PUT('0');
       PANIC_PUT('x');
