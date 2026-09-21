@@ -198,6 +198,17 @@ if(NAVHAL)
       "NAVHAL_KCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/Kconfig"
       "srctree=${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL")
 endif()
+# The NavHAL config this build uses: -DNAVHAL_CONFIG_FILE (e.g. the soft-float
+# config tools/test_qemu_smoke.sh passes), else the repo's navhal.config. Resolved
+# once and used for the seed, the FPU mirror and the NavHAL staging below — if any
+# of them read navhal.config instead, NavHAL and vaios could disagree on the
+# float ABI and fail to link.
+if(DEFINED NAVHAL_CONFIG_FILE)
+  set(_nav_cfg "${NAVHAL_CONFIG_FILE}")
+else()
+  set(_nav_cfg "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
+endif()
+
 # Seed the build .config once: vaios defaults, plus (NAVHAL) the NavHAL driver
 # set so the single file carries both symbol worlds. menuconfig edits persist.
 if(NOT EXISTS "${_vaios_dotconfig}")
@@ -206,8 +217,8 @@ if(NOT EXISTS "${_vaios_dotconfig}")
     file(READ "${VAIOS_DEFCONFIG}" _d)
     string(APPEND _seed "${_d}\n")
   endif()
-  if(NAVHAL AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config" _n)
+  if(NAVHAL AND EXISTS "${_nav_cfg}")
+    file(READ "${_nav_cfg}" _n)
     string(APPEND _seed "${_n}\n")
   endif()
   file(WRITE "${_vaios_dotconfig}" "${_seed}")
@@ -252,11 +263,6 @@ message(STATUS "VAIOS: Kconfig config generated -> ${VAIOS_AUTOCONF}")
 # as the single source of truth and force VAIOS_FPU to match it. Non-NAVHAL builds
 # keep VAIOS_FPU as an independent knob.
 if(NAVHAL)
-    if(DEFINED NAVHAL_CONFIG_FILE)
-        set(_nav_cfg "${NAVHAL_CONFIG_FILE}")
-    else()
-        set(_nav_cfg "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
-    endif()
     if(EXISTS "${_nav_cfg}")
         file(STRINGS "${_nav_cfg}" _nav_fpu REGEX "^CONFIG_USE_FPU=y$")
         if(_nav_fpu)
@@ -323,8 +329,10 @@ if(NAVHAL)
     set(USE_FPU ${VAIOS_FPU} CACHE BOOL "Pass FPU setting to NavHAL" FORCE)
     # Stage the config NavHAL reads (extern/NavHAL/.config): the unified vaios
     # .config (its CONFIG_VAIOS_* are ignored by NavHAL's load_config) with
-    # navhal.config appended so NavHAL's driver set is ALWAYS present and
-    # authoritative — appended last, its values win. This is the robustness
+    # the selected NavHAL config (_nav_cfg: navhal.config or
+    # -DNAVHAL_CONFIG_FILE) appended so NavHAL's driver set is ALWAYS present
+    # and authoritative — appended last, its values win (incl. CONFIG_USE_FPU,
+    # which NavHAL's kconfig.py turns into USE_FPU, overriding the cache var). This is the robustness
     # fix: a build .config first seeded WITHOUT -DNAVHAL=ON has no CONFIG_DRV_*,
     # and copying it verbatim silently compiled every NavHAL driver out (SDIO,
     # MPU, ...). navhal.config remains the source of truth for the HAL driver
@@ -335,8 +343,8 @@ if(NAVHAL)
       file(READ "${_vaios_dotconfig}" _vc)
       string(APPEND _nav_staged "${_vc}\n")
     endif()
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config")
-      file(READ "${CMAKE_CURRENT_SOURCE_DIR}/navhal.config" _nc)
+    if(EXISTS "${_nav_cfg}")
+      file(READ "${_nav_cfg}" _nc)
       string(APPEND _nav_staged "${_nc}\n")
     endif()
     file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config" "${_nav_staged}")
