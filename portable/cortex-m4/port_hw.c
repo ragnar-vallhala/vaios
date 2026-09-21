@@ -40,13 +40,16 @@
 void v_port_hw_clock_init(uint8_t internal_clock_setup) {
 #ifdef NAVHAL
   if (internal_clock_setup == 1) {
-    hal_pll_config_t pll_cfg = {.input_src = HAL_CLOCK_SOURCE_HSI,
-                                .pll_m = 16,
-                                .pll_n = 336,
-                                .pll_p = 4,
-                                .pll_q = 7};
-    hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL};
-    hal_clock_init(&clk_cfg, &pll_cfg);
+    // 84 MHz SYSCLK from HSI; PLLQ=7 keeps the 48 MHz SDIO/USB clock. APB
+    // dividers left 0: the F4 backend defaults them to /2 and clamps APB1 to
+    // its 42 MHz limit.
+    hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL,
+                                  .pll = {.input_src = HAL_CLOCK_SOURCE_HSI,
+                                          .pll_m = 16,
+                                          .pll_n = 336,
+                                          .pll_p = 4,
+                                          .pll_q = 7}};
+    hal_clock_init(&clk_cfg);
   }
 #else
   (void)internal_clock_setup; /* QEMU boots with a usable clock already. */
@@ -240,7 +243,9 @@ int v_port_hw_sdio_card_init(void) {
 #define SHCSR_MEMFAULTENA (1u << 16)
 #define SHCSR_BUSFAULTENA (1u << 17)
 #define SHCSR_USGFAULTENA (1u << 18)
+#ifndef SCB_VTOR // NavHAL >= 0.3.2 defines it in its arch core_reg.h
 #define SCB_VTOR (*(volatile uint32_t *)0xE000ED08u)
+#endif
 /* Top region on the F401 (8 regions, 0..7). Higher number wins on overlap, so
  * the guard overrides the Phase 2 SRAM region at the stack base. */
 #define VAIOS_MPU_GUARD_REGION 7u

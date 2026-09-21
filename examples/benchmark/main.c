@@ -184,15 +184,15 @@ int main(void) {
    *
    * Must be called BEFORE v_init() so that systick_init() and uart2_init()
    * derive their reload / BRR divisors from the live APB clocks. */
-  hal_pll_config_t pll_cfg = {
-      .input_src = HAL_CLOCK_SOURCE_HSI,
-      .pll_m = 16,
-      .pll_n = 336,
-      .pll_p = 4,
-      .pll_q = 7,
+  hal_clock_config_t clk_cfg = {
+      .source = HAL_CLOCK_SOURCE_PLL,
+      .pll = {.input_src = HAL_CLOCK_SOURCE_HSI,
+              .pll_m = 16,
+              .pll_n = 336,
+              .pll_p = 4,
+              .pll_q = 7},
   };
-  hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL};
-  hal_clock_init(&clk_cfg, &pll_cfg);
+  hal_clock_init(&clk_cfg);
 #endif
 
   /* 1. Core VAIOS init (uses live APB clocks for UART + SysTick).
