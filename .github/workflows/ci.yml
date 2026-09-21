@@ -35,6 +35,11 @@ jobs:
       - name: Run host test suite
         run: bash tools/run_tests.sh
 
+      # The host PORT (real scheduler + SVC path, not the stubbed unit suite):
+      # unprivileged syscalls with rodata / own-stack pointers.
+      - name: Host-port user-pointer check
+        run: bash tools/run_host.sh HOST_USER_RO
+
   sitl:
     name: On-target (Renode) tests
     runs-on: ubuntu-latest

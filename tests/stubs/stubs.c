@@ -60,8 +60,8 @@ void stub_set_user_ro(uintptr_t lo, uintptr_t hi) {
   g_ro_lo = lo;
   g_ro_hi = hi;
 }
-int v_port_user_ro_region(uintptr_t a, uintptr_t *end) {
-  if (a < g_ro_lo || a >= g_ro_hi)
+int v_port_user_region(uintptr_t a, int write, uintptr_t *end) {
+  if (write || a < g_ro_lo || a >= g_ro_hi)
     return 0;
   *end = g_ro_hi;
   return 1;

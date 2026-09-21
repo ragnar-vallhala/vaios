@@ -406,12 +406,13 @@ int v_access_ok(const void *p, uint32_t len, int write) {
   if (!t || !t->mem_block)
     return 0;
   uintptr_t a = (uintptr_t)p;
-  // Reads may also come from memory every task can already read itself (flash
-  // code + rodata: string literals, const tables). The port reports the same
-  // range its MPU grants unprivileged tasks, so this widens nothing.
-  uintptr_t ro_end;
-  if (!write && v_port_user_ro_region(a, &ro_end))
-    return len <= (uint32_t)(ro_end - a);
+  // Memory outside the block the port says this task may already touch
+  // itself: flash for reads (string literals, const tables), and on the host
+  // the task's separately allocated stack. The port reports exactly what its
+  // (software) MPU grants the running task, so this widens nothing.
+  uintptr_t port_end;
+  if (v_port_user_region(a, write, &port_end))
+    return len <= (uint32_t)(port_end - a);
   uintptr_t base = (uintptr_t)t->mem_block;
 #if VAIOS_MPU_STACK_GUARD
   // The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack guard (MPU
@@ -427,7 +428,7 @@ int v_access_ok(const void *p, uint32_t len, int write) {
 }
 
 // Bounded NUL scan for a user string, never reading past the caller's block
-// or the user-readable read-only region it starts in (a literal in flash).
+// or the port-reported region it starts in (a literal in flash, a host stack).
 // Returns the length (excluding NUL), or -1 if the pointer is out of bounds or
 // no NUL is found within `max` / that region.
 long v_strnlen_user(const char *s, uint32_t max) {
@@ -436,7 +437,7 @@ long v_strnlen_user(const char *s, uint32_t max) {
     return -1;
   uintptr_t a = (uintptr_t)s;
   uintptr_t end;
-  if (!v_port_user_ro_region(a, &end)) {
+  if (!v_port_user_region(a, 0, &end)) {
     uintptr_t base = (uintptr_t)t->mem_block;
 #if VAIOS_MPU_STACK_GUARD
     base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (v_access_ok)

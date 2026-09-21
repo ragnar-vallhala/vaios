@@ -20,7 +20,7 @@
 #include "port.h"
 #include "task.h"  // TCB, current_task, set_next_task, v_task_exit_impl
 #include "utils.h" // v_kernel_tick
-#include <link.h>     // dl_iterate_phdr (v_port_user_ro_region)
+#include <link.h>     // dl_iterate_phdr (v_port_user_region)
 #include <sched.h>    // sched_yield
 #include <signal.h>
 #include <stddef.h>
@@ -298,7 +298,19 @@ static int ro_segment_cb(struct dl_phdr_info *info, size_t sz, void *arg) {
   }
   return 1; // the first object reported is the executable itself; stop there
 }
-int v_port_user_ro_region(uintptr_t a, uintptr_t *end) {
+int v_port_user_region(uintptr_t a, int write, uintptr_t *end) {
+  // The running task's own stack lives in the port's ucontext mapping, not in
+  // mem_block — the region the software MPU opens for it while it runs.
+  if (current_task && current_task->sp) {
+    ucontext_t *uc = (ucontext_t *)current_task->sp;
+    uintptr_t lo = (uintptr_t)uc->uc_stack.ss_sp;
+    if (a >= lo && a < lo + uc->uc_stack.ss_size) {
+      *end = lo + uc->uc_stack.ss_size;
+      return 1;
+    }
+  }
+  if (write)
+    return 0;
   ro_query_t q = {.a = a};
   dl_iterate_phdr(ro_segment_cb, &q);
   if (q.hit)
