@@ -19,6 +19,10 @@ endif()
 if(NOT VAIOS_MODULE_PERF)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "perf\\.c$")
 endif()
+if(NOT VAIOS_MODULE_BUS)
+  # Anchored on the leading / so periph_bus.c (the arbiter) always builds.
+  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "/bus\\.c$")
+endif()
 # syscalls.c is bare-metal newlib retargeting (_sbrk/_write/_read/_exit ...). On
 # the host those clash with glibc's own, and the host port needs none of them.
 if(PORT_IS_HOSTED)
@@ -41,6 +45,7 @@ target_compile_definitions(vaios PUBLIC
   VAIOS_MODULE_SEMIHOSTING=$<BOOL:${VAIOS_MODULE_SEMIHOSTING}>
   VAIOS_MODULE_FIFO=$<BOOL:${VAIOS_MODULE_FIFO}>
   VAIOS_MODULE_PERF=$<BOOL:${VAIOS_MODULE_PERF}>
+  VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>
 )
 # On a NAVHAL build the `hal`/`common` targets exist whether vaios embedded its
 # own NavHAL or a superproject (e.g. a nav firmware consumer) provided it; link
