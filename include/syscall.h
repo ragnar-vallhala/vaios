@@ -51,6 +51,10 @@ typedef enum {
   SYS_heap_used = 24,
   SYS_exit = 25,        // task_exit body (VAIOS_MPU_USER_SEPARATION): terminate
                         //   the caller + reschedule, run privileged.
+  SYS_pbus_open = 26,   // peripheral-bus user access (VAIOS_DEVFS): open a
+  SYS_pbus_submit = 27, //   registered bus -> fd, then submit / wait / finish
+  SYS_pbus_wait = 28,   //   one bounce-buffered transfer (v_pbus_xfer).
+  SYS_pbus_finish = 29,
   SYS_MAX
 } v_syscall_t;
 

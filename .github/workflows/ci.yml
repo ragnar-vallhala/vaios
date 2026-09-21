@@ -79,3 +79,9 @@ jobs:
 
       - name: Stage-5 fd-typed IPC regression in Renode
         run: bash tools/renode_fdipc.sh
+
+      - name: Peripheral-bus arbiter contention in Renode
+        run: bash tools/renode_bus.sh
+
+      - name: Peripheral-bus unprivileged access in Renode
+        run: bash tools/renode_pbus_user.sh

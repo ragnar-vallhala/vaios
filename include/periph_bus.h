@@ -26,8 +26,8 @@
 //
 // Privileged callers only (kernel code, ISRs, privileged tasks): the critical
 // sections are BASEPRI writes, which an unprivileged task's MSR silently skips,
-// and there are no syscall wrappers. Under VAIOS_MPU_USER_SEPARATION, drive the
-// bus from a privileged driver task, not from user tasks.
+// and there are no syscall wrappers for them. Unprivileged tasks use the
+// fd-based transfer API at the bottom of this file instead.
 
 #include "ipc.h"
 #include <stdint.h>
@@ -85,6 +85,52 @@ void v_pbus_cyclic_remove(v_pbus_t *bus, v_pbus_job_t *job);
 // Hardware-timer hook. The timer IRQ must sit at a kernel-masked priority
 // (numerically >= MAX_SYSCALL_INTERRUPT_PRIORITY), like any *_isr caller.
 void v_pbus_tick_isr(v_pbus_t *bus);
+
+// --- User access (VAIOS_DEVFS) ----------------------------------------------
+// An unprivileged task can neither touch peripheral registers nor hand the
+// kernel a callback, so it reaches a bus through a privileged per-bus transfer
+// hook the board registers by name, and one blocking call per transfer:
+//
+//   board:  v_pbus_register("i2c1", &i2c1, i2c1_xfer_start);   // at boot
+//   task:   int fd = v_pbus_open("i2c1");
+//           v_pbus_xfer_t x = {.addr = 0x68, .tx = &reg, .tx_len = 1,
+//                              .rx = buf, .rx_len = 6};
+//           int rc = v_pbus_xfer(fd, &x, prio, ticks);          // close: v_file_close
+//
+// Payloads are copied through kernel buffers (VAIOS_PBUS_XFER_MAX each way), so
+// the DMA never targets task memory: a task that times out or exits mid-
+// transfer can't have the late DMA land in memory it no longer owns.
+typedef struct {
+  uint16_t addr;  // device address / chip select: meaning is up to the hook
+  uint16_t flags; // board-defined
+  const void *tx;
+  uint32_t tx_len;
+  void *rx;
+  uint32_t rx_len;
+} v_pbus_xfer_t;
+
+// Board hook: start `x` (kernel buffers) on its bus. Same contract as
+// v_pbus_job.start: never block; >= 0 once in flight, then v_pbus_done_isr().
+typedef int (*v_pbus_xfer_fn)(const v_pbus_xfer_t *x);
+
+#define V_PBUS_EINVAL (-22)
+#define V_PBUS_EBUSY (-16)     // handle already has a transfer in flight
+#define V_PBUS_ETIMEDOUT (-110) // timed out while still queued (never started)
+
+#if VAIOS_DEVFS
+// Privileged, at boot. `name` must outlive the registration.
+int v_pbus_register(const char *name, v_pbus_t *bus, v_pbus_xfer_fn start);
+// Open a registered bus -> fd, or a negative error.
+int v_pbus_open(const char *name);
+// Run one transfer: the hook's rc (>= 0 ok), a hook error, or V_PBUS_E*. If
+// `ticks` expire after the transfer started, returns V_PBUS_EBUSY: its result
+// is dropped and the fd takes new transfers once the bus finishes it.
+int v_pbus_xfer(int fd, const v_pbus_xfer_t *x, uint8_t prio, uint32_t ticks);
+// The three syscall steps v_pbus_xfer is built from.
+int v_pbus_xfer_submit(int fd, const v_pbus_xfer_t *x, uint8_t prio);
+int v_pbus_xfer_wait(int fd, uint32_t ticks);
+int v_pbus_xfer_finish(int fd, void *rx, uint32_t rx_len);
+#endif
 
 #ifdef __cplusplus
 }

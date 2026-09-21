@@ -15,6 +15,7 @@
 
 #include "ipc.h"
 #include "memory.h"
+#include "periph_bus.h"
 #include "port.h"
 #include "task.h"
 #include "vfile.h"
@@ -83,6 +84,35 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
       if (!v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
         return V_EFAULT;
       break;
+#if VAIOS_DEVFS
+    case SYS_pbus_open:
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) <
+          0)
+        return V_EFAULT;
+      break;
+    case SYS_pbus_submit: {
+      // The descriptor, then the tx buffer it points at. Cap tx_len first so
+      // the range check can't be fed a wrapping length.
+      const v_pbus_xfer_t *x = (const v_pbus_xfer_t *)(uintptr_t)args[1];
+      if (!v_access_ok(x, sizeof(*x), 0))
+        return V_EFAULT;
+      if (x->tx_len > VAIOS_PBUS_XFER_MAX)
+        return V_PBUS_EINVAL;
+      if (x->tx_len && !v_access_ok(x->tx, x->tx_len, 0))
+        return V_EFAULT;
+      // rx too, though it's only written at finish: a bad rx refused there
+      // would leave the handle stuck on its uncollected transfer.
+      if (x->rx_len > VAIOS_PBUS_XFER_MAX)
+        return V_PBUS_EINVAL;
+      if (x->rx_len && !v_access_ok(x->rx, x->rx_len, 1))
+        return V_EFAULT;
+      break;
+    }
+    case SYS_pbus_finish:
+      if (args[2] && !v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
+        return V_EFAULT;
+      break;
+#endif
 #if VAIOS_IPC_FD
     case SYS_wait:
       // Reject an oversized nfds BEFORE computing the byte length: args[1] *
@@ -141,6 +171,25 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
     return v_file_read((int)args[0], (void *)(uintptr_t)args[1], args[2]);
   case SYS_close:
     return v_file_close((int)args[0]);
+#endif
+#if VAIOS_DEVFS
+  case SYS_pbus_open:
+    return v_pbus_open((const char *)(uintptr_t)args[0]);
+  case SYS_pbus_submit:
+    /* Copies the descriptor + tx into the handle's kernel buffers and queues
+       it. args[0]=fd, args[1]=descriptor, args[2]=prio. */
+    return v_pbus_xfer_submit((int)args[0],
+                              (const v_pbus_xfer_t *)(uintptr_t)args[1],
+                              (uint8_t)args[2]);
+  case SYS_pbus_wait:
+    /* Blocking, deferred-result (like SYS_sem_take). args[0]=fd,
+       args[1]=ticks. */
+    return v_pbus_xfer_wait((int)args[0], args[1]);
+  case SYS_pbus_finish:
+    /* Collect: copy rx out, or cancel a still-queued transfer. args[0]=fd,
+       args[1]=rx, args[2]=rx_len. */
+    return v_pbus_xfer_finish((int)args[0], (void *)(uintptr_t)args[1],
+                              args[2]);
 #endif
 #if VAIOS_IPC_FD
   case SYS_sem_open:
