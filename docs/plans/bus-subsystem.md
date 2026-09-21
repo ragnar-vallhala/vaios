@@ -1,7 +1,7 @@
 # Plan — Bus IPC Subsystem
 
 **Date:** 2026-07-02 · **Revised:** 2026-09-22
-**Status:** In progress — B0 + B1 landing; revision notes below
+**Status:** In progress — B0–B2 done; revision notes below
 **Scope:** single MCU, single firmware, single address space
 **Source:** `Bus Subsystem Design Document`
 **Branch:** `feat/bus-subsystem`
@@ -678,9 +678,9 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | Phase | Deliverable | Gate |
 |---|---|---|
 | **B0** | `include/bus.h` + module wiring (§11–13) | compiles both `-DVAIOS_MODULE_BUS=ON/OFF` |
-| **B1** | Block-pool allocator: free list, all-or-nothing multi-block, critical section (§4.1, §7) | unit: invariant H1 holds under fuzz |
-| **B2** | Topics + index-linked queue + single-producer publish + polling `pop` (§3, §5.1, §6.1) | unit: publish/pop ordering, ref-count reclaim |
-| **B3** | Subscriptions, ref-count churn, slow-subscriber epoch/seq reset (§5.1–5.2) | unit: H4/H5/H6 |
+| **B1** | Block-pool allocator: free list, all-or-nothing multi-block, critical section (§4.1, §7) | unit: invariant H1 holds under fuzz — **done** |
+| **B2** | Topics + index-linked queue + single-producer publish + polling pop (§3, §5.1, §6.1); full pool = drop | unit: publish/pop ordering, ref-count reclaim — **done** |
+| **B3** | Subscriptions, ref-count churn, slow-subscriber epoch/seq reset (§5.1–5.2); overwrite overflow policy (§5.3, needs the epoch guard) | unit: H4/H5/H6 |
 | **B4** | QoS: guaranteed/best-effort, elastic borrowing, guard region, reclaim (§4.2–4.4) | unit: H2/H3, reclaim bounded |
 | **B5** | Multi-producer 3-stage pipeline + PI (§6.2) | unit: H7/H8/H11; concurrency on the host port (real scheduler) + SITL |
 | **B6** | Notification engine: blocking + callback worker task (§6.4) | SITL: ISR publish → callback wake |
