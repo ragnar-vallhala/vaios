@@ -1,16 +1,16 @@
-// Bus arbiter — see include/bus.h for the model.
+// Bus arbiter — see include/periph_bus.h for the model.
 //
 // All queue state is touched under ENTER_CRITICAL_FROM_ISR: every entry point
 // may run in a task or in an ISR, and the FROM_ISR variant saves/restores
 // BASEPRI locally instead of bumping the task nesting counter.
-#include "bus.h"
+#include "periph_bus.h"
 #include "port.h" // ENTER/EXIT_CRITICAL_FROM_ISR, v_port_trigger_pendsv
 
 enum { JOB_IDLE = 0, JOB_QUEUED, JOB_ACTIVE };
 
 // Caller holds the critical section.
-static void enqueue(v_bus_t *bus, v_bus_job_t *job) {
-  v_bus_job_t **pp = &bus->queue;
+static void enqueue(v_pbus_t *bus, v_pbus_job_t *job) {
+  v_pbus_job_t **pp = &bus->queue;
   while (*pp && (*pp)->prio >= job->prio)
     pp = &(*pp)->next;
   job->next = *pp;
@@ -19,9 +19,9 @@ static void enqueue(v_bus_t *bus, v_bus_job_t *job) {
 }
 
 // Give the bus up; runs the owner's done() outside the critical section.
-static void release(v_bus_t *bus, int rc) {
+static void release(v_pbus_t *bus, int rc) {
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
-  v_bus_job_t *job = bus->active;
+  v_pbus_job_t *job = bus->active;
   bus->active = NULL;
   bus->locked = 0;
   if (job)
@@ -32,22 +32,22 @@ static void release(v_bus_t *bus, int rc) {
 }
 
 // If the bus is idle, hand it to the head of the queue. Loops only past async
-// jobs whose start() failed; a started DMA continues via v_bus_done_isr().
-static void dispatch(v_bus_t *bus) {
+// jobs whose start() failed; a started DMA continues via v_pbus_done_isr().
+static void dispatch(v_pbus_t *bus) {
   for (;;) {
     int woken = 0;
     uint32_t s = ENTER_CRITICAL_FROM_ISR();
-    v_bus_job_t *job = (bus->active || bus->locked) ? NULL : bus->queue;
+    v_pbus_job_t *job = (bus->active || bus->locked) ? NULL : bus->queue;
     if (job) {
       bus->queue = job->next;
       job->state = JOB_ACTIVE;
-      // A lock waiter's job lives in v_bus_lock's stack frame, gone once it
+      // A lock waiter's job lives in v_pbus_lock's stack frame, gone once it
       // returns, so the bus records only that it is locked.
       if (job->grant)
         bus->locked = 1;
       else
         bus->active = job;
-      // Give inside the critical section: a timed-out v_bus_lock() must not
+      // Give inside the critical section: a timed-out v_pbus_lock() must not
       // see ACTIVE and return (killing its stack semaphore) before this lands.
       if (job->grant)
         v_semaphore_give_from_isr(job->grant, &woken);
@@ -67,7 +67,7 @@ static void dispatch(v_bus_t *bus) {
   }
 }
 
-int v_bus_submit(v_bus_t *bus, v_bus_job_t *job) {
+int v_pbus_submit(v_pbus_t *bus, v_pbus_job_t *job) {
   if (!bus || !job || !job->start)
     return VA_FAIL;
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
@@ -82,24 +82,24 @@ int v_bus_submit(v_bus_t *bus, v_bus_job_t *job) {
   return VA_PASS;
 }
 
-void v_bus_done_isr(v_bus_t *bus, int rc) {
+void v_pbus_done_isr(v_pbus_t *bus, int rc) {
   release(bus, rc);
   dispatch(bus);
 }
 
-int v_bus_abort_isr(v_bus_t *bus, int rc) {
+int v_pbus_abort_isr(v_pbus_t *bus, int rc) {
   if (!bus || !bus->active)
-    return VA_FAIL; // idle, or held by v_bus_lock (its HAL call times out)
+    return VA_FAIL; // idle, or held by v_pbus_lock (its HAL call times out)
   release(bus, rc);
   dispatch(bus);
   return VA_PASS;
 }
 
-int v_bus_lock(v_bus_t *bus, uint8_t prio, uint32_t ticks_to_wait) {
+int v_pbus_lock(v_pbus_t *bus, uint8_t prio, uint32_t ticks_to_wait) {
   if (!bus)
     return VA_FAIL;
   StaticSemaphore_t sem_buf;
-  v_bus_job_t job = {.prio = prio};
+  v_pbus_job_t job = {.prio = prio};
   job.grant = v_semaphore_create_binary_static(&sem_buf);
 
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
@@ -114,7 +114,7 @@ int v_bus_lock(v_bus_t *bus, uint8_t prio, uint32_t ticks_to_wait) {
   s = ENTER_CRITICAL_FROM_ISR();
   int granted = job.state == JOB_ACTIVE;
   if (!granted) {
-    v_bus_job_t **pp = &bus->queue;
+    v_pbus_job_t **pp = &bus->queue;
     while (*pp && *pp != &job)
       pp = &(*pp)->next;
     if (*pp)
@@ -124,14 +124,14 @@ int v_bus_lock(v_bus_t *bus, uint8_t prio, uint32_t ticks_to_wait) {
   return granted ? VA_PASS : VA_FAIL;
 }
 
-void v_bus_unlock(v_bus_t *bus) {
+void v_pbus_unlock(v_pbus_t *bus) {
   if (!bus || !bus->locked)
     return;
   release(bus, 0);
   dispatch(bus);
 }
 
-int v_bus_cyclic_add(v_bus_t *bus, v_bus_job_t *job) {
+int v_pbus_cyclic_add(v_pbus_t *bus, v_pbus_job_t *job) {
   if (!bus || !job || !job->start || !job->period)
     return VA_FAIL;
   job->countdown = job->period;
@@ -142,11 +142,11 @@ int v_bus_cyclic_add(v_bus_t *bus, v_bus_job_t *job) {
   return VA_PASS;
 }
 
-void v_bus_cyclic_remove(v_bus_t *bus, v_bus_job_t *job) {
+void v_pbus_cyclic_remove(v_pbus_t *bus, v_pbus_job_t *job) {
   if (!bus || !job)
     return;
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
-  for (v_bus_job_t **pp = &bus->cyclic; *pp; pp = &(*pp)->cyc_next) {
+  for (v_pbus_job_t **pp = &bus->cyclic; *pp; pp = &(*pp)->cyc_next) {
     if (*pp == job) {
       *pp = job->cyc_next;
       break;
@@ -161,12 +161,12 @@ void v_bus_cyclic_remove(v_bus_t *bus, v_bus_job_t *job) {
 // Walks bus->cyclic without a critical section on purpose: add/remove splice a
 // single link under ENTER_CRITICAL_FROM_ISR, which masks this (kernel-priority)
 // IRQ, and a task cannot preempt an ISR, so the walk never sees a half-splice.
-void v_bus_tick_isr(v_bus_t *bus) {
-  for (v_bus_job_t *job = bus->cyclic; job; job = job->cyc_next) {
+void v_pbus_tick_isr(v_pbus_t *bus) {
+  for (v_pbus_job_t *job = bus->cyclic; job; job = job->cyc_next) {
     if (--job->countdown)
       continue;
     job->countdown = job->period;
-    if (v_bus_submit(bus, job) != VA_PASS)
+    if (v_pbus_submit(bus, job) != VA_PASS)
       bus->overruns++;
   }
 }

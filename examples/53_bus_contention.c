@@ -1,15 +1,15 @@
 /*
- * 53 — bus arbiter (include/bus.h) under heavy contention, on target.
+ * 53 — bus arbiter (include/periph_bus.h) under heavy contention, on target.
  * Runs on the STM32F4 under Renode (tools/renode_bus.sh) or real hardware.
  *
  * The "bus" is a real DMA2 stream plus TIM3 as the wire:
  *   start()   programs a DMA2 Stream0 memory-to-memory copy (the payload) and
  *             arms TIM3 for the transfer's wire time (Renode finishes the DMA
- *             copy at once, so the wire time gives each transfer a real duration).
+ *             copy at once, so the wire time gives transfers a real duration).
  *   TIM3 IRQ  = the transfer-complete interrupt: checks the DMA flag and calls
- *             v_bus_done_isr(), which chains the next job from the ISR.
- *   TIM2 IRQ  = the cyclic hardware timer (2 kHz) -> v_bus_tick_isr(), plus a
- *             watchdog that recovers wedged transfers with v_bus_abort_isr().
+ *             v_pbus_done_isr(), which chains the next job from the ISR.
+ *   TIM2 IRQ  = the cyclic hardware timer (2 kHz) -> v_pbus_tick_isr(), plus a
+ *             watchdog that recovers wedged transfers with v_pbus_abort_isr().
  *
  * Load (> 100% of the bus on purpose):
  *   cyclic  imu  prio 7  every tick (2 kHz), 120 us   -> 24%
@@ -30,7 +30,7 @@
 #ifndef NAVHAL
 #error "NAVHAL is required for this example"
 #endif
-#include "bus.h"
+#include "periph_bus.h"
 #include "memory.h"
 #include "navhal.h"
 #include "port.h" // v_port_trigger_pendsv
@@ -48,13 +48,13 @@
 typedef struct {
   const char *name;
   uint16_t wire_us;
-  v_bus_job_t job;
+  v_pbus_job_t job;
   SemaphoreHandle_t done_sem; // async one-shot users block on this
   uint32_t src[WORDS], dst[WORDS];
   volatile uint32_t starts, dones, errors, bad_data;
 } user_t;
 
-static v_bus_t bus;
+static v_pbus_t bus;
 static hal_dma_config_t dma = {
     .controller = HAL_DMA_CONTROLLER_2, // only DMA2 can do memory-to-memory
     .stream = 0,
@@ -72,8 +72,8 @@ static volatile uint32_t in_flight, wire_armed, start_seq;
 static volatile uint32_t violations, wedges, aborts, spurious;
 static volatile uint32_t lock_ok[3], lock_timeouts[3];
 
-static int bus_start(v_bus_job_t *j);
-static void bus_done(v_bus_job_t *j, int rc);
+static int bus_start(v_pbus_job_t *j);
+static void bus_done(v_pbus_job_t *j, int rc);
 
 #define USER(n, p, us, per)                                                   \
   {.name = n, .wire_us = us,                                                  \
@@ -86,7 +86,7 @@ static user_t *const users[] = {&imu, &baro, &mag, &log0, &log1};
 
 // ---- "hardware" -------------------------------------------------------------
 
-static int bus_start(v_bus_job_t *j) {
+static int bus_start(v_pbus_job_t *j) {
   user_t *u = j->arg;
   if (in_flight++ != 0)
     violations++; // arbiter let two transfers onto the bus
@@ -113,7 +113,7 @@ static int bus_start(v_bus_job_t *j) {
   return 0;
 }
 
-static void bus_done(v_bus_job_t *j, int rc) {
+static void bus_done(v_pbus_job_t *j, int rc) {
   user_t *u = j->arg;
   in_flight--;
   if (rc) {
@@ -144,13 +144,13 @@ static void tim3_isr(void) {
   wire_armed = 0;
   int ok = hal_dma_transfer_complete(&dma);
   hal_dma_clear_flags(&dma);
-  v_bus_done_isr(&bus, ok ? 0 : -5);
+  v_pbus_done_isr(&bus, ok ? 0 : -5);
 }
 
 // Cyclic timer + wedge watchdog.
 static void tim2_isr(void) {
   static uint32_t last_seq, stuck;
-  v_bus_tick_isr(&bus);
+  v_pbus_tick_isr(&bus);
   if (bus.active && start_seq == last_seq) {
     if (++stuck >= STUCK_TICKS) {
       stuck = 0;
@@ -159,7 +159,7 @@ static void tim2_isr(void) {
       hal_dma_stop(&dma);
       hal_dma_clear_flags(&dma);
       aborts++;
-      v_bus_abort_isr(&bus, -110);
+      v_pbus_abort_isr(&bus, -110);
     }
   } else {
     stuck = 0;
@@ -167,7 +167,7 @@ static void tim2_isr(void) {
   last_seq = start_seq;
 }
 
-// ---- tasks -------------------------------------------------------------------
+// ---- tasks ----------------------------------------------------------------
 
 static void burn_us(uint32_t us) {
   volatile uint32_t n = us * 20; // ~84 MHz, a few cycles per iteration
@@ -178,7 +178,7 @@ static void burn_us(uint32_t us) {
 static void async_task(void *arg) {
   user_t *u = arg;
   for (;;) {
-    if (v_bus_submit(&bus, &u->job) != VA_PASS)
+    if (v_pbus_submit(&bus, &u->job) != VA_PASS)
       violations++; // our own job can't be busy: we wait for each one
     v_semaphore_take(u->done_sem, V_WAIT_FOREVER);
   }
@@ -189,13 +189,13 @@ static const uint8_t sync_prio[3] = {6, 3, 0};
 static void sync_task(void *arg) {
   int id = (int)(long)arg;
   for (;;) {
-    if (v_bus_lock(&bus, sync_prio[id], 3) == VA_PASS) {
+    if (v_pbus_lock(&bus, sync_prio[id], 3) == VA_PASS) {
       if (in_flight || wire_armed)
         violations++; // DMA traffic while a blocking user owns the bus
       burn_us(100);   // the blocking hal_* transfer
       if (in_flight || wire_armed)
         violations++;
-      v_bus_unlock(&bus);
+      v_pbus_unlock(&bus);
       lock_ok[id]++;
     } else {
       lock_timeouts[id]++;
@@ -262,9 +262,9 @@ int main(void) {
   hal_timer_attach_callback(TIM3, tim3_isr);
   hal_timer_enable_interrupt(TIM3);
 
-  v_bus_cyclic_add(&bus, &imu.job);
-  v_bus_cyclic_add(&bus, &baro.job);
-  v_bus_cyclic_add(&bus, &mag.job);
+  v_pbus_cyclic_add(&bus, &imu.job);
+  v_pbus_cyclic_add(&bus, &baro.job);
+  v_pbus_cyclic_add(&bus, &mag.job);
   hal_timer_init_freq(TIM2, TIMER_HZ);
   hal_timer_attach_callback(TIM2, tim2_isr);
   hal_timer_enable_interrupt(TIM2);
