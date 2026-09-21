@@ -2,7 +2,8 @@
  * @file test_bus.c
  * @brief Bus IPC subsystem (kernel/bus.c), per docs/plans/bus-subsystem.md:
  *        B1 the block-pool allocator (gate: invariant H1 holds under fuzz),
- *        B2 topics, publish and polling pop (gate: ordering, ref-count reclaim).
+ *        B2 topics, publish and polling pop (gate: ordering, ref-count reclaim),
+ *        B3 unsubscribe, overwrite, slow subscribers (gate: H4/H5/H6).
  */
 #include "bus.h"
 #include "framework.h"
@@ -156,22 +157,22 @@ static v_bus_sub_t sa, sb, sc;
 
 static void mreset(void) {
   v_bus_init(&mb, mp_blocks, mp_desc, MS, MC);
-  v_bus_topic_declare(&mb, &tp, "imu.raw");
+  v_bus_topic_declare(&mb, &tp, "imu.raw", NULL);
 }
 
 static int pop_u32(v_bus_sub_t *s, uint32_t *v) {
   uint16_t len = 0;
-  int r = v_bus_pop(s, v, sizeof *v, &len);
+  int r = v_bus_pop(s, v, sizeof *v, &len, NULL);
   return r == VA_PASS && len == sizeof *v ? VA_PASS : r;
 }
 
 static void test_bus_topic_declare(void) {
   static v_bus_topic_t dup, other;
   mreset();
-  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &dup, "imu.raw"), V_BUS_EINVAL);
-  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &tp, "again"), V_BUS_EINVAL);
-  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &other, "baro"), VA_PASS);
-  TEST_ASSERT_EQ(v_bus_topic_declare(NULL, &other, "x"), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &dup, "imu.raw", NULL), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &tp, "again", NULL), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &other, "baro", NULL), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_topic_declare(NULL, &other, "x", NULL), V_BUS_EINVAL);
   TEST_ASSERT_EQ(v_bus_subscribe(&tp, &sa), VA_PASS);
   TEST_ASSERT_EQ(v_bus_subscribe(&tp, &sa), V_BUS_EINVAL); /* no re-link */
 }
@@ -249,10 +250,10 @@ static void test_bus_multiblock_and_empty(void) {
   TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC - 4); /* hdr+20, 32, 32, 5 */
   TEST_ASSERT_EQ(v_bus_publish(&tp, NULL, 0), VA_PASS);
   uint16_t len = 0;
-  TEST_ASSERT_EQ(v_bus_pop(&sa, back, sizeof back, &len), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_pop(&sa, back, sizeof back, &len, NULL), VA_PASS);
   TEST_ASSERT_EQ(len, sizeof big);
   TEST_ASSERT_EQ(memcmp(big, back, sizeof big), 0);
-  TEST_ASSERT_EQ(v_bus_pop(&sa, back, sizeof back, &len), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_pop(&sa, back, sizeof back, &len, NULL), VA_PASS);
   TEST_ASSERT_EQ(len, 0);
   TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
 }
@@ -264,9 +265,9 @@ static void test_bus_pop_too_small(void) {
   uint32_t two[2] = {11, 22}, got[2] = {0};
   v_bus_publish(&tp, two, sizeof two);
   uint16_t len = 0;
-  TEST_ASSERT_EQ(v_bus_pop(&sa, got, 4, &len), V_BUS_EMSGSIZE);
+  TEST_ASSERT_EQ(v_bus_pop(&sa, got, 4, &len, NULL), V_BUS_EMSGSIZE);
   TEST_ASSERT_EQ(len, sizeof two);
-  TEST_ASSERT_EQ(v_bus_pop(&sa, got, sizeof got, &len), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_pop(&sa, got, sizeof got, &len, NULL), VA_PASS);
   TEST_ASSERT_EQ(got[1], 22u);
 }
 
@@ -327,6 +328,180 @@ static void test_bus_fuzz_three_readers(void) {
   TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
 }
 
+/* ---- B3: unsubscribe, overwrite, slow subscribers ------------------------ */
+static const v_bus_topic_cfg_t OVERWRITE = {.overflow = V_BUS_OVERWRITE};
+static v_bus_topic_t tw; /* an overwrite topic */
+
+static void wreset(void) {
+  v_bus_init(&mb, mp_blocks, mp_desc, MS, MC);
+  v_bus_topic_declare(&mb, &tw, "att.est", &OVERWRITE);
+}
+
+static int pop_m(v_bus_sub_t *s, uint32_t *v, uint32_t *missed) {
+  uint16_t len = 0;
+  return v_bus_pop(s, v, sizeof *v, &len, missed);
+}
+
+/* H6: unsubscribing releases exactly what the leaving subscriber owed. */
+static void test_bus_unsubscribe_releases(void) {
+  mreset();
+  v_bus_subscribe(&tp, &sa);
+  v_bus_subscribe(&tp, &sb);
+  for (uint32_t i = 0; i < 3; i++)
+    v_bus_publish(&tp, &i, sizeof i);
+  uint32_t v;
+  pop_u32(&sa, &v); /* A read #0; B owes all three */
+  TEST_ASSERT_EQ(v_bus_unsubscribe(&sb), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC - 2); /* #0 freed, A owes #1 #2 */
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_unsubscribe(&sb), V_BUS_EINVAL); /* already gone */
+  TEST_ASSERT_EQ(v_bus_unsubscribe(&sa), VA_PASS);       /* last reader */
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  /* A detached subscription can join again and sees only new messages. */
+  TEST_ASSERT_EQ(v_bus_subscribe(&tp, &sa), VA_PASS);
+  v = 9;
+  v_bus_publish(&tp, &v, sizeof v);
+  TEST_ASSERT_EQ(pop_u32(&sa, &v), VA_PASS);
+  TEST_ASSERT_EQ(v, 9u);
+}
+
+/* Overwrite: a full pool evicts the topic's oldest; the slow reader skips
+ * ahead and learns how many it lost. A drop topic refuses instead. */
+static void test_bus_overwrite_reports_missed(void) {
+  wreset();
+  v_bus_subscribe(&tw, &sa);
+  for (uint32_t i = 0; i < MC + 4; i++)
+    TEST_ASSERT_EQ(v_bus_publish(&tw, &i, sizeof i), VA_PASS);
+  uint32_t v, missed = 99;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 4u);
+  TEST_ASSERT_EQ(missed, 4u);
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 5u);
+  TEST_ASSERT_EQ(missed, 0u);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  /* the default policy drops instead */
+  mreset();
+  v_bus_subscribe(&tp, &sb);
+  for (uint32_t i = 0; i < MC; i++)
+    v_bus_publish(&tp, &i, sizeof i);
+  TEST_ASSERT_EQ(v_bus_publish(&tp, &v, sizeof v), VA_FAIL);
+}
+
+/* A reader that keeps up loses nothing while a slow one on the same topic
+ * gets overwritten. */
+static void test_bus_overwrite_fast_reader_unaffected(void) {
+  wreset();
+  v_bus_subscribe(&tw, &sa); /* fast */
+  v_bus_subscribe(&tw, &sb); /* never reads until the end */
+  uint32_t v, missed;
+  for (uint32_t i = 0; i < 3 * MC; i++) {
+    v_bus_publish(&tw, &i, sizeof i);
+    TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+    TEST_ASSERT_EQ(v, i);
+    TEST_ASSERT_EQ(missed, 0u);
+  }
+  TEST_ASSERT_EQ(pop_m(&sb, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 2u * MC);   /* the oldest MC survived */
+  TEST_ASSERT_EQ(missed, 2u * MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Overwrite only evicts when that can actually make room: another topic
+ * holding the pool isn't this topic's to evict. */
+static void test_bus_overwrite_no_futile_eviction(void) {
+  static v_bus_topic_t other;
+  wreset();
+  v_bus_topic_declare(&mb, &other, "log", NULL);
+  v_bus_subscribe(&tw, &sa);
+  v_bus_subscribe(&other, &sb);
+  uint32_t v = 1;
+  v_bus_publish(&tw, &v, sizeof v); /* tw holds 1 block */
+  for (int i = 0; i < MC - 1; i++)
+    v_bus_publish(&other, &v, sizeof v); /* other holds the rest */
+  static uint8_t two_blocks[FIRST + 1];
+  TEST_ASSERT_EQ(v_bus_publish(&tw, two_blocks, sizeof two_blocks), VA_FAIL);
+  TEST_ASSERT_EQ(pop_u32(&sa, &v), VA_PASS); /* its message wasn't evicted */
+  TEST_ASSERT_EQ(v, 1u);
+}
+
+/* H4/H5: a message evicted WHILE a pop copies it (an ISR publish preempting
+ * the reader) must not be returned torn: pop sees the block's epoch change,
+ * drops the copy and reads the next message, reporting the gap. */
+extern void (*v_bus_test_mid_pop)(void);
+static void evict_during_pop(void) {
+  v_bus_test_mid_pop = NULL; /* once */
+  uint32_t v = 1000;
+  v_bus_publish(&tw, &v, sizeof v); /* pool full: evicts the head */
+}
+static void test_bus_evicted_mid_pop_rereads(void) {
+  wreset();
+  v_bus_subscribe(&tw, &sa);
+  for (uint32_t i = 0; i < MC; i++)
+    v_bus_publish(&tw, &i, sizeof i); /* pool exactly full */
+  v_bus_test_mid_pop = evict_during_pop;
+  uint32_t v = 0, missed = 0;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_NULL(v_bus_test_mid_pop); /* the eviction did run mid-pop */
+  TEST_ASSERT_EQ(v, 1u);      /* not #0, which was freed under the copy */
+  TEST_ASSERT_EQ(missed, 1u); /* #0 is reported lost */
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Randomised: overwrite topic, one reader that stays plus two that come and
+ * go. Every pop is in order with missed == the exact gap; the invariant holds
+ * after every step; once everyone leaves, the pool is whole. */
+static void test_bus_fuzz_churn_overwrite(void) {
+  wreset();
+  v_bus_sub_t *subs[3] = {&sa, &sb, &sc};
+  int on[3] = {1, 1, 1};
+  uint32_t expect[3] = {0, 0, 0}, next = 0;
+  for (int k = 0; k < 3; k++)
+    v_bus_subscribe(&tw, subs[k]);
+  int failures = 0, gaps = 0;
+  uint32_t x = 0x1B873593u;
+  for (int op = 0; op < 20000 && !failures; op++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    int k = (int)((x >> 3) % 3u);
+    switch (x & 7u) {
+    case 0: case 1: case 2: /* publish (always someone subscribed: sa stays) */
+      failures += v_bus_publish(&tw, &next, sizeof next) != VA_PASS;
+      next++;
+      break;
+    case 3: /* churn one of the two that may leave */
+      if (k == 0)
+        break;
+      if (on[k]) {
+        failures += v_bus_unsubscribe(subs[k]) != VA_PASS;
+      } else {
+        failures += v_bus_subscribe(&tw, subs[k]) != VA_PASS;
+        expect[k] = next; /* sees only what comes next */
+      }
+      on[k] = !on[k];
+      break;
+    default: { /* pop */
+      uint32_t v, missed;
+      if (on[k] && pop_m(subs[k], &v, &missed) == VA_PASS) {
+        failures += v != expect[k] + missed; /* in order, gap exact */
+        gaps += missed != 0;
+        expect[k] = v + 1;
+      }
+    }
+    }
+    failures += v_bus_check(&mb) != VA_PASS;
+  }
+  for (int k = 0; k < 3; k++)
+    if (on[k])
+      failures += v_bus_unsubscribe(subs[k]) != VA_PASS;
+  TEST_ASSERT_EQ(failures, 0);
+  TEST_ASSERT(gaps > 0); /* overwrite did happen */
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
 static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_init_validates),
     TEST_CASE(test_bus_alloc_all_or_nothing),
@@ -342,10 +517,16 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_pop_too_small),
     TEST_CASE(test_bus_publish_full_pool),
     TEST_CASE(test_bus_fuzz_three_readers),
+    TEST_CASE(test_bus_unsubscribe_releases),
+    TEST_CASE(test_bus_overwrite_reports_missed),
+    TEST_CASE(test_bus_overwrite_fast_reader_unaffected),
+    TEST_CASE(test_bus_overwrite_no_futile_eviction),
+    TEST_CASE(test_bus_evicted_mid_pop_rereads),
+    TEST_CASE(test_bus_fuzz_churn_overwrite),
 };
 
 const test_suite_t bus_suite = {
-    .name = "Bus IPC: block pool (B1) + topics (B2)",
+    .name = "Bus IPC: pool (B1), topics (B2), churn + overwrite (B3)",
     .cases = bus_cases,
     .count = TEST_COUNT(bus_cases),
 };
