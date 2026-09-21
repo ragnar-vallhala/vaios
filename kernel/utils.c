@@ -867,13 +867,23 @@ void v_log(Log_Type type, const char *msg, ...) {
     if (atomic_get(&log_buffer_storage_read_lock) ||
         log_buffer_size_to_read > 0) {
       EXIT_CRITICAL();
+      // Once tasks run, the flush in flight may belong to a LOWER-priority task
+      // (the idle task flushes every pass). On a non-DMA console that flush is
+      // a synchronous v_print, so busy-spinning here starves its owner: a
+      // priority inversion that only broke on the spin guard (~seconds) and then
+      // force-cleared the lock mid-print. Sleep a tick instead so it can finish.
+      extern uint8_t scheduler_running;
+      int can_sleep = scheduler_running && !is_in_isr;
+      uint32_t guard_max = can_sleep ? 1000u : 10000000u;
       uint32_t spin_guard = 0;
       while ((atomic_get(&log_buffer_storage_read_lock) ||
               log_buffer_size_to_read > 0) &&
-             spin_guard++ < 10000000u) {
+             spin_guard++ < guard_max) {
         v_log_flush();
+        if (can_sleep)
+          task_delay(1);
       }
-      if (spin_guard >= 10000000u) {
+      if (spin_guard >= guard_max) {
         atomic_set(&log_buffer_storage_read_lock, 0);
         log_buffer_size_to_read = 0;
       }
