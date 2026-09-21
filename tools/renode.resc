@@ -27,6 +27,12 @@ machine LoadPlatformDescription @platforms/cpus/stm32f4.repl
 # faulting on a non-existent peripheral. It counts once firmware sets CYCCNTENA.
 machine LoadPlatformDescriptionFromString "dwt: Miscellaneous.DWT @ sysbus 0xE0001000 { frequency: 84000000 }"
 
+# The generic repl clocks TIM2/TIM3 at 10 MHz; on the real part at the default
+# 84 MHz setup they run at 84 MHz (APB1 x2), so firmware PSC/ARR values would
+# otherwise run 8.4x slow.
+sysbus.timer2 Frequency 84000000
+sysbus.timer3 Frequency 84000000
+
 # Renode's STM32F4 DMA model doesn't implement every config / flag-clear bit
 # the vaios DMA-backed logger writes (stream priority, interrupt-flag clears),
 # so it spams "Unhandled write" warnings even though logging works. Mute dma1 /
