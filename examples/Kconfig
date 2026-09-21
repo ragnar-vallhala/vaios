@@ -42,6 +42,16 @@ config EXAMPLE_MPU_USER_DEMO
 	select VAIOS_TASK_HEAP
 	select VAIOS_MPU_USER_SEPARATION
 
+config EXAMPLE_PBUS_USER
+	bool "pbus_user"
+	# Unprivileged tasks doing peripheral-bus transfers through the fd +
+	# transfer syscalls (v_pbus_open / v_pbus_xfer), completed from a TIM3 IRQ.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MPU_USER_SEPARATION
+
 config EXAMPLE_STAGE5_LIFECYCLE
 	bool "stage5_lifecycle"
 	# On-target task-teardown regression (mutex-held-on-exit, blocked-task
@@ -104,6 +114,16 @@ config EXAMPLE_HOST_MPU_ISOLATION
 	select VAIOS_MPU_STATIC_PROTECT
 	select VAIOS_SYSCALL_SVC
 	select VAIOS_MPU_USER_SEPARATION
+
+config EXAMPLE_HOST_USER_RO
+	bool "host_user_ro"
+	# Host check that unprivileged syscalls accept read-only pointers into the
+	# executable's rodata and refuse writes there. Isolation closure + devfs.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_DEVFS
 
 config EXAMPLE_MPU_FAULT
 	bool "mpu_fault"

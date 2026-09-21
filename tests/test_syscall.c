@@ -19,6 +19,7 @@
  * here now would fail against the current buggy code.
  */
 #include "framework.h"
+#include "periph_bus.h"
 #include "syscall.h"
 #include <stdint.h>
 
@@ -93,6 +94,82 @@ static void test_unpriv_write_valid_ptr_passes(void) {
   TEST_ASSERT(call(SYS_write, 1, base, 16) != T_EFAULT);
 }
 
+/* ---- Peripheral-bus transfer syscalls: the descriptor AND the tx buffer it
+ * points at must be the caller's own; so must the rx buffer at finish. */
+static void test_unpriv_pbus_open_bad_str_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_pbus_open, BAD_PTR, 0, 0), T_EFAULT);
+}
+static void test_unpriv_pbus_submit_bad_desc_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, BAD_PTR, 1), T_EFAULT);
+}
+static void test_unpriv_pbus_submit_bad_tx_efault(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  v_pbus_xfer_t *x = (v_pbus_xfer_t *)(uintptr_t)base; /* in-block descriptor */
+  *x = (v_pbus_xfer_t){.tx = (const void *)BAD_PTR, .tx_len = 4};
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), T_EFAULT);
+  /* Oversized tx_len is refused before its range is even checked. */
+  x->tx = (const void *)(uintptr_t)(base + 64);
+  x->tx_len = VAIOS_PBUS_XFER_MAX + 1;
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), V_PBUS_EINVAL);
+}
+/* rx is only written at finish, but a bad one must be refused at submit: a
+ * refused finish would leave the handle stuck on its uncollected transfer. */
+static void test_unpriv_pbus_submit_bad_rx_efault(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_pbus_xfer_t *x = (v_pbus_xfer_t *)(uintptr_t)base;
+  *x = (v_pbus_xfer_t){.rx = (void *)BAD_PTR, .rx_len = 4};
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), T_EFAULT);
+}
+static void test_unpriv_pbus_submit_valid_passes(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_pbus_xfer_t *x = (v_pbus_xfer_t *)(uintptr_t)base;
+  *x = (v_pbus_xfer_t){.tx = (const void *)(uintptr_t)(base + 64), .tx_len = 4};
+  /* Validation passes; the body then rejects fd 3 (not an open bus handle). */
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), V_PBUS_EINVAL);
+}
+static void test_unpriv_pbus_finish_bad_rx_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_pbus_finish, 3, BAD_PTR, 8), T_EFAULT);
+}
+
+/* ---- Read-only memory every task can read (flash on target): accepted for
+ * reads, never for writes, and never past its end. */
+void stub_set_user_ro(uintptr_t lo, uintptr_t hi); /* tests/stubs/stubs.c */
+static const char fake_flash[32] = "i2c1";         /* stands in for .rodata */
+#define RO_LO ((uintptr_t)fake_flash)
+#define RO_HI ((uintptr_t)fake_flash + sizeof fake_flash)
+
+static void test_unpriv_ro_read_ok_write_refused(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  stub_set_user_ro(RO_LO, RO_HI);
+  TEST_ASSERT(call(SYS_write, 1, RO_LO, 16) != T_EFAULT); /* read from it */
+  TEST_ASSERT_EQ(call(SYS_read, 0, RO_LO, 16), T_EFAULT); /* write into it */
+  TEST_ASSERT_EQ(call(SYS_write, 1, RO_LO + 8, 32), T_EFAULT); /* runs past */
+  stub_set_user_ro(0, 0);
+}
+static void test_unpriv_ro_string_accepted(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_pbus_open, RO_LO, 0, 0), T_EFAULT); /* region off */
+  stub_set_user_ro(RO_LO, RO_HI);
+  TEST_ASSERT(call(SYS_pbus_open, RO_LO, 0, 0) != T_EFAULT);
+  stub_set_user_ro(0, 0);
+}
+static void test_unpriv_ro_pbus_tx_ok_rx_refused(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  stub_set_user_ro(RO_LO, RO_HI);
+  v_pbus_xfer_t *x = (v_pbus_xfer_t *)(uintptr_t)base;
+  *x = (v_pbus_xfer_t){.tx = fake_flash, .tx_len = 8};
+  /* Validation passes; the body then rejects fd 3 (no open bus handle). */
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), V_PBUS_EINVAL);
+  x->rx = (void *)RO_LO;
+  x->rx_len = 4;
+  TEST_ASSERT_EQ(call(SYS_pbus_submit, 3, base, 1), T_EFAULT);
+  stub_set_user_ro(0, 0);
+}
+
 /* ---- A privileged caller bypasses the validation switch entirely. --------- */
 static void test_priv_caller_skips_validation(void) {
   (void)syscall_set_caller(BLOCK_SZ, /*unpriv=*/0);
@@ -137,6 +214,15 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_open_bad_str_efault),
     TEST_CASE(test_unpriv_wait_bad_ptr_efault),
     TEST_CASE(test_unpriv_write_valid_ptr_passes),
+    TEST_CASE(test_unpriv_pbus_open_bad_str_efault),
+    TEST_CASE(test_unpriv_pbus_submit_bad_desc_efault),
+    TEST_CASE(test_unpriv_pbus_submit_bad_tx_efault),
+    TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
+    TEST_CASE(test_unpriv_pbus_submit_valid_passes),
+    TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+    TEST_CASE(test_unpriv_ro_read_ok_write_refused),
+    TEST_CASE(test_unpriv_ro_string_accepted),
+    TEST_CASE(test_unpriv_ro_pbus_tx_ok_rx_refused),
     TEST_CASE(test_priv_caller_skips_validation),
     TEST_CASE(test_priv_caller_ipc_not_denied),
     /* expected-fail regression test (see STAGE5_REVIEW_FINDINGS.md) */

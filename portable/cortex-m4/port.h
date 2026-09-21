@@ -126,6 +126,17 @@ void v_port_trigger_pendsv(void);
 // known map (the host stub) return 1.
 int v_port_ptr_is_ram(const void *p);
 
+// Flash (code + rodata) as granted to unprivileged tasks by MPU region 2 under
+// VAIOS_MPU_USER_SEPARATION: read + execute, no write. One definition for the
+// region and for v_port_user_region, so the two can't drift apart.
+#define V_PORT_USER_RO_BASE 0x08000000u
+#define V_PORT_USER_RO_SIZE 0x80000u // 512 KB == HAL_MPU_SIZE_512KB
+// True if `a` lies in memory OUTSIDE the task's own block that the running
+// task may access (read, or write if `write`), setting *end to that region's
+// end. Syscall validation uses it on top of the block check. Here: the flash
+// above, reads only (string literals, const tables); the stack is in the block.
+int v_port_user_region(uintptr_t a, int write, uintptr_t *end);
+
 // --- MPU (memory protection) — implemented in port_hw.c, no-ops without an MPU
 // or when VAIOS_MPU_ENABLE is off. See docs/plan/MPU_CACHE_INTEGRATION_PLAN.md.
 // Enable the MPU (background region privileged) + MemManage fault, once at init.

@@ -2,6 +2,7 @@
 #include "ipc.h"
 #include "memory.h"
 #include "perf_hooks.h"
+#include "periph_bus.h" // v_pbus_task_teardown
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL
 #include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
 #include "utils.h"
@@ -373,6 +374,7 @@ void set_next_task(void) {
 void v_task_exit_impl(void) {
   ENTER_CRITICAL();
   v_ipc_task_teardown(current_task); // release held mutexes / wait memberships
+  v_pbus_task_teardown(current_task); // ... and bus locks
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
@@ -402,10 +404,17 @@ __attribute__((noreturn)) void task_exit(void) {
 // task's own block [mem_block, mem_block+stack_size). Overflow-safe. `write` is
 // a hook for a future finer split; the whole block is RW today.
 int v_access_ok(const void *p, uint32_t len, int write) {
-  (void)write;
   TCB *t = current_task;
   if (!t || !t->mem_block)
     return 0;
+  uintptr_t a = (uintptr_t)p;
+  // Memory outside the block the port says this task may already touch
+  // itself: flash for reads (string literals, const tables), and on the host
+  // the task's separately allocated stack. The port reports exactly what its
+  // (software) MPU grants the running task, so this widens nothing.
+  uintptr_t port_end;
+  if (v_port_user_region(a, write, &port_end))
+    return len <= (uint32_t)(port_end - a);
   uintptr_t base = (uintptr_t)t->mem_block;
 #if VAIOS_MPU_STACK_GUARD
   // The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack guard (MPU
@@ -415,27 +424,30 @@ int v_access_ok(const void *p, uint32_t len, int write) {
   base += VAIOS_MPU_GUARD_SIZE;
 #endif
   uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
-  uintptr_t a = (uintptr_t)p;
   if (a < base || a > end)
     return 0;
   return len <= (uint32_t)(end - a); // a+len <= end, no wrap (a<=end already)
 }
 
-// Bounded NUL scan for a user string, never reading past the caller's block.
+// Bounded NUL scan for a user string, never reading past the caller's block
+// or the port-reported region it starts in (a literal in flash, a host stack).
 // Returns the length (excluding NUL), or -1 if the pointer is out of bounds or
-// no NUL is found within `max` / the block.
+// no NUL is found within `max` / that region.
 long v_strnlen_user(const char *s, uint32_t max) {
   TCB *t = current_task;
   if (!t || !t->mem_block)
     return -1;
-  uintptr_t base = (uintptr_t)t->mem_block;
-#if VAIOS_MPU_STACK_GUARD
-  base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (see v_access_ok)
-#endif
-  uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
   uintptr_t a = (uintptr_t)s;
-  if (a < base || a >= end)
-    return -1;
+  uintptr_t end;
+  if (!v_port_user_region(a, 0, &end)) {
+    uintptr_t base = (uintptr_t)t->mem_block;
+#if VAIOS_MPU_STACK_GUARD
+    base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (v_access_ok)
+#endif
+    end = (uintptr_t)t->mem_block + t->stack_size;
+    if (a < base || a >= end)
+      return -1;
+  }
   uint32_t avail = (uint32_t)(end - a);
   uint32_t limit = avail < max ? avail : max;
   for (uint32_t i = 0; i < limit; i++)
@@ -464,6 +476,7 @@ void task_exit_request(uint32_t task_id) {
   // Release held mutexes and unlink any wait-queue memberships so a later
   // give/unlock/wake never touches this soon-freed TCB.
   v_ipc_task_teardown(task);
+  v_pbus_task_teardown(task); // queued / held v_pbus_lock slots
 
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);
