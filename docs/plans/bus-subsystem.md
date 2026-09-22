@@ -1,7 +1,7 @@
 # Plan — Bus IPC Subsystem
 
 **Date:** 2026-07-02 · **Revised:** 2026-09-22
-**Status:** In progress — B0–B4 (+ zero-copy) done; revision notes below
+**Status:** In progress — B0–B4, zero-copy and pipes done; revision notes below
 **Scope:** single MCU, single firmware, single address space
 **Source:** `Bus Subsystem Design Document`
 **Branch:** `feat/bus-subsystem`
@@ -676,6 +676,40 @@ of three zero-copy SPSC rings while giving decoupling, overwrite + `missed`,
 and (later) QoS. The bus masks the kernel IRQ band for a few short critical
 sections per operation; SPSC never masks.
 
+### 11.2 Pipe topics (added 2026-09-22)
+
+For hot point-to-point paths the caller can promise one producer context and
+one subscriber (`cfg.pipe = 1`, `cfg.reserve = depth`). The reservation then
+becomes a closed ring of single-block slots owned by the topic, and the topic
+runs the SPSC protocol: the producer alone writes `next_seq` and its slot, the
+reader alone its `expect`/cursor; a slot is published by stamping
+`hdr.seq = 2*seq`, then bumping `next_seq`, with barriers between — **no
+critical section, no ref counts, no pool traffic**. Same API (publish/pop,
+reserve/commit/cancel, peek/release); a second subscribe gets `V_BUS_EBUSY`,
+a multi-block message `V_BUS_ESPLIT`.
+
+- **drop:** the producer refuses when the ring is full, so it never touches an
+  unread slot — a peek stays valid by construction.
+- **overwrite:** the producer marks the slot odd (being written) before
+  reusing it; a reader treats any stamp it doesn't expect as a lost message,
+  re-checks after its copy (seqlock), jumps when lapped, and a release after
+  an overwritten peek returns `V_BUS_ESTALE`. `missed` is exact.
+- The common read (not lapped, stamp matches) takes an inline fast path; the
+  general `pipe_read` handles the rest.
+
+Renode, 16-byte message, cycles:
+
+| Path | copy | zero copy |
+|---|---|---|
+| SPSC | 318 | 100 |
+| **pipe** (drop or overwrite) | **346** | **175** |
+| reserved topic | 472 | 291 |
+| pool topic | 484 | 314 |
+
+Pipe zero copy splits as reserve 44 + commit 44 (SPSC write: 69) and peek 51
++ release 31 (SPSC read: 29); the remaining gap is argument checks, the
+header stamp/len and the extra barrier the overwrite-capable stamp needs.
+
 ## 12. Configuration knobs
 
 Kconfig symbols in the root `Kconfig`, added **by the phase that needs them**
@@ -756,6 +790,7 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **B2** | Topics + index-linked queue + single-producer publish + polling pop (§3, §5.1, §6.1); full pool = drop | unit: publish/pop ordering, ref-count reclaim — **done** |
 | **B3** | Unsubscribe (H6), overwrite overflow policy (§5.3), slow-subscriber recovery with `missed` (§5.2) | unit: H4/H5/H6 — **done** |
 | **ZC** | Zero-copy path for single-block messages: `v_bus_reserve`/`commit`/`cancel`, `v_bus_peek`/`release`; a peeked message is pinned against eviction (§11.1) | unit: pinning vs eviction under fuzz; Renode benchmark — **done** |
+| **PIPE** | Pipe topics: caller-promised SPSC, lock-free ring of reserved slots (§11.2) | unit: drop/overwrite/seqlock under fuzz; Renode benchmark — **done** |
 | **B4** | QoS as **soft reservations** (§4.5): per-topic stash (`cfg.reserve`), loans to overwrite topics, bounded reclaim by eviction | unit: guarantee asserted under fuzz; Renode: reserved drop topic 0 drops under an overwrite flood — **done** |
 | **B5** | Multi-producer 3-stage pipeline + PI (§6.2) | unit: H7/H8/H11; concurrency on the host port (real scheduler) + SITL |
 | **B6** | Notification engine: blocking + callback worker task (§6.4) | SITL: ISR publish → callback wake |

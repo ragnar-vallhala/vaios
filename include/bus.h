@@ -6,8 +6,9 @@
 // here as it lands; so far: the bus and its block pool (B0/B1), topics with
 // single-producer publish and polling pop (B2), unsubscribe, the overwrite
 // policy and slow-subscriber recovery (B3), a zero-copy path for
-// single-block messages (reserve/commit, peek/release), and per-topic soft
-// reservations (cfg.reserve).
+// single-block messages (reserve/commit, peek/release), per-topic soft
+// reservations (cfg.reserve), and pipe topics (cfg.pipe: a lock-free
+// single-producer/single-consumer ring for hot point-to-point paths).
 //
 // Storage is caller-owned, like the peripheral-bus arbiter (periph_bus.h): the
 // kernel keeps no object table and the data path never allocates.
@@ -38,7 +39,8 @@ typedef struct {
   uint16_t next;  // free list, or the next block of the same message
   uint16_t epoch; // bumped each time the block is freed (stale-read guard)
   uint8_t used;   // 0 free (pool), 1 in use, 2 reserved (v_bus_reserve,
-                  // uncommitted), 3 idle in a topic's stash (cfg.reserve)
+                  // uncommitted), 3 idle in a topic's stash (cfg.reserve),
+                  // 4 a slot of a pipe topic's ring
 } v_bus_desc_t;
 
 typedef struct v_bus_sub v_bus_sub_t;
@@ -77,6 +79,14 @@ typedef struct {
   // they may be lent to a V_BUS_OVERWRITE topic when the pool is empty, and
   // are taken back by evicting that borrower's oldest messages when needed.
   uint16_t reserve;
+  // Pipe: the caller promises ONE producer context and ONE subscriber, and
+  // the topic becomes a lock-free ring of `reserve` single-block slots — the
+  // bus's SPSC path, no critical sections, no ref counts, no pool traffic.
+  // Same API; a second subscribe is refused, multi-block messages too.
+  // V_BUS_DROP refuses when the ring is full (the producer never touches an
+  // unread slot, so a peek stays valid); V_BUS_OVERWRITE overwrites the
+  // oldest, readers detect it per slot (seqlock) and report it as `missed`.
+  uint8_t pipe;
 } v_bus_topic_cfg_t;
 
 // A topic: an ordered queue of messages on one bus. Caller storage, private.
@@ -93,7 +103,8 @@ struct v_bus_topic {
   uint16_t stash_count; // stash_count + lent <= cfg.reserve, always
   uint16_t lent;        // stash blocks currently lent to overwrite topics
   uint16_t borrowed;    // blocks this topic owes lenders (repaid on free)
-  uint32_t next_seq;
+  uint16_t pipe_wr;     // pipe: the slot the next message goes into
+  uint32_t next_seq;    // pipe: written only by the producer (lock-free)
 };
 
 // A subscription: one reader's position in a topic. Caller storage, private.
@@ -113,7 +124,9 @@ struct v_bus_sub {
 #define V_BUS_EINVAL (-22)
 #define V_BUS_EMSGSIZE (-90) // pop buffer smaller than the message
 #define V_BUS_ESPLIT (-40)   // zero-copy call on a message wider than a block
-#define V_BUS_EBUSY (-16)    // this subscription already holds a peek
+#define V_BUS_EBUSY (-16)    // a peek is already held / a pipe's one subscriber
+#define V_BUS_ESTALE (-116)  // overwrite pipe: the peeked slot was overwritten
+                             // while viewed — discard what was read
 
 // Wire caller storage into a bus, all blocks free. VA_FAIL on a NULL argument,
 // a block count of 0 or >= V_BUS_NIL, or a block size that isn't a multiple
@@ -191,7 +204,9 @@ int v_bus_cancel(v_bus_topic_t *topic, uint16_t ticket);
 // (read it with v_bus_pop); V_BUS_EBUSY if a peek is already held.
 int v_bus_peek(v_bus_sub_t *sub, const void **data, uint16_t *len,
                uint32_t *missed);
-// Done with the peeked message: consume it, like a completed v_bus_pop.
+// Done with the peeked message: consume it, like a completed v_bus_pop. On a
+// V_BUS_OVERWRITE pipe (the only case where the writer isn't held back),
+// V_BUS_ESTALE says the slot was overwritten while it was being read.
 int v_bus_release(v_bus_sub_t *sub);
 
 // --- Pool state ---------------------------------------------------------------
