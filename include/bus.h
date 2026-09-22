@@ -1,12 +1,13 @@
 #ifndef VAIOS_BUS_H
 #define VAIOS_BUS_H
 
-// Bus IPC subsystem: payload-agnostic publish/subscribe over a fixed block pool.
-// Design: docs/plans/bus-subsystem.md. Each phase adds its declarations here as
-// it lands; so far: the bus and its block pool (B0/B1), topics with
+// Bus IPC subsystem: payload-agnostic publish/subscribe over a fixed block
+// pool. Design: docs/plans/bus-subsystem.md. Each phase adds its declarations
+// here as it lands; so far: the bus and its block pool (B0/B1), topics with
 // single-producer publish and polling pop (B2), unsubscribe, the overwrite
-// policy and slow-subscriber recovery (B3), and a zero-copy path for
-// single-block messages (reserve/commit, peek/release).
+// policy and slow-subscriber recovery (B3), a zero-copy path for
+// single-block messages (reserve/commit, peek/release), and per-topic soft
+// reservations (cfg.reserve).
 //
 // Storage is caller-owned, like the peripheral-bus arbiter (periph_bus.h): the
 // kernel keeps no object table and the data path never allocates.
@@ -36,7 +37,8 @@ extern "C" {
 typedef struct {
   uint16_t next;  // free list, or the next block of the same message
   uint16_t epoch; // bumped each time the block is freed (stale-read guard)
-  uint8_t used;   // 0 free, 1 in use, 2 reserved (v_bus_reserve, uncommitted)
+  uint8_t used;   // 0 free (pool), 1 in use, 2 reserved (v_bus_reserve,
+                  // uncommitted), 3 idle in a topic's stash (cfg.reserve)
 } v_bus_desc_t;
 
 typedef struct v_bus_sub v_bus_sub_t;
@@ -68,6 +70,13 @@ typedef enum {
 
 typedef struct {
   v_bus_overflow_t overflow;
+  // Soft reservation: blocks this topic keeps for itself. At declare they move
+  // from the pool into the topic's own stash; its messages draw from the
+  // stash first and return there, so another topic filling the pool can't
+  // starve it — and the hot path skips the shared pool. "Soft": while idle,
+  // they may be lent to a V_BUS_OVERWRITE topic when the pool is empty, and
+  // are taken back by evicting that borrower's oldest messages when needed.
+  uint16_t reserve;
 } v_bus_topic_cfg_t;
 
 // A topic: an ordered queue of messages on one bus. Caller storage, private.
@@ -80,6 +89,10 @@ struct v_bus_topic {
   uint16_t head, tail; // oldest / newest live message (head block index)
   uint16_t nsubs;
   uint16_t blocks; // pool blocks held by queued messages
+  uint16_t stash;       // idle reserved blocks, threaded through desc[].next
+  uint16_t stash_count; // stash_count + lent <= cfg.reserve, always
+  uint16_t lent;        // stash blocks currently lent to overwrite topics
+  uint16_t borrowed;    // blocks this topic owes lenders (repaid on free)
   uint32_t next_seq;
 };
 
@@ -87,10 +100,10 @@ struct v_bus_topic {
 // Each subscription belongs to one task: pop/unsubscribe on it don't race.
 struct v_bus_sub {
   v_bus_topic_t *topic;
-  v_bus_sub_t *next;  // on topic->subs
-  uint16_t cursor;    // next unread message, V_BUS_NIL when caught up
-  uint16_t peeked;    // message held by v_bus_peek, V_BUS_NIL if none
-  uint32_t expect;    // seq it expects next; a gap = messages it missed
+  v_bus_sub_t *next; // on topic->subs
+  uint16_t cursor;   // next unread message, V_BUS_NIL when caught up
+  uint16_t peeked;   // message held by v_bus_peek, V_BUS_NIL if none
+  uint32_t expect;   // seq it expects next; a gap = messages it missed
 };
 
 // Bytes of bus header at the start of each message's first block.
@@ -110,8 +123,9 @@ int v_bus_init(v_bus_t *bus, void *blocks, v_bus_desc_t *desc,
 
 // --- Topics and messages (B2) ------------------------------------------------
 // Declare `topic` on `bus` under `name` (kept by pointer, must outlive the
-// topic). `cfg` NULL = defaults (V_BUS_DROP). V_BUS_EINVAL on a NULL argument
-// or a name already declared.
+// topic). `cfg` NULL = defaults (V_BUS_DROP, no reservation). V_BUS_EINVAL
+// on a NULL argument or a name already declared; VA_FAIL if the pool can't
+// cover cfg->reserve right now.
 int v_bus_topic_declare(v_bus_t *bus, v_bus_topic_t *topic, const char *name,
                         const v_bus_topic_cfg_t *cfg);
 // Attach `sub` to `topic`. It sees only messages published from now on.
@@ -125,8 +139,12 @@ int v_bus_unsubscribe(v_bus_sub_t *sub);
 // subscribed (nothing is kept then); VA_FAIL when the pool can't hold it right
 // now and the topic is V_BUS_DROP (or evicting its whole queue wouldn't make
 // room); V_BUS_EINVAL on bad arguments or a message the pool could never hold.
-// A V_BUS_OVERWRITE topic evicts its oldest messages until the new one fits;
-// subscribers that hadn't read them skip ahead and see the gap as `missed`.
+// Blocks come from the topic's reservation, then the shared pool; a
+// V_BUS_OVERWRITE topic may then borrow other topics' idle reserved blocks,
+// and finally evicts its own oldest messages until the new one fits
+// (subscribers that hadn't read them skip ahead and see the gap as `missed`).
+// A topic short of its own reservation takes lent blocks back by evicting the
+// borrowers' oldest messages.
 int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len);
 // Take the subscription's oldest unread message into `out` (`cap` bytes),
 // setting *out_len and, if `missed` is non-NULL, how many messages this
@@ -176,26 +194,17 @@ int v_bus_peek(v_bus_sub_t *sub, const void **data, uint16_t *len,
 // Done with the peeked message: consume it, like a completed v_bus_pop.
 int v_bus_release(v_bus_sub_t *sub);
 
-// --- Block pool (bus internals; used by the message phases and tests) --------
-// Take n blocks, all or nothing, chained through desc[].next and ending in
-// V_BUS_NIL. Returns the head index, or V_BUS_NIL if fewer than n are free (or
-// n is 0). O(n), independent of the pool size. Task or ISR context.
-uint16_t v_bus_block_alloc(v_bus_t *bus, uint16_t n);
-// Return a whole chain from v_bus_block_alloc. VA_FAIL, freeing nothing, if
-// the chain is not a live allocation (bad index, or a block already free, e.g.
-// a double free). Task or ISR context.
-int v_bus_block_free(v_bus_t *bus, uint16_t head);
-// Next block of a chain, or V_BUS_NIL.
-uint16_t v_bus_block_next(const v_bus_t *bus, uint16_t idx);
-// Payload bytes of a block (block_size of them).
-uint8_t *v_bus_block_data(v_bus_t *bus, uint16_t idx);
+// --- Pool state ---------------------------------------------------------------
+// Blocks in the shared pool (not counting topics' reserved stashes).
 uint16_t v_bus_free_blocks(const v_bus_t *bus);
 
 // Invariant H1 (plan §4.2): the free list holds exactly free_count blocks, all
-// marked free, with no cycle, and every other block is marked used; and every
+// marked free, with no cycle, and every other block is marked used; every
 // topic's queue is a well-formed chain of live, still-owed messages that each
-// subscription's cursor points into. VA_PASS when consistent. Walks the pool without locking, so call it on a quiescent
-// bus: tests and debug checks.
+// subscription's cursor points into; each stash is well-formed and within its
+// reservation; loans balance; and free + stashes + queued + open reservations
+// == block_count (nothing leaked). VA_PASS when consistent. Walks the pool
+// without locking, so call it on a quiescent bus: tests and debug checks.
 int v_bus_check(const v_bus_t *bus);
 
 #ifdef __cplusplus

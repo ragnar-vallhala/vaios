@@ -4,7 +4,8 @@
  *        B1 the block-pool allocator (gate: invariant H1 holds under fuzz),
  *        B2 topics, publish and polling pop (gate: ordering, ref-count reclaim),
  *        B3 unsubscribe, overwrite, slow subscribers (gate: H4/H5/H6),
- *        and the zero-copy path (reserve/commit, peek/release, pinning).
+ *        the zero-copy path (reserve/commit, peek/release, pinning), and
+ *        soft reservations (per-topic stash, loans, reclaim).
  */
 #include "bus.h"
 #include "framework.h"
@@ -18,14 +19,6 @@ static v_bus_t bus;
 static void reset(void) {
   memset(pool_blocks, 0, sizeof pool_blocks);
   v_bus_init(&bus, pool_blocks, pool_desc, BS, BC);
-}
-
-static int chain_len(uint16_t head) {
-  int n = 0;
-  for (uint16_t i = head; i != V_BUS_NIL; i = v_bus_block_next(&bus, i))
-    if (++n > BC)
-      return -1; // cycle
-  return n;
 }
 
 static void test_bus_init_validates(void) {
@@ -44,105 +37,37 @@ static void test_bus_init_validates(void) {
   TEST_ASSERT_EQ(v_bus_check(&b), VA_PASS);
 }
 
-/* H1: a request either gets all n blocks or none — never a partial chain. */
+/* H1: a message gets all the blocks it needs or none — never a partial chain.
+ * 8 blocks of 16 bytes: the first carries the header + 4 payload bytes, each
+ * further one 16. */
+static v_bus_topic_t pt;
+static v_bus_sub_t ps;
+static uint8_t payload[4 + 16 * (BC - 1)];
+#define LEN_FOR(blocks) ((uint16_t)(4 + 16 * ((blocks) - 1)))
+
 static void test_bus_alloc_all_or_nothing(void) {
   reset();
-  uint16_t a = v_bus_block_alloc(&bus, 5);
-  TEST_ASSERT(a != V_BUS_NIL);
-  TEST_ASSERT_EQ(chain_len(a), 5);
-  TEST_ASSERT_EQ(v_bus_block_alloc(&bus, 4), V_BUS_NIL); /* only 3 left */
-  TEST_ASSERT_EQ(v_bus_free_blocks(&bus), 3);             /* untouched */
-  uint16_t b = v_bus_block_alloc(&bus, 3);
-  TEST_ASSERT_EQ(chain_len(b), 3);
-  TEST_ASSERT_EQ(v_bus_block_alloc(&bus, 1), V_BUS_NIL);
-  TEST_ASSERT_EQ(v_bus_block_alloc(&bus, 0), V_BUS_NIL);
-  TEST_ASSERT_EQ(v_bus_check(&bus), VA_PASS);
-}
-
-/* Freeing returns every block; the pool can be drained and refilled whole. */
-static void test_bus_free_restores(void) {
-  reset();
-  uint16_t a = v_bus_block_alloc(&bus, 3), b = v_bus_block_alloc(&bus, 5);
-  TEST_ASSERT_EQ(v_bus_block_free(&bus, a), VA_PASS);
+  v_bus_topic_declare(&bus, &pt, "p", NULL);
+  v_bus_subscribe(&pt, &ps);
+  TEST_ASSERT_EQ(v_bus_publish(&pt, payload, LEN_FOR(5)), VA_PASS);
   TEST_ASSERT_EQ(v_bus_free_blocks(&bus), 3);
-  TEST_ASSERT_EQ(v_bus_block_free(&bus, b), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_publish(&pt, payload, LEN_FOR(4)), VA_FAIL); /* 3 left */
+  TEST_ASSERT_EQ(v_bus_free_blocks(&bus), 3);                       /* untouched */
+  TEST_ASSERT_EQ(v_bus_publish(&pt, payload, LEN_FOR(3)), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&bus), 0);
+  TEST_ASSERT_EQ(v_bus_publish(&pt, NULL, 0), VA_FAIL);
+  TEST_ASSERT_EQ(v_bus_check(&bus), VA_PASS);
+  /* reading them hands every block back */
+  static uint8_t back[sizeof payload];
+  uint16_t len;
+  TEST_ASSERT_EQ(v_bus_pop(&ps, back, sizeof back, &len, NULL), VA_PASS);
+  TEST_ASSERT_EQ(len, LEN_FOR(5));
+  TEST_ASSERT_EQ(v_bus_pop(&ps, back, sizeof back, &len, NULL), VA_PASS);
   TEST_ASSERT_EQ(v_bus_free_blocks(&bus), BC);
-  TEST_ASSERT_EQ(chain_len(v_bus_block_alloc(&bus, BC)), BC);
   TEST_ASSERT_EQ(v_bus_check(&bus), VA_PASS);
-}
-
-/* A double free or a stray index is refused and changes nothing — it must not
- * splice a live block or a cycle into the free stack. */
-static void test_bus_bad_free_rejected(void) {
-  reset();
-  uint16_t a = v_bus_block_alloc(&bus, 2);
-  uint16_t b = v_bus_block_alloc(&bus, 2);
-  TEST_ASSERT_EQ(v_bus_block_free(&bus, a), VA_PASS);
-  TEST_ASSERT_EQ(v_bus_block_free(&bus, a), VA_FAIL); /* double free */
-  TEST_ASSERT_EQ(v_bus_block_free(&bus, V_BUS_NIL), VA_FAIL);
-  TEST_ASSERT_EQ(v_bus_block_free(&bus, BC), VA_FAIL); /* out of range */
-  TEST_ASSERT_EQ(v_bus_free_blocks(&bus), BC - 2);
-  TEST_ASSERT_EQ(chain_len(b), 2); /* the live chain is intact */
-  TEST_ASSERT_EQ(v_bus_check(&bus), VA_PASS);
-}
-
-/* Blocks are disjoint block_size windows of the pool. */
-static void test_bus_block_data_disjoint(void) {
-  reset();
-  uint16_t h = v_bus_block_alloc(&bus, BC);
-  for (uint16_t i = h; i != V_BUS_NIL; i = v_bus_block_next(&bus, i))
-    memset(v_bus_block_data(&bus, i), (int)i + 1, BS);
-  for (uint16_t i = 0; i < BC; i++) {
-    const uint8_t *d = v_bus_block_data(&bus, i);
-    TEST_ASSERT(d >= pool_blocks && d + BS <= pool_blocks + sizeof pool_blocks);
-    TEST_ASSERT_EQ(d[0], (uint8_t)(i + 1));
-    TEST_ASSERT_EQ(d[BS - 1], (uint8_t)(i + 1));
-  }
-  TEST_ASSERT_NULL(v_bus_block_data(&bus, BC));
-}
-
-/* Gate: H1 holds under a long random alloc/free sequence, checked after every
- * operation against a shadow model: free_count == pool - live blocks, and no
- * block belongs to two live chains. */
-#define FZ_BC 64
-V_BUS_POOL(fz, 16, FZ_BC);
-static void test_bus_fuzz_invariant(void) {
-  static v_bus_t fb;
-  v_bus_init(&fb, fz_blocks, fz_desc, 16, FZ_BC);
-  uint16_t live[FZ_BC];
-  int nlive = 0, live_blocks = 0, failures = 0;
-  uint32_t x = 0x2545F491u; // xorshift32, fixed seed: reproducible
-  for (int op = 0; op < 20000 && !failures; op++) {
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    if (nlive && (x & 1u)) { // free a random live chain
-      int k = (int)((x >> 1) % (uint32_t)nlive);
-      int len = 0;
-      for (uint16_t i = live[k]; i != V_BUS_NIL; i = v_bus_block_next(&fb, i))
-        len++;
-      failures += v_bus_block_free(&fb, live[k]) != VA_PASS;
-      live_blocks -= len;
-      live[k] = live[--nlive];
-    } else { // allocate 1..6 blocks
-      uint16_t n = (uint16_t)(1 + (x >> 1) % 6);
-      uint16_t h = v_bus_block_alloc(&fb, n);
-      if (h == V_BUS_NIL) {
-        failures += FZ_BC - live_blocks >= n; // refused although it fit
-      } else {
-        failures += FZ_BC - live_blocks < n; // granted although it didn't
-        live[nlive++] = h;
-        live_blocks += n;
-      }
-    }
-    failures += v_bus_check(&fb) != VA_PASS;
-    failures += v_bus_free_blocks(&fb) != FZ_BC - live_blocks;
-    uint8_t owner[FZ_BC] = {0}; // each block in at most one live chain
-    for (int k = 0; k < nlive; k++)
-      for (uint16_t i = live[k]; i != V_BUS_NIL; i = v_bus_block_next(&fb, i))
-        failures += owner[i]++ != 0;
-  }
-  TEST_ASSERT_EQ(failures, 0);
+  /* a message wider than the whole pool is refused outright */
+  static uint8_t huge[LEN_FOR(BC) + 1];
+  TEST_ASSERT_EQ(v_bus_publish(&pt, huge, sizeof huge), V_BUS_EINVAL);
 }
 
 /* ---- B2: topics, publish, polling pop --------------------------------------
@@ -681,13 +606,208 @@ static void test_bus_fuzz_zero_copy(void) {
   TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
 }
 
+/* ---- Soft reservations ------------------------------------------------------
+ * Pool of 16 x 32-byte blocks (one u32 message = one block). */
+static v_bus_topic_t tg, tx; /* reserved drop topic, reserved overwrite topic */
+
+static int pub_u32(v_bus_topic_t *t, uint32_t v) {
+  return v_bus_publish(t, &v, sizeof v);
+}
+
+static void test_bus_reserve_declare(void) {
+  static const v_bus_topic_cfg_t R6 = {.reserve = 6}, R20 = {.reserve = 20};
+  mreset();
+  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &tg, "cmd", &R6), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC - 6); /* moved into its stash */
+  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &tx, "big", &R20), VA_FAIL);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  /* a reserved topic's traffic cycles through its stash, never the pool */
+  v_bus_subscribe(&tg, &sa);
+  for (uint32_t i = 0; i < 50; i++) {
+    TEST_ASSERT_EQ(pub_u32(&tg, i), VA_PASS);
+    uint32_t v;
+    TEST_ASSERT_EQ(pop_u32(&sa, &v), VA_PASS);
+  }
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC - 6);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* The guarantee: a reserved (drop) topic keeps its capacity while an
+ * overwrite topic with a reader that never reads floods the shared pool. */
+static void test_bus_reserve_survives_flood(void) {
+  static const v_bus_topic_cfg_t R4 = {.reserve = 4};
+  wreset();
+  v_bus_topic_declare(&mb, &tg, "log", &R4);
+  v_bus_subscribe(&tw, &sa); /* never reads */
+  v_bus_subscribe(&tg, &sb);
+  for (uint32_t i = 0; i < 100; i++)
+    pub_u32(&tw, i); /* pool full, then borrows, then evicts itself */
+  for (uint32_t i = 0; i < 4; i++)
+    TEST_ASSERT_EQ(pub_u32(&tg, i), VA_PASS); /* all 4 reserved blocks */
+  TEST_ASSERT_EQ(pub_u32(&tg, 4), VA_FAIL);   /* its own limit: drop */
+  uint32_t v;
+  TEST_ASSERT_EQ(pop_u32(&sb, &v), VA_PASS);
+  TEST_ASSERT_EQ(v, 0u);
+  TEST_ASSERT_EQ(pub_u32(&tg, 5), VA_PASS); /* the freed block came back */
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Soft: an overwrite topic borrows idle reserved blocks when the pool is
+ * empty; the owner takes them back by evicting the borrower's oldest. A drop
+ * topic never borrows. */
+static void test_bus_reserve_lend_and_reclaim(void) {
+  static const v_bus_topic_cfg_t R4 = {.reserve = 4};
+  static v_bus_topic_t td;
+  wreset();
+  v_bus_topic_declare(&mb, &tg, "log", &R4);
+  v_bus_topic_declare(&mb, &td, "drop", NULL);
+  v_bus_subscribe(&tw, &sa); /* overwrite, never reads for now */
+  v_bus_subscribe(&tg, &sb);
+  v_bus_subscribe(&td, &sc);
+  for (uint32_t i = 0; i < MC - 4; i++)
+    pub_u32(&tw, i); /* pool exhausted */
+  TEST_ASSERT_EQ(pub_u32(&td, 0), VA_FAIL); /* drop topics don't borrow */
+  TEST_ASSERT_EQ(tg.lent, 0);
+  for (uint32_t i = MC - 4; i < MC; i++)
+    TEST_ASSERT_EQ(pub_u32(&tw, i), VA_PASS); /* borrows log's 4 idle blocks */
+  TEST_ASSERT_EQ(tg.lent, 4);
+  TEST_ASSERT_EQ(tw.borrowed, 4);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  /* log wants its capacity back: reclaim evicts overwrite's oldest */
+  TEST_ASSERT_EQ(pub_u32(&tg, 100), VA_PASS);
+  TEST_ASSERT_EQ(pub_u32(&tg, 101), VA_PASS);
+  TEST_ASSERT_EQ(tg.lent, 2);
+  uint32_t v, missed;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 2u);      /* #0 and #1 were evicted to repay */
+  TEST_ASSERT_EQ(missed, 2u);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  /* everyone leaves: every block comes home, loans settled */
+  v_bus_unsubscribe(&sa);
+  v_bus_unsubscribe(&sb);
+  v_bus_unsubscribe(&sc);
+  TEST_ASSERT_EQ(tg.lent + tw.borrowed, 0);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb) + tg.stash_count, MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* A peek pins the borrower's oldest message, so the owner can't reclaim
+ * through it until it's released. */
+static void test_bus_reserve_reclaim_blocked_by_pin(void) {
+  static const v_bus_topic_cfg_t R2 = {.reserve = 2};
+  wreset();
+  v_bus_topic_declare(&mb, &tg, "log", &R2);
+  v_bus_subscribe(&tw, &sa);
+  v_bus_subscribe(&tg, &sb);
+  for (uint32_t i = 0; i < MC; i++)
+    pub_u32(&tw, i); /* uses the pool and borrows log's 2 blocks */
+  TEST_ASSERT_EQ(tg.lent, 2);
+  const uint32_t *p;
+  uint16_t len;
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, NULL), VA_PASS);
+  TEST_ASSERT_EQ(pub_u32(&tg, 1), VA_FAIL); /* oldest pinned: can't reclaim */
+  TEST_ASSERT_EQ(*p, 0u);
+  v_bus_release(&sa); /* consumed #0: its block repays log */
+  TEST_ASSERT_EQ(tg.lent, 1);
+  TEST_ASSERT_EQ(pub_u32(&tg, 1), VA_PASS);
+  TEST_ASSERT_EQ(pub_u32(&tg, 2), VA_PASS); /* reclaims the second by eviction */
+  TEST_ASSERT_EQ(tg.lent, 0);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Randomised: a reserved drop topic G (reserve 5), an overwrite topic W with
+ * two readers (no reserve), and an overwrite topic X (reserve 3) that can
+ * lend and borrow — copy and zero-copy publishes, pops and held peeks.
+ * Invariants every step, and the guarantee itself: whenever G holds fewer than
+ * its reserve and no peek is pinning a borrower, G's publish succeeds. */
+static void test_bus_fuzz_reservations(void) {
+  static const v_bus_topic_cfg_t G5 = {.reserve = 5},
+      X3 = {.overflow = V_BUS_OVERWRITE, .reserve = 3};
+  static v_bus_sub_t gs, ws1, ws2, xs;
+  v_bus_init(&mb, mp_blocks, mp_desc, MS, MC);
+  v_bus_topic_declare(&mb, &tg, "G", &G5);
+  v_bus_topic_declare(&mb, &tw, "W", &OVERWRITE);
+  v_bus_topic_declare(&mb, &tx, "X", &X3);
+  v_bus_subscribe(&tg, &gs);
+  v_bus_subscribe(&tw, &ws1);
+  v_bus_subscribe(&tw, &ws2);
+  v_bus_subscribe(&tx, &xs);
+  v_bus_topic_t *topics[3] = {&tg, &tw, &tx};
+  v_bus_sub_t *subs[4] = {&gs, &ws1, &ws2, &xs};
+  const uint32_t *held[4] = {NULL, NULL, NULL, NULL};
+  uint32_t next[3] = {0, 0, 0}, expect[4] = {0, 0, 0, 0};
+  const int topic_of[4] = {0, 1, 1, 2};
+  int failures = 0, guarantee_checks = 0, borrowed_seen = 0;
+  uint32_t x = 0xCC9E2D51u;
+  for (int op = 0; op < 20000 && !failures; op++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    int t = (int)((x >> 4) % 3u), k = (int)((x >> 8) % 4u);
+    uint16_t tk, len;
+    uint32_t v, missed;
+    switch (x & 7u) {
+    case 0: case 1: { /* copy publish */
+      int pinned = held[1] || held[2] || held[3];
+      int must = t == 0 && tg.blocks < 5 && !pinned;
+      int r = pub_u32(topics[t], next[t]);
+      if (r == VA_PASS)
+        next[t]++;
+      if (must) {
+        guarantee_checks++;
+        failures += r != VA_PASS; /* the reservation must hold */
+      }
+      break;
+    }
+    case 2: { /* zero-copy publish */
+      uint32_t *w = v_bus_reserve(topics[t], 4, &tk);
+      if (w) {
+        *w = next[t]++;
+        failures += v_bus_commit(topics[t], tk, 4) != VA_PASS;
+      }
+      break;
+    }
+    case 3: case 4: /* copy pop */
+      if (!held[k] && pop_m(subs[k], &v, &missed) == VA_PASS) {
+        failures += v != expect[k] + missed;
+        expect[k] = v + 1;
+      }
+      break;
+    case 5: /* peek and hold */
+      if (!held[k] && v_bus_peek(subs[k], (const void **)&held[k], &len,
+                                 &missed) == VA_PASS) {
+        failures += *held[k] != expect[k] + missed;
+        expect[k] = *held[k] + 1;
+      }
+      break;
+    default: /* release */
+      if (held[k]) {
+        failures += *held[k] != expect[k] - 1; /* unchanged under us */
+        failures += v_bus_release(subs[k]) != VA_PASS;
+        held[k] = NULL;
+      }
+    }
+    (void)topic_of;
+    borrowed_seen |= tw.borrowed || tx.borrowed;
+    failures += tg.borrowed != 0; /* a drop topic never borrows */
+    failures += v_bus_check(&mb) != VA_PASS;
+  }
+  for (int k = 0; k < 4; k++) {
+    if (held[k])
+      v_bus_release(subs[k]);
+    v_bus_unsubscribe(subs[k]);
+  }
+  TEST_ASSERT_EQ(failures, 0);
+  TEST_ASSERT(guarantee_checks > 100);
+  TEST_ASSERT(borrowed_seen); /* loans really happened */
+  TEST_ASSERT_EQ(tg.lent + tx.lent + tw.borrowed + tx.borrowed, 0);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb) + tg.stash_count + tx.stash_count, MC);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
 static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_init_validates),
     TEST_CASE(test_bus_alloc_all_or_nothing),
-    TEST_CASE(test_bus_free_restores),
-    TEST_CASE(test_bus_bad_free_rejected),
-    TEST_CASE(test_bus_block_data_disjoint),
-    TEST_CASE(test_bus_fuzz_invariant),
     TEST_CASE(test_bus_topic_declare),
     TEST_CASE(test_bus_publish_pop_order),
     TEST_CASE(test_bus_refcount_reclaim),
@@ -706,10 +826,15 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_zc_peek_release),
     TEST_CASE(test_bus_zc_pinned_not_evicted),
     TEST_CASE(test_bus_fuzz_zero_copy),
+    TEST_CASE(test_bus_reserve_declare),
+    TEST_CASE(test_bus_reserve_survives_flood),
+    TEST_CASE(test_bus_reserve_lend_and_reclaim),
+    TEST_CASE(test_bus_reserve_reclaim_blocked_by_pin),
+    TEST_CASE(test_bus_fuzz_reservations),
 };
 
 const test_suite_t bus_suite = {
-    .name = "Bus IPC: pool, topics, churn + overwrite, zero copy",
+    .name = "Bus IPC: pool, topics, overwrite, zero copy, reservations",
     .cases = bus_cases,
     .count = TEST_COUNT(bus_cases),
 };
