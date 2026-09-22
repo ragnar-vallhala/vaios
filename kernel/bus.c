@@ -24,6 +24,14 @@
 // first, refills the owner's stash (stash + lent <= reserve), and only then
 // returns blocks to the shared pool.
 //
+// Pipes (cfg.pipe): the reservation becomes a circular chain of slots owned by
+// the topic. The producer alone writes next_seq and pipe_wr, the one consumer
+// alone writes its expect/cursor; a message is published by stamping its slot
+// (hdr.seq = 2*seq) and then bumping next_seq, with barriers in between — the
+// SPSC protocol, no critical section. In overwrite mode the producer marks a
+// slot odd (being written) first, and a reader treats any slot whose stamp
+// isn't the one it expects as lost (a seqlock), re-checking after its copy.
+//
 // Zero copy: v_bus_reserve/commit hand out and publish a single pool block;
 // v_bus_peek/release read one in place. A peeked message is pinned, which is
 // what keeps the in-place view valid: eviction stops at a pinned oldest
@@ -48,6 +56,12 @@ _Static_assert(sizeof(msg_hdr_t) == V_BUS_HDR_SIZE, "V_BUS_HDR_SIZE drift");
 // message), STASHED idle in a topic's reservation.
 #define RESERVED 2u
 #define STASHED 3u
+#define PIPE_SLOT 4u
+
+// Lock-free pipe fields are shared between exactly one producer and one
+// consumer context; these keep the compiler from caching or tearing them.
+#define LOAD32(x) (*(volatile const uint32_t *)&(x))
+#define STORE32(x, v) (*(volatile uint32_t *)&(x) = (v))
 
 int v_bus_init(v_bus_t *bus, void *blocks, v_bus_desc_t *desc,
                uint16_t block_size, uint16_t block_count) {
@@ -150,6 +164,11 @@ int v_bus_topic_declare(v_bus_t *bus, v_bus_topic_t *topic, const char *name,
     }
   }
   uint16_t reserve = cfg ? cfg->reserve : 0;
+  int pipe = cfg && cfg->pipe;
+  if (pipe && !reserve) {
+    EXIT_CRITICAL_FROM_ISR(s);
+    return V_BUS_EINVAL; // a pipe is its reservation: it needs slots
+  }
   if (reserve > bus->free_count) {
     EXIT_CRITICAL_FROM_ISR(s);
     return VA_FAIL; // the pool can't cover the reservation right now
@@ -162,15 +181,33 @@ int v_bus_topic_declare(v_bus_t *bus, v_bus_topic_t *topic, const char *name,
                            .head = V_BUS_NIL,
                            .tail = V_BUS_NIL,
                            .stash = V_BUS_NIL};
-  for (uint16_t k = 0; k < reserve; k++) { // pool -> stash
-    uint16_t b = bus->free_head;
-    bus->free_head = bus->desc[b].next;
-    bus->desc[b].next = topic->stash;
-    bus->desc[b].used = STASHED;
-    topic->stash = b;
+  if (pipe) { // pool -> a closed ring of slots, stamped "never published"
+    uint16_t first = V_BUS_NIL, prev = V_BUS_NIL;
+    for (uint16_t k = 0; k < reserve; k++) {
+      uint16_t b = bus->free_head;
+      bus->free_head = bus->desc[b].next;
+      bus->desc[b].used = PIPE_SLOT;
+      hdr(bus, b)->seq = 1u; // odd: never matches a reader's 2*seq
+      if (prev == V_BUS_NIL)
+        first = b;
+      else
+        bus->desc[prev].next = b;
+      prev = b;
+    }
+    bus->desc[prev].next = first;
+    topic->pipe_wr = first;
+    topic->blocks = reserve;
+  } else {
+    for (uint16_t k = 0; k < reserve; k++) { // pool -> stash
+      uint16_t b = bus->free_head;
+      bus->free_head = bus->desc[b].next;
+      bus->desc[b].next = topic->stash;
+      bus->desc[b].used = STASHED;
+      topic->stash = b;
+    }
+    topic->stash_count = reserve;
   }
   bus->free_count = (uint16_t)(bus->free_count - reserve);
-  topic->stash_count = reserve;
   bus->topics = topic;
   EXIT_CRITICAL_FROM_ISR(s);
   return VA_PASS;
@@ -186,9 +223,13 @@ int v_bus_subscribe(v_bus_topic_t *topic, v_bus_sub_t *sub) {
       return V_BUS_EINVAL;
     }
   }
+  if (topic->cfg.pipe && topic->nsubs) {
+    EXIT_CRITICAL_FROM_ISR(s);
+    return V_BUS_EBUSY; // a pipe has exactly one subscriber
+  }
   *sub = (v_bus_sub_t){.topic = topic,
                        .next = topic->subs,
-                       .cursor = V_BUS_NIL,
+                       .cursor = topic->cfg.pipe ? topic->pipe_wr : V_BUS_NIL,
                        .peeked = V_BUS_NIL,
                        .expect = topic->next_seq};
   topic->subs = sub;
@@ -307,6 +348,11 @@ int v_bus_unsubscribe(v_bus_sub_t *sub) {
   }
   *pp = sub->next;
   topic->nsubs--;
+  if (topic->cfg.pipe) { // a pipe reader holds no claims or pins
+    EXIT_CRITICAL_FROM_ISR(s);
+    sub->topic = 0;
+    return VA_PASS;
+  }
   if (sub->peeked != V_BUS_NIL) // left holding a peek: drop its pin
     hdr(bus, sub->peeked)->pins--;
   // Drop its claim on every message it hadn't read...
@@ -430,9 +476,123 @@ static inline void link_msg(v_bus_topic_t *topic, uint16_t msg, uint16_t len,
   EXIT_CRITICAL_FROM_ISR(s);
 }
 
+#ifdef VAIOS_HOST_TEST
+// Host-test seam: runs between a copying read and its commit, so a test can
+// overwrite/evict the message mid-read (on target: an ISR publish preempting).
+void (*v_bus_test_mid_pop)(void);
+#endif
+
+// --- Pipe paths (lock-free, one producer + one consumer) -----------------------
+// Producer: the slot the next message goes into, or V_BUS_NIL when a drop
+// pipe is full. An overwrite pipe marks it "being written" first, so a reader
+// that is behind by a whole ring can't take its old contents for current.
+static inline uint16_t pipe_claim(v_bus_topic_t *t) {
+  uint16_t b = t->pipe_wr;
+  uint32_t w = t->next_seq;
+  if (t->cfg.overflow != V_BUS_OVERWRITE) {
+    v_bus_sub_t *sub = t->subs;
+    if (sub && w - LOAD32(sub->expect) >= t->cfg.reserve)
+      return V_BUS_NIL; // full: the reader still owns every slot
+  } else {
+    STORE32(hdr(t->bus, b)->seq, 2u * w + 1u);
+    V_PORT_MB();
+  }
+  return b;
+}
+
+// Producer: publish the claimed slot (payload already written).
+static inline void pipe_publish(v_bus_topic_t *t, uint16_t b, uint16_t len) {
+  uint32_t w = t->next_seq;
+  hdr(t->bus, b)->len = len;
+  V_PORT_MB(); // payload + len before the stamp
+  STORE32(hdr(t->bus, b)->seq, 2u * w);
+  V_PORT_MB(); // stamp before the reader can see next_seq move
+  STORE32(t->next_seq, w + 1u);
+  t->pipe_wr = t->bus->desc[b].next;
+}
+
+// Consumer: find the oldest message it hasn't read, copying it into `out` or
+// (view != NULL) pointing at it. Slots it finds overwritten are counted as
+// missed. Nothing is committed here on failure, so a retry starts over.
+static int pipe_read(v_bus_sub_t *sub, void *out, uint16_t cap,
+                     uint16_t *out_len, uint32_t *missed, const void **view) {
+  v_bus_topic_t *t = sub->topic;
+  v_bus_t *bus = t->bus;
+  uint32_t e0 = sub->expect, r = e0, depth = t->cfg.reserve;
+  uint16_t rd = sub->cursor;
+  for (;;) {
+    uint32_t w = LOAD32(t->next_seq);
+    V_PORT_MB();
+    if (w == r)
+      return VA_FAIL; // caught up
+    if (w - r > depth) { // lapped: jump to the oldest slot still holding data
+      for (uint32_t k = (w - depth - r) % depth; k; k--)
+        rd = bus->desc[rd].next;
+      r = w - depth;
+    }
+    msg_hdr_t *h = hdr(bus, rd);
+    if (LOAD32(h->seq) != 2u * r) { // overwritten / being written: lost
+      r++;
+      rd = bus->desc[rd].next;
+      continue;
+    }
+    uint16_t len = h->len;
+    *out_len = len;
+    if (view) { // peek: pinned by protocol on a drop pipe, checked on release
+      *view = blk(bus, rd) + V_BUS_HDR_SIZE;
+      sub->expect = r;
+      sub->cursor = rd;
+      sub->peeked = rd;
+    } else {
+      if (len > cap)
+        return V_BUS_EMSGSIZE;
+      copy_payload(bus, rd, out, len, 0);
+#ifdef VAIOS_HOST_TEST
+      if (v_bus_test_mid_pop)
+        v_bus_test_mid_pop();
+#endif
+      V_PORT_MB();
+      if (LOAD32(h->seq) != 2u * r) { // overwritten under the copy
+        r++;
+        rd = bus->desc[rd].next;
+        continue;
+      }
+      sub->expect = r + 1u;
+      sub->cursor = bus->desc[rd].next;
+    }
+    if (missed)
+      *missed = r - e0;
+    return VA_PASS;
+  }
+}
+
+// Consumer fast path: the next slot is published and intact (not lapped, stamp
+// matches) — the common case. Returns its header, or NULL to take pipe_read.
+static inline msg_hdr_t *pipe_next(const v_bus_sub_t *sub) {
+  const v_bus_topic_t *t = sub->topic;
+  uint32_t r = sub->expect, w = LOAD32(t->next_seq);
+  V_PORT_MB();
+  if (w == r || w - r > t->cfg.reserve)
+    return 0;
+  msg_hdr_t *h = hdr(t->bus, sub->cursor);
+  return LOAD32(h->seq) == 2u * r ? h : 0;
+}
+
 int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len) {
   if (!topic || !topic->bus || (len && !payload))
     return V_BUS_EINVAL;
+  if (topic->cfg.pipe) {
+    if (len > topic->bus->block_size - V_BUS_HDR_SIZE)
+      return V_BUS_ESPLIT; // a pipe slot is one block
+    if (!topic->nsubs)
+      return VA_PASS; // nobody to deliver to
+    uint16_t b = pipe_claim(topic);
+    if (b == V_BUS_NIL)
+      return VA_FAIL; // full (drop)
+    copy_payload(topic->bus, b, (void *)payload, len, 1);
+    pipe_publish(topic, b, len);
+    return VA_PASS;
+  }
   v_bus_t *bus = topic->bus;
   uint32_t n = blocks_for(bus, len);
   if (n > bus->block_count)
@@ -457,6 +617,13 @@ void *v_bus_reserve(v_bus_topic_t *topic, uint16_t max_len, uint16_t *ticket) {
   if (!topic || !topic->bus || !ticket ||
       max_len > topic->bus->block_size - V_BUS_HDR_SIZE)
     return 0;
+  if (topic->cfg.pipe) { // hot path first
+    uint16_t b = pipe_claim(topic);
+    if (b == V_BUS_NIL)
+      return 0;
+    *ticket = b;
+    return blk(topic->bus, b) + V_BUS_HDR_SIZE;
+  }
   uint16_t msg = alloc_msg(topic, 1);
   if (msg == V_BUS_NIL)
     return 0;
@@ -466,6 +633,14 @@ void *v_bus_reserve(v_bus_topic_t *topic, uint16_t max_len, uint16_t *ticket) {
 }
 
 int v_bus_commit(v_bus_topic_t *topic, uint16_t ticket, uint16_t len) {
+  if (topic && topic->cfg.pipe) {
+    if (ticket != topic->pipe_wr ||
+        len > topic->bus->block_size - V_BUS_HDR_SIZE)
+      return V_BUS_EINVAL;
+    if (topic->nsubs) // nobody subscribed: the claim is simply dropped
+      pipe_publish(topic, ticket, len);
+    return VA_PASS;
+  }
   if (!ticket_ok(topic, ticket) ||
       len > topic->bus->block_size - V_BUS_HDR_SIZE)
     return V_BUS_EINVAL;
@@ -475,6 +650,9 @@ int v_bus_commit(v_bus_topic_t *topic, uint16_t ticket, uint16_t len) {
 }
 
 int v_bus_cancel(v_bus_topic_t *topic, uint16_t ticket) {
+  if (topic && topic->cfg.pipe) // nothing was published; on an overwrite pipe
+    return ticket == topic->pipe_wr ? VA_PASS : V_BUS_EINVAL; // the oldest
+                                                    // message is gone, though
   if (!ticket_ok(topic, ticket))
     return V_BUS_EINVAL;
   free_chain(topic, ticket);
@@ -497,18 +675,34 @@ static inline uint16_t consume(v_bus_sub_t *sub, uint16_t msg) {
   return msg;
 }
 
-#ifdef VAIOS_HOST_TEST
-// Host-test seam: runs between pop's copy and its commit, so a test can evict
-// the message mid-read (on target that is an ISR publish preempting the pop).
-void (*v_bus_test_mid_pop)(void);
-#endif
-
 int v_bus_pop(v_bus_sub_t *sub, void *out, uint16_t cap, uint16_t *out_len,
               uint32_t *missed) {
   if (!sub || !sub->topic || !out_len || (cap && !out))
     return V_BUS_EINVAL;
   if (sub->peeked != V_BUS_NIL)
     return V_BUS_EBUSY; // release the peek first
+  if (sub->topic->cfg.pipe) {
+    msg_hdr_t *h = pipe_next(sub);
+    if (h && h->len <= cap) { // copy, then make sure it wasn't overwritten
+      uint32_t r = sub->expect;
+      uint16_t len = h->len;
+      copy_payload(sub->topic->bus, sub->cursor, out, len, 0);
+#ifdef VAIOS_HOST_TEST
+      if (v_bus_test_mid_pop)
+        v_bus_test_mid_pop();
+#endif
+      V_PORT_MB();
+      if (LOAD32(h->seq) == 2u * r) {
+        *out_len = len;
+        if (missed)
+          *missed = 0;
+        sub->expect = r + 1u;
+        sub->cursor = sub->topic->bus->desc[sub->cursor].next;
+        return VA_PASS;
+      }
+    }
+    return pipe_read(sub, out, cap, out_len, missed, 0);
+  }
   v_bus_t *bus = sub->topic->bus;
 
   for (;;) {
@@ -552,6 +746,19 @@ int v_bus_peek(v_bus_sub_t *sub, const void **data, uint16_t *len,
                uint32_t *missed) {
   if (!sub || !sub->topic || !data || !len)
     return V_BUS_EINVAL;
+  if (sub->topic->cfg.pipe) {
+    if (sub->peeked != V_BUS_NIL)
+      return V_BUS_EBUSY;
+    msg_hdr_t *h = pipe_next(sub);
+    if (!h)
+      return pipe_read(sub, 0, 0, len, missed, data);
+    *len = h->len;
+    *data = (const uint8_t *)h + V_BUS_HDR_SIZE;
+    if (missed)
+      *missed = 0;
+    sub->peeked = sub->cursor;
+    return VA_PASS;
+  }
   v_bus_t *bus = sub->topic->bus;
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
   uint16_t msg = sub->cursor;
@@ -579,6 +786,16 @@ int v_bus_release(v_bus_sub_t *sub) {
   if (!sub || !sub->topic || sub->peeked == V_BUS_NIL)
     return V_BUS_EINVAL;
   v_bus_t *bus = sub->topic->bus;
+  if (sub->topic->cfg.pipe) {
+    uint16_t rd = sub->peeked;
+    uint32_t r = sub->expect;
+    V_PORT_MB();
+    int stale = LOAD32(hdr(bus, rd)->seq) != 2u * r; // overwrite pipe only
+    sub->peeked = V_BUS_NIL;
+    sub->expect = r + 1u;
+    sub->cursor = bus->desc[rd].next;
+    return stale ? V_BUS_ESTALE : VA_PASS;
+  }
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
   uint16_t msg = sub->peeked;
   hdr(bus, msg)->pins--;
@@ -599,6 +816,32 @@ static int topics_ok(const v_bus_t *bus) {
   for (uint16_t i = 0; i < bus->block_count; i++)
     accounted += bus->desc[i].used == RESERVED; // open v_bus_reserve tickets
   for (const v_bus_topic_t *t = bus->topics; t; t = t->next) {
+    if (t->cfg.pipe) { // a closed ring of exactly `reserve` pipe slots
+      uint16_t i = t->pipe_wr, n = 0;
+      do {
+        if (i >= bus->block_count || bus->desc[i].used != PIPE_SLOT ||
+            ++n > t->cfg.reserve)
+          return 0;
+        i = bus->desc[i].next;
+      } while (i != t->pipe_wr);
+      if (n != t->cfg.reserve || t->blocks != n || t->stash_count ||
+          t->lent || t->borrowed || t->nsubs > 1 || t->head != V_BUS_NIL)
+        return 0;
+      if (t->subs) { // its reader is never ahead, and sits exactly
+        const v_bus_sub_t *x = t->subs; // (next_seq - expect) slots behind
+        uint32_t behind = t->next_seq - x->expect;
+        if ((int32_t)behind < 0 ||
+            (t->cfg.overflow != V_BUS_OVERWRITE && behind > n))
+          return 0;
+        uint16_t c = t->pipe_wr, m = 0; // forward distance write -> read
+        while (c != x->cursor && ++m < n)
+          c = bus->desc[c].next;
+        if (c != x->cursor || m != (n - behind % n) % n)
+          return 0;
+      }
+      accounted += n;
+      continue;
+    }
     uint16_t k = 0;
     for (uint16_t i = t->stash; i != V_BUS_NIL; i = bus->desc[i].next)
       if (i >= bus->block_count || bus->desc[i].used != STASHED ||

@@ -5,7 +5,8 @@
  *        B2 topics, publish and polling pop (gate: ordering, ref-count reclaim),
  *        B3 unsubscribe, overwrite, slow subscribers (gate: H4/H5/H6),
  *        the zero-copy path (reserve/commit, peek/release, pinning), and
- *        soft reservations (per-topic stash, loans, reclaim).
+ *        soft reservations (per-topic stash, loans, reclaim), and pipe topics
+ *        (lock-free SPSC ring: drop, overwrite, zero copy).
  */
 #include "bus.h"
 #include "framework.h"
@@ -805,6 +806,240 @@ static void test_bus_fuzz_reservations(void) {
   TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
 }
 
+/* ---- Pipe topics ------------------------------------------------------------ */
+static v_bus_topic_t pd, po; /* drop pipe, overwrite pipe */
+static const v_bus_topic_cfg_t PIPE4 = {.pipe = 1, .reserve = 4};
+static const v_bus_topic_cfg_t PIPE4_OW = {.pipe = 1, .reserve = 4,
+                                           .overflow = V_BUS_OVERWRITE};
+
+static void preset(void) {
+  v_bus_init(&mb, mp_blocks, mp_desc, MS, MC);
+  v_bus_topic_declare(&mb, &pd, "pipe", &PIPE4);
+  v_bus_topic_declare(&mb, &po, "pipe.ow", &PIPE4_OW);
+}
+
+static void test_bus_pipe_declare_and_one_reader(void) {
+  static v_bus_topic_t bad;
+  static const v_bus_topic_cfg_t NOSLOTS = {.pipe = 1};
+  preset();
+  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &bad, "p0", &NOSLOTS), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC - 8); /* two rings of 4 */
+  TEST_ASSERT_EQ(v_bus_subscribe(&pd, &sa), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_subscribe(&pd, &sb), V_BUS_EBUSY); /* one reader */
+  static uint8_t two_blocks[FIRST + 1];
+  TEST_ASSERT_EQ(v_bus_publish(&pd, two_blocks, sizeof two_blocks), V_BUS_ESPLIT);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Drop pipe: full after `depth`, never loses a message, wraps many times,
+ * and never touches the shared pool. */
+static void test_bus_pipe_drop_order_and_wrap(void) {
+  preset();
+  v_bus_subscribe(&pd, &sa);
+  for (uint32_t i = 0; i < 4; i++)
+    TEST_ASSERT_EQ(pub_u32(&pd, i), VA_PASS);
+  TEST_ASSERT_EQ(pub_u32(&pd, 99), VA_FAIL); /* full */
+  uint32_t v, missed, next = 4, got = 0;
+  for (int round = 0; round < 25; round++) {
+    while (pop_m(&sa, &v, &missed) == VA_PASS) {
+      TEST_ASSERT_EQ(v, got);
+      TEST_ASSERT_EQ(missed, 0u);
+      got++;
+    }
+    for (int k = 0; k < 3; k++)
+      if (pub_u32(&pd, next) == VA_PASS)
+        next++;
+  }
+  while (pop_m(&sa, &v, &missed) == VA_PASS)
+    TEST_ASSERT_EQ(v, got++);
+  TEST_ASSERT_EQ(got, next);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC - 8);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Zero copy on a drop pipe: the peeked slot can't be overwritten, even when
+ * the producer fills the rest of the ring. */
+static void test_bus_pipe_zero_copy(void) {
+  preset();
+  v_bus_subscribe(&pd, &sa);
+  uint16_t t, len;
+  uint32_t *w = v_bus_reserve(&pd, 4, &t);
+  TEST_ASSERT(w != NULL);
+  *w = 7;
+  TEST_ASSERT_EQ(v_bus_commit(&pd, t, 4), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_commit(&pd, t, 4), V_BUS_EINVAL); /* stale ticket */
+  const uint32_t *p;
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, NULL), VA_PASS);
+  TEST_ASSERT_EQ(*p, 7u);
+  for (uint32_t i = 0; i < 3; i++)
+    TEST_ASSERT_EQ(pub_u32(&pd, 100 + i), VA_PASS);
+  TEST_ASSERT_EQ(pub_u32(&pd, 200), VA_FAIL); /* would overwrite the peek */
+  TEST_ASSERT_EQ(*p, 7u);
+  TEST_ASSERT_EQ(v_bus_release(&sa), VA_PASS);
+  uint32_t v;
+  TEST_ASSERT_EQ(pop_u32(&sa, &v), VA_PASS);
+  TEST_ASSERT_EQ(v, 100u);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Overwrite pipe: the producer never waits; a lapped reader jumps to the
+ * oldest slot and reports exactly what it lost. */
+static void test_bus_pipe_overwrite_missed(void) {
+  preset();
+  v_bus_subscribe(&po, &sa);
+  for (uint32_t i = 0; i < 10; i++)
+    TEST_ASSERT_EQ(pub_u32(&po, i), VA_PASS);
+  uint32_t v, missed;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 6u);
+  TEST_ASSERT_EQ(missed, 6u);
+  for (uint32_t i = 7; i < 10; i++) {
+    TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+    TEST_ASSERT_EQ(v, i);
+    TEST_ASSERT_EQ(missed, 0u);
+  }
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_FAIL);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Overwrite pipe, lock-free seqlock: a slot overwritten WHILE copied is never
+ * returned torn; a peek overwritten while viewed is reported stale. */
+static void lap_overwrite_pipe(void) {
+  v_bus_test_mid_pop = NULL;
+  for (uint32_t i = 0; i < 4; i++)
+    pub_u32(&po, 1000 + i); /* a whole lap: every slot rewritten */
+}
+static void test_bus_pipe_overwrite_seqlock(void) {
+  preset();
+  v_bus_subscribe(&po, &sa);
+  for (uint32_t i = 0; i < 4; i++)
+    pub_u32(&po, i);
+  v_bus_test_mid_pop = lap_overwrite_pipe;
+  uint32_t v = 0, missed = 0;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_NULL(v_bus_test_mid_pop); /* the lap ran mid-copy */
+  TEST_ASSERT_EQ(v, 1000u);             /* not the torn #0 */
+  TEST_ASSERT_EQ(missed, 4u);           /* #0..#3 were lost */
+  const uint32_t *p;
+  uint16_t len;
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, NULL), VA_PASS);
+  TEST_ASSERT_EQ(*p, 1001u);
+  for (uint32_t i = 0; i < 4; i++)
+    pub_u32(&po, 2000 + i); /* laps under the view */
+  TEST_ASSERT_EQ(v_bus_release(&sa), V_BUS_ESTALE);
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 2000u);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Cancelling a claim on a full overwrite pipe loses the oldest (it was
+ * marked in-progress); a reader subscribing late sees only what's next. */
+static void test_bus_pipe_cancel_and_late_reader(void) {
+  preset();
+  uint32_t v = 5, missed;
+  TEST_ASSERT_EQ(pub_u32(&po, 5), VA_PASS); /* nobody subscribed: dropped */
+  v_bus_subscribe(&po, &sa);
+  for (uint32_t i = 0; i < 4; i++)
+    pub_u32(&po, i);
+  uint16_t t, len;
+  uint32_t *w = v_bus_reserve(&po, 4, &t); /* claims #0's slot: in progress */
+  TEST_ASSERT(w != NULL);
+  *w = 0xBAD; /* half-written, never committed */
+  const uint32_t *p;
+  TEST_ASSERT_EQ(v_bus_peek(&sa, (const void **)&p, &len, &missed), VA_PASS);
+  TEST_ASSERT_EQ(*p, 1u);     /* the claimed slot is skipped, not viewed */
+  TEST_ASSERT_EQ(missed, 1u); /* #0 is lost */
+  TEST_ASSERT_EQ(v_bus_release(&sa), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_cancel(&po, t), VA_PASS);
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 2u);
+  TEST_ASSERT_EQ(missed, 0u);
+  TEST_ASSERT_EQ(v_bus_unsubscribe(&sa), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_subscribe(&po, &sb), VA_PASS);
+  pub_u32(&po, 77);
+  TEST_ASSERT_EQ(pop_m(&sb, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 77u);
+  TEST_ASSERT_EQ(missed, 0u);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* Randomised, both pipes plus an ordinary topic sharing the pool: copy and
+ * zero-copy publishes, copy pops, held peeks, cancels. Drop pipe: every
+ * message arrives, in order, none missed. Overwrite pipe: in order, missed ==
+ * the exact gap, a stale release discards. Invariants every step. */
+static void test_bus_fuzz_pipes(void) {
+  preset();
+  v_bus_topic_declare(&mb, &tp, "plain", NULL);
+  v_bus_subscribe(&pd, &sa);
+  v_bus_subscribe(&po, &sb);
+  v_bus_subscribe(&tp, &sc);
+  v_bus_topic_t *tops[3] = {&pd, &po, &tp};
+  v_bus_sub_t *subs[3] = {&sa, &sb, &sc};
+  const uint32_t *held[3] = {NULL, NULL, NULL};
+  uint32_t next[3] = {0, 0, 0}, expect[3] = {0, 0, 0}, seen[3] = {0, 0, 0};
+  int failures = 0, laps = 0, stale = 0;
+  uint32_t x = 0x27D4EB2Fu;
+  for (int op = 0; op < 20000 && !failures; op++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    int k = (int)((x >> 4) % 3u);
+    uint16_t t, len;
+    uint32_t v, missed;
+    switch (x & 7u) {
+    case 0: case 1: /* copy publish */
+      if (pub_u32(tops[k], next[k]) == VA_PASS)
+        next[k]++;
+      break;
+    case 2: { /* zero-copy publish, sometimes cancelled */
+      uint32_t *w = v_bus_reserve(tops[k], 4, &t);
+      if (!w)
+        break;
+      if ((x >> 9) & 1u) { /* nothing published, no seq used; on a full */
+        failures += v_bus_cancel(tops[k], t) != VA_PASS; /* overwrite pipe */
+        break; /* the oldest was lost to the claim: the reader sees a gap */
+      }
+      *w = next[k]++;
+      failures += v_bus_commit(tops[k], t, 4) != VA_PASS;
+      break;
+    }
+    case 3: case 4: /* copy pop */
+      if (!held[k] && pop_m(subs[k], &v, &missed) == VA_PASS) {
+        failures += v != expect[k] + missed;
+        failures += k == 0 && missed != 0; /* a drop pipe never loses */
+        laps += missed != 0;
+        expect[k] = v + 1;
+      }
+      break;
+    case 5: /* peek and hold */
+      if (!held[k] && v_bus_peek(subs[k], (const void **)&held[k], &len,
+                                 &missed) == VA_PASS) {
+        seen[k] = *held[k];
+        failures += seen[k] != expect[k] + missed;
+      }
+      break;
+    default: /* release */
+      if (held[k]) {
+        int r = v_bus_release(subs[k]);
+        if (r == V_BUS_ESTALE) {
+          failures += k != 1; /* only an overwrite pipe can go stale */
+          stale++;
+        } else {
+          failures += r != VA_PASS || *held[k] != seen[k];
+        }
+        expect[k] = seen[k] + 1;
+        held[k] = NULL;
+      }
+    }
+    for (int j = 0; j < 3; j++) /* drop-pipe and pool views never change */
+      failures += j != 1 && held[j] && *held[j] != seen[j];
+    failures += v_bus_check(&mb) != VA_PASS;
+  }
+  TEST_ASSERT_EQ(failures, 0);
+  TEST_ASSERT(laps > 0);
+  TEST_ASSERT(stale > 0); /* the seqlock path really ran */
+}
+
 static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_init_validates),
     TEST_CASE(test_bus_alloc_all_or_nothing),
@@ -831,10 +1066,17 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_reserve_lend_and_reclaim),
     TEST_CASE(test_bus_reserve_reclaim_blocked_by_pin),
     TEST_CASE(test_bus_fuzz_reservations),
+    TEST_CASE(test_bus_pipe_declare_and_one_reader),
+    TEST_CASE(test_bus_pipe_drop_order_and_wrap),
+    TEST_CASE(test_bus_pipe_zero_copy),
+    TEST_CASE(test_bus_pipe_overwrite_missed),
+    TEST_CASE(test_bus_pipe_overwrite_seqlock),
+    TEST_CASE(test_bus_pipe_cancel_and_late_reader),
+    TEST_CASE(test_bus_fuzz_pipes),
 };
 
 const test_suite_t bus_suite = {
-    .name = "Bus IPC: pool, topics, overwrite, zero copy, reservations",
+    .name = "Bus IPC: pool, topics, overwrite, zero copy, reservations, pipes",
     .cases = bus_cases,
     .count = TEST_COUNT(bus_cases),
 };
