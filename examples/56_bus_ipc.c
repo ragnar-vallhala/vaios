@@ -10,13 +10,15 @@
  *     slow   reads one sample every 20 ms, so overwrite evicts under it: it
  *            skips ahead and must see the exact gap as `missed` — including
  *            when the IRQ evicts the very sample it is copying.
- *   log      V_BUS_DROP: fast publishes, logger drains slowly, so some are
- *            refused; none may vanish silently.
+ *   log      V_BUS_DROP with a soft reservation of 8 blocks: fast forwards,
+ *            logger drains slowly. The slow reader's overwrite topic keeps
+ *            the shared pool full (and borrows log's idle blocks), yet log
+ *            must never drop: its reservation is taken back when it needs it.
  *
  * Checks: every pop is in order with seq == expected + missed; no checksum
  * failure (no torn copy); after the IRQ stops and everyone drains, every
- * imu seq is either read or reported missed by each reader, log received +
- * dropped == sent, and the pool is whole again (v_bus_check). The verdict
+ * imu seq is either read or reported missed by each reader, log dropped
+ * nothing and arrived in order, and the pool is whole again (v_bus_check). The verdict
  * prints as "BUS-IPC PASS" / "BUS-IPC FAIL".
  */
 #ifndef NAVHAL
@@ -45,6 +47,8 @@ static v_bus_t bus;
 static v_bus_topic_t imu, logt;
 static v_bus_sub_t fast_sub, slow_sub, log_sub;
 static const v_bus_topic_cfg_t OVERWRITE = {.overflow = V_BUS_OVERWRITE};
+// log's worst queue: 200 Hz forwards vs a 30 ms drain = ~6-7 messages.
+static const v_bus_topic_cfg_t LOG_CFG = {.reserve = 8};
 
 static volatile uint32_t imu_sent, running = 1;
 
@@ -125,12 +129,12 @@ static void logger_task(void *arg) {
   while (running) {
     uint32_t v;
     uint16_t len;
-    if (v_bus_pop(&log_sub, &v, sizeof v, &len, NULL) == VA_PASS) {
+    while (v_bus_pop(&log_sub, &v, sizeof v, &len, NULL) == VA_PASS) {
       log_bad += v != log_expect; // drop never loses a queued message
       log_expect = v + 1;
       log_got++;
     }
-    v_delay(30); // slower than fast forwards: the queue fills, drops happen
+    v_delay(30); // batches ~6-7 per wake: needs its reservation, not more
   }
   for (;;)
     v_delay(1000);
@@ -172,10 +176,12 @@ static void monitor_task(void *arg) {
   pass = pass && slow.missed > 0; // overwrite really happened under it
   v_log(LOG_INFO, "bus-ipc imu sent=%u; log sent=%u dropped=%u got=%u bad=%u",
         imu_sent, log_sent, log_dropped, log_got, log_bad);
-  pass = pass && log_got == log_sent && log_bad == 0 && log_dropped > 0;
-  int pool_ok = v_bus_free_blocks(&bus) == BLOCKS && v_bus_check(&bus) == VA_PASS;
-  v_log(LOG_INFO, "bus-ipc pool: free=%u/%u check=%s", v_bus_free_blocks(&bus),
-        BLOCKS, pool_ok ? "ok" : "BROKEN");
+  pass = pass && log_got == log_sent && log_bad == 0 && log_dropped == 0;
+  // Everything is home: the shared pool plus log's stash, no loans left.
+  uint32_t home = v_bus_free_blocks(&bus) + logt.stash_count;
+  int pool_ok = home == BLOCKS && logt.lent == 0 && v_bus_check(&bus) == VA_PASS;
+  v_log(LOG_INFO, "bus-ipc pool: home=%u/%u (log stash %u) check=%s", home,
+        BLOCKS, logt.stash_count, pool_ok ? "ok" : "BROKEN");
   pass = pass && pool_ok;
   v_log(LOG_INFO, pass ? "BUS-IPC PASS" : "BUS-IPC FAIL");
   v_log_flush();
@@ -192,7 +198,7 @@ int main(void) {
 
   v_bus_init(&bus, pool_blocks, pool_desc, 32, BLOCKS);
   v_bus_topic_declare(&bus, &imu, "imu.raw", &OVERWRITE);
-  v_bus_topic_declare(&bus, &logt, "log", NULL); // drop when full
+  v_bus_topic_declare(&bus, &logt, "log", &LOG_CFG); // drop, reserved
   v_bus_subscribe(&imu, &fast_sub);
   v_bus_subscribe(&imu, &slow_sub);
   v_bus_subscribe(&logt, &log_sub);

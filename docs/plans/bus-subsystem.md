@@ -1,7 +1,7 @@
 # Plan — Bus IPC Subsystem
 
 **Date:** 2026-07-02 · **Revised:** 2026-09-22
-**Status:** In progress — B0–B3 + zero-copy done; revision notes below
+**Status:** In progress — B0–B4 (+ zero-copy) done; revision notes below
 **Scope:** single MCU, single firmware, single address space
 **Source:** `Bus Subsystem Design Document`
 **Branch:** `feat/bus-subsystem`
@@ -307,6 +307,35 @@ best-effort capacity for burst determinism. Guard size is clamped to
 `[1, reserved_min-1]`.
 
 ---
+
+### 4.5 As built: soft reservations (2026-09-22)
+
+§4.2–4.4 were implemented in a simpler form, driven by a per-topic block
+**stash** that also serves as the fast path:
+
+- `cfg.reserve = n` moves n blocks from the pool into the topic's stash at
+  declare (VA_FAIL if the pool can't cover it). Its messages draw from the
+  stash first and every freed block routes back there, so the topic keeps n
+  blocks whatever other topics do — the guaranteed class is "has a reserve".
+- **Soft:** when the pool is empty, a `V_BUS_OVERWRITE` topic may borrow
+  another topic's *idle* stash blocks. A topic short of its own reserve takes
+  them back by evicting the borrowers' oldest messages (bounded; stops at a
+  pinned/peeked message). Only overwrite topics borrow, because reclaim-by-
+  eviction must be within the borrower's own policy; drop topics never do.
+- **Loans are counts, not tags.** Blocks are interchangeable, so a borrower
+  repays with whatever block it frees next. Invariants (checked by
+  `v_bus_check`): `stash + lent <= reserve` per topic, `Σlent == Σborrowed`,
+  and `free + Σstash + Σqueued + open tickets == block_count` (exact leak
+  check).
+- **Not built:** the guard region (§4.4). ponytail: add it if reclaim storms
+  show up on small guaranteed bursts; so far reclaim evicts exactly what's
+  needed.
+
+Measured (Renode): a reserved topic's `v_bus_reserve` drops 78 -> 56 cycles
+(stash pop instead of the pool); release is unchanged (~104, the ref-count and
+cursor bookkeeping). The real payoff is the guarantee: in the Renode example a
+drop topic with `reserve = 8` delivers 466/466 while an overwrite topic floods
+the pool, against 4 sent / 462 dropped without the reservation.
 
 ## 5. Delivery semantics
 
@@ -727,7 +756,7 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **B2** | Topics + index-linked queue + single-producer publish + polling pop (§3, §5.1, §6.1); full pool = drop | unit: publish/pop ordering, ref-count reclaim — **done** |
 | **B3** | Unsubscribe (H6), overwrite overflow policy (§5.3), slow-subscriber recovery with `missed` (§5.2) | unit: H4/H5/H6 — **done** |
 | **ZC** | Zero-copy path for single-block messages: `v_bus_reserve`/`commit`/`cancel`, `v_bus_peek`/`release`; a peeked message is pinned against eviction (§11.1) | unit: pinning vs eviction under fuzz; Renode benchmark — **done** |
-| **B4** | QoS: guaranteed/best-effort, elastic borrowing, guard region, reclaim (§4.2–4.4) | unit: H2/H3, reclaim bounded |
+| **B4** | QoS as **soft reservations** (§4.5): per-topic stash (`cfg.reserve`), loans to overwrite topics, bounded reclaim by eviction | unit: guarantee asserted under fuzz; Renode: reserved drop topic 0 drops under an overwrite flood — **done** |
 | **B5** | Multi-producer 3-stage pipeline + PI (§6.2) | unit: H7/H8/H11; concurrency on the host port (real scheduler) + SITL |
 | **B6** | Notification engine: blocking + callback worker task (§6.4) | SITL: ISR publish → callback wake |
 | **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | Stage-2 scenario example |

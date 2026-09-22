@@ -1,9 +1,9 @@
 // Bus IPC subsystem — see include/bus.h and docs/plans/bus-subsystem.md.
 //
-// B1: the block-pool allocator. Free blocks form a stack threaded through
-// desc[].next, so taking or returning n blocks is O(n) whatever the pool size.
-// Every mutation runs under ENTER_CRITICAL_FROM_ISR: short, bounded, and usable
-// from the single-producer ISR publish path (plan §6.3, §7).
+// B1: the block pool. Free blocks form a stack threaded through desc[].next,
+// so taking or returning a block is O(1) whatever the pool size. Every
+// mutation runs under ENTER_CRITICAL_FROM_ISR: short, bounded, and usable from
+// the single-producer ISR publish path (plan §6.3, §7).
 //
 // B2: topics. A message is a chain of blocks whose first block starts with a
 // msg_hdr_t; a topic's messages are linked oldest -> newest through hdr.link.
@@ -16,6 +16,13 @@
 // The one thing that can't be fixed up eagerly is a pop already copying the
 // evicted message: it checks the head block's epoch (bumped on every free)
 // after the copy and, if it changed, discards the copy and reads again.
+//
+// Soft reservations: a topic with cfg.reserve keeps that many blocks in its
+// own stash (a free stack like the pool's). Blocks are interchangeable, so a
+// loan is only a count: an overwrite topic that borrowed repays with whatever
+// block it frees next. Every free goes through free_chain, which repays loans
+// first, refills the owner's stash (stash + lent <= reserve), and only then
+// returns blocks to the shared pool.
 //
 // Zero copy: v_bus_reserve/commit hand out and publish a single pool block;
 // v_bus_peek/release read one in place. A peeked message is pinned, which is
@@ -36,6 +43,12 @@ typedef struct {
 } msg_hdr_t;
 _Static_assert(sizeof(msg_hdr_t) == V_BUS_HDR_SIZE, "V_BUS_HDR_SIZE drift");
 
+// desc.used values: 0 free (pool), 1 in use, RESERVED a v_bus_reserve block
+// not yet committed (so a stale or repeated ticket can't re-link a queued
+// message), STASHED idle in a topic's reservation.
+#define RESERVED 2u
+#define STASHED 3u
+
 int v_bus_init(v_bus_t *bus, void *blocks, v_bus_desc_t *desc,
                uint16_t block_size, uint16_t block_count) {
   if (!bus || !blocks || !desc || block_size < V_BUS_HDR_SIZE ||
@@ -54,68 +67,6 @@ int v_bus_init(v_bus_t *bus, void *blocks, v_bus_desc_t *desc,
                    .free_head = 0,
                    .free_count = block_count};
   return VA_PASS;
-}
-
-uint16_t v_bus_block_alloc(v_bus_t *bus, uint16_t n) {
-  if (!bus || !n)
-    return V_BUS_NIL;
-  uint32_t s = ENTER_CRITICAL_FROM_ISR();
-  if (bus->free_count < n) { // all or nothing: never a partial chain
-    EXIT_CRITICAL_FROM_ISR(s);
-    return V_BUS_NIL;
-  }
-  uint16_t head = bus->free_head, idx = head;
-  for (uint16_t k = 1;; k++) {
-    bus->desc[idx].used = 1;
-    if (k == n)
-      break;
-    idx = bus->desc[idx].next;
-  }
-  bus->free_head = bus->desc[idx].next; // the rest of the free stack
-  bus->desc[idx].next = V_BUS_NIL;      // terminate the message chain
-  bus->free_count = (uint16_t)(bus->free_count - n);
-  EXIT_CRITICAL_FROM_ISR(s);
-  return head;
-}
-
-int v_bus_block_free(v_bus_t *bus, uint16_t head) {
-  if (!bus)
-    return VA_FAIL;
-  uint32_t s = ENTER_CRITICAL_FROM_ISR();
-  // Validate the whole chain before touching it: a double free or a stray
-  // index must not splice a live block (or a cycle) into the free stack.
-  uint16_t len = 0, tail = V_BUS_NIL;
-  for (uint16_t i = head; i != V_BUS_NIL; i = bus->desc[i].next) {
-    if (i >= bus->block_count || !bus->desc[i].used ||
-        len == bus->block_count) {
-      EXIT_CRITICAL_FROM_ISR(s);
-      return VA_FAIL;
-    }
-    len++;
-    tail = i;
-  }
-  if (!len) {
-    EXIT_CRITICAL_FROM_ISR(s);
-    return VA_FAIL;
-  }
-  for (uint16_t i = head; i != V_BUS_NIL; i = bus->desc[i].next) {
-    bus->desc[i].used = 0;
-    bus->desc[i].epoch++; // a reader still holding this index can tell
-  }
-  bus->desc[tail].next = bus->free_head; // push the chain onto the stack
-  bus->free_head = head;
-  bus->free_count = (uint16_t)(bus->free_count + len);
-  EXIT_CRITICAL_FROM_ISR(s);
-  return VA_PASS;
-}
-
-uint16_t v_bus_block_next(const v_bus_t *bus, uint16_t idx) {
-  return idx < bus->block_count ? bus->desc[idx].next : V_BUS_NIL;
-}
-
-uint8_t *v_bus_block_data(v_bus_t *bus, uint16_t idx) {
-  return idx < bus->block_count ? bus->blocks + (uint32_t)idx * bus->block_size
-                                : (uint8_t *)0;
 }
 
 uint16_t v_bus_free_blocks(const v_bus_t *bus) { return bus->free_count; }
@@ -141,9 +92,8 @@ int v_bus_check(const v_bus_t *bus) {
 }
 
 // --- Topics and messages (B2) ------------------------------------------------
-// Unchecked block address for internal callers, whose indices come from the
-// allocator, a cursor or a queue link (all in range by construction). The
-// public v_bus_block_data keeps its bounds check.
+// Block address for internal callers, whose indices come from the allocator,
+// a cursor or a queue link (all in range by construction).
 static uint8_t *blk(const v_bus_t *bus, uint16_t idx) {
   return bus->blocks + (uint32_t)idx * bus->block_size;
 }
@@ -174,7 +124,7 @@ static void copy_payload(v_bus_t *bus, uint16_t msg, void *flat, uint16_t len,
                          int to_msg) {
   uint8_t *p = (uint8_t *)flat;
   uint16_t off = V_BUS_HDR_SIZE;
-  for (uint16_t b = msg; len; b = v_bus_block_next(bus, b), off = 0) {
+  for (uint16_t b = msg; len; b = bus->desc[b].next, off = 0) {
     uint16_t n = (uint16_t)(bus->block_size - off);
     if (n > len)
       n = len;
@@ -199,13 +149,28 @@ int v_bus_topic_declare(v_bus_t *bus, v_bus_topic_t *topic, const char *name,
       return V_BUS_EINVAL;
     }
   }
+  uint16_t reserve = cfg ? cfg->reserve : 0;
+  if (reserve > bus->free_count) {
+    EXIT_CRITICAL_FROM_ISR(s);
+    return VA_FAIL; // the pool can't cover the reservation right now
+  }
   *topic = (v_bus_topic_t){.bus = bus,
                            .name = name,
                            .next = bus->topics,
                            .subs = 0,
                            .cfg = cfg ? *cfg : (v_bus_topic_cfg_t){0},
                            .head = V_BUS_NIL,
-                           .tail = V_BUS_NIL};
+                           .tail = V_BUS_NIL,
+                           .stash = V_BUS_NIL};
+  for (uint16_t k = 0; k < reserve; k++) { // pool -> stash
+    uint16_t b = bus->free_head;
+    bus->free_head = bus->desc[b].next;
+    bus->desc[b].next = topic->stash;
+    bus->desc[b].used = STASHED;
+    topic->stash = b;
+  }
+  bus->free_count = (uint16_t)(bus->free_count - reserve);
+  topic->stash_count = reserve;
   bus->topics = topic;
   EXIT_CRITICAL_FROM_ISR(s);
   return VA_PASS;
@@ -230,6 +195,88 @@ int v_bus_subscribe(v_bus_topic_t *topic, v_bus_sub_t *sub) {
   topic->nsubs++;
   EXIT_CRITICAL_FROM_ISR(s);
   return VA_PASS;
+}
+
+// --- Block routing: stash, pool, loans ----------------------------------------
+// All below run with the critical section held.
+
+static v_bus_topic_t *lender_with_idle(v_bus_t *bus, const v_bus_topic_t *me) {
+  for (v_bus_topic_t *t = bus->topics; t; t = t->next)
+    if (t != me && t->stash_count)
+      return t;
+  return 0;
+}
+
+static uint16_t stash_pop(v_bus_topic_t *t) {
+  uint16_t b = t->stash;
+  t->stash = t->bus->desc[b].next;
+  t->stash_count--;
+  return b;
+}
+
+static void stash_push(v_bus_topic_t *t, uint16_t b) {
+  t->bus->desc[b].used = STASHED;
+  t->bus->desc[b].next = t->stash;
+  t->stash = b;
+  t->stash_count++;
+}
+
+// One block for `t`: its stash, then the pool, then (overwrite topics only)
+// another topic's idle stash block on loan. V_BUS_NIL if none of those.
+static uint16_t take_one(v_bus_topic_t *t) {
+  v_bus_t *bus = t->bus;
+  uint16_t b;
+  v_bus_topic_t *lender;
+  if (t->stash_count) {
+    b = stash_pop(t);
+  } else if (bus->free_count) {
+    b = bus->free_head;
+    bus->free_head = bus->desc[b].next;
+    bus->free_count--;
+  } else if (t->cfg.overflow == V_BUS_OVERWRITE &&
+             (lender = lender_with_idle(bus, t))) {
+    b = stash_pop(lender);
+    lender->lent++;
+    t->borrowed++;
+  } else {
+    return V_BUS_NIL;
+  }
+  bus->desc[b].used = 1;
+  bus->desc[b].next = V_BUS_NIL;
+  return b;
+}
+
+// A block `t` no longer needs: repay a loan, else refill t's stash, else
+// back to the pool. The epoch bump lets a copying reader spot the reuse.
+static void give_one(v_bus_topic_t *t, uint16_t b) {
+  v_bus_t *bus = t->bus;
+  bus->desc[b].epoch++;
+  if (t->borrowed) {
+    v_bus_topic_t *l = bus->topics;
+    while (!l->lent) // sum(lent) == sum(borrowed): one exists
+      l = l->next;
+    stash_push(l, b);
+    l->lent--;
+    t->borrowed--;
+  } else if (t->stash_count + t->lent < t->cfg.reserve) {
+    stash_push(t, b);
+  } else {
+    bus->desc[b].used = 0;
+    bus->desc[b].next = bus->free_head;
+    bus->free_head = b;
+    bus->free_count++;
+  }
+}
+
+// Free a whole chain on behalf of `t` (it ends in V_BUS_NIL). Task or ISR.
+static void free_chain(v_bus_topic_t *t, uint16_t head) {
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  while (head != V_BUS_NIL) {
+    uint16_t next = t->bus->desc[head].next;
+    give_one(t, head);
+    head = next;
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
 }
 
 // Caller holds the critical section. Unlink the topic's oldest message and
@@ -270,7 +317,7 @@ int v_bus_unsubscribe(v_bus_sub_t *sub) {
   // the head. ponytail: freed inside the critical section, O(queued blocks);
   // unsubscribe is rare and task-level. Hand them out after it if that bites.
   while (topic->head != V_BUS_NIL && !hdr(bus, topic->head)->refs)
-    v_bus_block_free(bus, take_head(topic));
+    free_chain(topic, take_head(topic));
   EXIT_CRITICAL_FROM_ISR(s);
   sub->topic = 0;
   return VA_PASS;
@@ -289,22 +336,68 @@ static int evict_oldest(v_bus_topic_t *topic) {
   for (v_bus_sub_t *x = topic->subs; x; x = x->next)
     if (x->cursor == topic->head)
       x->cursor = link;
-  uint16_t msg = take_head(topic);
-  v_bus_block_free(topic->bus, msg);
+  free_chain(topic, take_head(topic));
   EXIT_CRITICAL_FROM_ISR(s);
   return 1;
 }
 
-// Take n blocks for a new message on `topic`, applying its overflow policy.
+// A topic short of its own reservation takes a lent block back: evict the
+// oldest message of some borrower (an overwrite topic, so losing its oldest is
+// its policy anyway). Freed blocks repay lenders. 0 if no borrower can give.
+static int reclaim_one(v_bus_topic_t *t) {
+  for (v_bus_topic_t *b = t->bus->topics; b; b = b->next)
+    if (b->borrowed && evict_oldest(b))
+      return 1;
+  return 0;
+}
+
+// Take n blocks for a new message on `topic`, all or nothing: reservation,
+// pool, loans (overwrite topics), then taking back its own lent blocks, then
+// (overwrite) evicting its own oldest messages. Only starts when it can end
+// well — never evicts for a message that still wouldn't fit.
+// ponytail: runs under one critical section, bounded by n + evictions.
 static inline uint16_t alloc_msg(v_bus_topic_t *topic, uint32_t n) {
   v_bus_t *bus = topic->bus;
-  uint16_t msg = v_bus_block_alloc(bus, (uint16_t)n);
-  if (msg == V_BUS_NIL && topic->cfg.overflow == V_BUS_OVERWRITE &&
-      bus->free_count + topic->blocks >= n) { // evicting can make room
-    while (msg == V_BUS_NIL && evict_oldest(topic))
-      msg = v_bus_block_alloc(bus, (uint16_t)n);
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  if (topic->stash_count >= n) { // hot path: all from the reservation
+    uint16_t head = V_BUS_NIL;
+    for (uint32_t k = 0; k < n; k++) {
+      uint16_t b = stash_pop(topic);
+      bus->desc[b].used = 1;
+      bus->desc[b].next = head;
+      head = b;
+    }
+    EXIT_CRITICAL_FROM_ISR(s);
+    return head;
   }
-  return msg;
+  uint32_t can = topic->stash_count + bus->free_count + topic->lent;
+  if (topic->cfg.overflow == V_BUS_OVERWRITE) {
+    can += topic->blocks; // its own queue is fair game
+    for (v_bus_topic_t *t = bus->topics; t; t = t->next)
+      if (t != topic)
+        can += t->stash_count; // borrowable
+  }
+  if (can < n) {
+    EXIT_CRITICAL_FROM_ISR(s);
+    return V_BUS_NIL;
+  }
+  uint16_t head = V_BUS_NIL;
+  for (uint32_t k = 0; k < n; k++) {
+    uint16_t b = take_one(topic);
+    while (b == V_BUS_NIL &&
+           ((topic->lent && reclaim_one(topic)) ||
+            (topic->cfg.overflow == V_BUS_OVERWRITE && evict_oldest(topic))))
+      b = take_one(topic);
+    if (b == V_BUS_NIL) { // a pinned message blocked the way: give back
+      free_chain(topic, head);
+      head = V_BUS_NIL;
+      break;
+    }
+    bus->desc[b].next = head;
+    head = b;
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
+  return head;
 }
 
 // Make a filled-in message visible. seq and refs are set under the same
@@ -320,7 +413,7 @@ static inline void link_msg(v_bus_topic_t *topic, uint16_t msg, uint16_t len,
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
   if (!topic->nsubs) {
     EXIT_CRITICAL_FROM_ISR(s);
-    v_bus_block_free(bus, msg);
+    free_chain(topic, msg);
     return;
   }
   h->seq = topic->next_seq++;
@@ -354,9 +447,6 @@ int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len) {
   return VA_PASS;
 }
 
-// desc.used values: 0 free, 1 in use, RESERVED a v_bus_reserve block not yet
-// committed — so a stale or repeated ticket can't re-link a queued message.
-#define RESERVED 2u
 
 static int ticket_ok(const v_bus_topic_t *topic, uint16_t ticket) {
   return topic && topic->bus && ticket < topic->bus->block_count &&
@@ -387,7 +477,8 @@ int v_bus_commit(v_bus_topic_t *topic, uint16_t ticket, uint16_t len) {
 int v_bus_cancel(v_bus_topic_t *topic, uint16_t ticket) {
   if (!ticket_ok(topic, ticket))
     return V_BUS_EINVAL;
-  return v_bus_block_free(topic->bus, ticket);
+  free_chain(topic, ticket);
+  return VA_PASS;
 }
 
 // Caller holds the critical section. `sub` is done with `msg` (its cursor):
@@ -452,7 +543,7 @@ int v_bus_pop(v_bus_sub_t *sub, void *out, uint16_t cap, uint16_t *out_len,
     uint16_t freed = consume(sub, msg);
     EXIT_CRITICAL_FROM_ISR(s);
     if (freed != V_BUS_NIL)
-      v_bus_block_free(bus, freed);
+      free_chain(sub->topic, freed);
     return VA_PASS;
   }
 }
@@ -495,7 +586,7 @@ int v_bus_release(v_bus_sub_t *sub) {
   uint16_t freed = consume(sub, msg); // pinned, so still our cursor
   EXIT_CRITICAL_FROM_ISR(s);
   if (freed != V_BUS_NIL)
-    v_bus_block_free(bus, freed);
+    free_chain(sub->topic, freed);
   return VA_PASS;
 }
 
@@ -504,7 +595,20 @@ int v_bus_release(v_bus_sub_t *sub) {
 // topic's count, and every cursor points into the chain.
 static int topics_ok(const v_bus_t *bus) {
   const v_bus_t *b = bus;
+  uint32_t lent = 0, borrowed = 0, accounted = bus->free_count;
+  for (uint16_t i = 0; i < bus->block_count; i++)
+    accounted += bus->desc[i].used == RESERVED; // open v_bus_reserve tickets
   for (const v_bus_topic_t *t = bus->topics; t; t = t->next) {
+    uint16_t k = 0;
+    for (uint16_t i = t->stash; i != V_BUS_NIL; i = bus->desc[i].next)
+      if (i >= bus->block_count || bus->desc[i].used != STASHED ||
+          ++k > t->stash_count)
+        return 0;
+    if (k != t->stash_count || t->stash_count + t->lent > t->cfg.reserve)
+      return 0;
+    lent += t->lent;
+    borrowed += t->borrowed;
+    accounted += t->stash_count + t->blocks;
     if ((t->head == V_BUS_NIL) != (t->tail == V_BUS_NIL))
       return 0;
     uint16_t last = V_BUS_NIL, n = 0;
@@ -513,7 +617,13 @@ static int topics_ok(const v_bus_t *bus) {
       if (m >= bus->block_count || !bus->desc[m].used || !hdr(b, m)->refs ||
           ++n > bus->block_count)
         return 0;
-      blocks += blocks_for(bus, hdr(b, m)->len);
+      uint32_t want = blocks_for(bus, hdr(b, m)->len), got = 0;
+      for (uint16_t c = m; c != V_BUS_NIL; c = bus->desc[c].next)
+        if (c >= bus->block_count || bus->desc[c].used != 1 || ++got > want)
+          return 0; // every block of a queued message is in use, none extra
+      if (got != want)
+        return 0;
+      blocks += want;
       last = m;
     }
     if (last != t->tail || blocks != t->blocks)
@@ -538,5 +648,6 @@ static int topics_ok(const v_bus_t *bus) {
     if (nsubs != t->nsubs || pins != peeks)
       return 0;
   }
-  return 1;
+  // Loans balance, and every block is somewhere: nothing leaked.
+  return lent == borrowed && accounted == bus->block_count;
 }
