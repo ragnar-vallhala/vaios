@@ -14,11 +14,13 @@
 # before, and why ipc.c read 82% when the merged figure is 63%).
 #
 # Usage:
-#   tools/coverage.sh            # table + weighted total
-#   tools/coverage.sh --list     # also list each file's 0-call functions
+#   tools/coverage.sh                 # table + weighted total
+#   tools/coverage.sh --list          # also list each file's 0-call functions
+#   tools/coverage.sh --min-lines 70  # fail if line coverage drops below 70%
 #
-# Exit code: 0 if the suite built and ran, non-zero otherwise. No threshold is
-# enforced — run_all_tests.sh reports the TOTAL line, it does not gate on it.
+# Exit code: 0 if the suite built and ran (and --min-lines, when given, is
+# met), non-zero otherwise. run_all_tests.sh reports the TOTAL line; CI passes
+# --min-lines so a drop fails the build.
 # =============================================================================
 set -uo pipefail
 
@@ -26,7 +28,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/build_coverage"
 LIST_FUNCS=0
-[ "${1:-}" = "--list" ] && LIST_FUNCS=1
+MIN_LINES=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --list) LIST_FUNCS=1 ;;
+    --min-lines) MIN_LINES="${2:-}"; shift ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
 
 for bin in gcc gcov cmake; do
   command -v "$bin" >/dev/null || { echo "missing required tool: $bin" >&2; exit 2; }
@@ -56,7 +66,11 @@ done
 [ "$ran" -gt 0 ] || { echo "no test binaries found in $BUILD_DIR" >&2; exit 1; }
 echo "    $ran binaries"
 
+REPORT="$(mktemp)"
+trap 'rm -f "$REPORT"' EXIT
+
 echo
+{
 if command -v gcovr >/dev/null; then
   # Merged across binaries (the accurate view).
   printf "%-28s %9s %9s %9s\n" "FILE" "LINE%" "BRANCH%" "FUNC%"
@@ -126,6 +140,7 @@ else
     printf "TOTAL %s%% (%d / %d lines, host-compiled sources, best-binary)\n" "$pct" "$tot_cov" "$tot_lines"
   fi
 fi
+} | tee "$REPORT"
 
 # 0-call functions, per file, from whichever binary covers it best.
 if [ "$LIST_FUNCS" -eq 1 ]; then
@@ -161,3 +176,18 @@ echo
 echo "Note: port.c / port_hw.c / semihosting.c / qemu_irq.c / the host port are"
 echo "      NOT compiled into the host suite — validate those via SITL/PITL"
 echo "      (tools/run_all_tests.sh sitl) or the on-target gcov build."
+
+# Floor check (CI). Compares the TOTAL line's line-coverage percentage.
+if [ -n "$MIN_LINES" ]; then
+  pct="$(awk '/^TOTAL /{print $2+0; exit}' "$REPORT")"
+  echo
+  if [ -z "$pct" ]; then
+    echo "coverage: could not read the TOTAL line" >&2
+    exit 1
+  fi
+  if awk -v p="$pct" -v m="$MIN_LINES" 'BEGIN{exit !(p + 0 < m + 0)}'; then
+    echo "FAIL: line coverage ${pct}% is below the ${MIN_LINES}% floor" >&2
+    exit 1
+  fi
+  echo "PASS: line coverage ${pct}% >= ${MIN_LINES}% floor"
+fi
