@@ -54,9 +54,14 @@ endif()
 
 # ASan's leak detector would flag the RTOS's static heap (never freed by
 # design) and libc allocations the tests don't own; we care about OOB/UAF here,
-# not leaks. Applied to each test via set_tests_properties(... ENVIRONMENT ...).
+# not leaks. Applied to each test via set_tests_properties(... ENVIRONMENT ...),
+# which REPLACES the caller's ASAN_OPTIONS -- hence verify_asan_link_order=0
+# here: a runner that pipes us through stdbuf (extern/vtest) LD_PRELOADs a
+# library ahead of the ASan runtime, and without this every binary aborts with
+# "ASan runtime does not come first in initial library list". Harmless when the
+# tests are run directly, where nothing is preloaded.
 set(VAIOS_SANITIZER_ENV
-    "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1"
+    "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:verify_asan_link_order=0"
     "UBSAN_OPTIONS=print_stacktrace=1")
 
 # -------------------------------------------------------------------------
@@ -175,8 +180,8 @@ target_compile_options(vaios_tests PRIVATE
 # Register with CTest
 # -------------------------------------------------------------------------
 enable_testing()
-add_test(NAME vaios_unit_tests COMMAND vaios_tests)
-set_tests_properties(vaios_unit_tests PROPERTIES
+add_test(NAME vaios_tests COMMAND vaios_tests)
+set_tests_properties(vaios_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
@@ -208,8 +213,8 @@ target_compile_options(vaios_utils_tests PRIVATE
     -g -O0
     -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
 )
-add_test(NAME vaios_utils_unit_tests COMMAND vaios_utils_tests)
-set_tests_properties(vaios_utils_unit_tests PROPERTIES
+add_test(NAME vaios_utils_tests COMMAND vaios_utils_tests)
+set_tests_properties(vaios_utils_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
@@ -238,8 +243,8 @@ target_compile_options(vaios_devfs_tests PRIVATE
     -g -O0
     -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
 )
-add_test(NAME vaios_devfs_unit_tests COMMAND vaios_devfs_tests)
-set_tests_properties(vaios_devfs_unit_tests PROPERTIES
+add_test(NAME vaios_devfs_tests COMMAND vaios_devfs_tests)
+set_tests_properties(vaios_devfs_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
@@ -285,8 +290,8 @@ target_compile_options(vaios_taskheap_tests PRIVATE
     -g -O0
     -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
 )
-add_test(NAME vaios_taskheap_unit_tests COMMAND vaios_taskheap_tests)
-set_tests_properties(vaios_taskheap_unit_tests PROPERTIES
+add_test(NAME vaios_taskheap_tests COMMAND vaios_taskheap_tests)
+set_tests_properties(vaios_taskheap_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
@@ -342,8 +347,8 @@ target_compile_options(vaios_syscall_tests PRIVATE
     -g -O0
     -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
 )
-add_test(NAME vaios_syscall_unit_tests COMMAND vaios_syscall_tests)
-set_tests_properties(vaios_syscall_unit_tests PROPERTIES
+add_test(NAME vaios_syscall_tests COMMAND vaios_syscall_tests)
+set_tests_properties(vaios_syscall_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
@@ -394,8 +399,8 @@ target_compile_options(vaios_ipcfd_tests PRIVATE
     -g -O0
     -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
 )
-add_test(NAME vaios_ipcfd_unit_tests COMMAND vaios_ipcfd_tests)
-set_tests_properties(vaios_ipcfd_unit_tests PROPERTIES
+add_test(NAME vaios_ipcfd_tests COMMAND vaios_ipcfd_tests)
+set_tests_properties(vaios_ipcfd_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
@@ -433,8 +438,8 @@ target_compile_options(vaios_uaccess_guard_tests PRIVATE
     -g -O0
     -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
 )
-add_test(NAME vaios_uaccess_guard_unit_tests COMMAND vaios_uaccess_guard_tests)
-set_tests_properties(vaios_uaccess_guard_unit_tests PROPERTIES
+add_test(NAME vaios_uaccess_guard_tests COMMAND vaios_uaccess_guard_tests)
+set_tests_properties(vaios_uaccess_guard_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
