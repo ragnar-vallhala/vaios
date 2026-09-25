@@ -60,6 +60,10 @@ _Static_assert(sizeof(msg_hdr_t) == V_BUS_HDR_SIZE, "V_BUS_HDR_SIZE drift");
 
 // Lock-free pipe fields are shared between exactly one producer and one
 // consumer context; these keep the compiler from caching or tearing them.
+#if VAIOS_DEVFS
+static void bus_register(v_bus_t *bus); // fd layer: resolve a topic by name
+#endif
+
 #define LOAD32(x) (*(volatile const uint32_t *)&(x))
 #define STORE32(x, v) (*(volatile uint32_t *)&(x) = (v))
 
@@ -80,6 +84,9 @@ int v_bus_init(v_bus_t *bus, void *blocks, v_bus_desc_t *desc,
                    .block_count = block_count,
                    .free_head = 0,
                    .free_count = block_count};
+#if VAIOS_DEVFS
+  bus_register(bus); // so v_bus_open can find this bus's topics by name
+#endif
   return VA_PASS;
 }
 
@@ -894,3 +901,128 @@ static int topics_ok(const v_bus_t *bus) {
   // Loans balance, and every block is somewhere: nothing leaked.
   return lent == borrowed && accounted == bus->block_count;
 }
+
+// --- User access: topics on the fd table (VAIOS_DEVFS) ------------------------
+// A task can't touch the bus itself (kernel memory, BASEPRI critical sections),
+// so it opens a topic by name and goes through syscalls. Each open holds a
+// kernel-side subscription; the fd's close drops it, which is also what keeps a
+// task that exits mid-stream from pinning queued messages (H6).
+#if VAIOS_DEVFS
+#include "syscall.h"
+#include "vfile.h"
+
+// Buses register here so a name can be resolved without the caller naming the
+// bus. Bounded and dedupe-on-init: a re-initialised bus does not queue up.
+#define BUS_REG_MAX 8
+static v_bus_t *bus_reg[BUS_REG_MAX];
+
+static void bus_register(v_bus_t *bus) {
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  int free_slot = -1;
+  for (int i = 0; i < BUS_REG_MAX; i++) {
+    if (bus_reg[i] == bus) {
+      EXIT_CRITICAL_FROM_ISR(s);
+      return; // already known (v_bus_init called again on the same bus)
+    }
+    if (!bus_reg[i] && free_slot < 0)
+      free_slot = i;
+  }
+  if (free_slot >= 0)
+    bus_reg[free_slot] = bus;
+  EXIT_CRITICAL_FROM_ISR(s);
+}
+
+static v_bus_topic_t *topic_by_name(const char *name) {
+  for (int i = 0; i < BUS_REG_MAX; i++) {
+    if (!bus_reg[i])
+      continue;
+    for (v_bus_topic_t *t = bus_reg[i]->topics; t; t = t->next)
+      if (name_eq(t->name, name))
+        return t;
+  }
+  return 0;
+}
+
+typedef struct {
+  v_bus_topic_t *topic;
+  v_bus_sub_t sub; // used only when the handle was opened V_BUS_RD
+  uint8_t used;
+  uint8_t flags;
+} bus_handle_t;
+
+static bus_handle_t bus_handles[VAIOS_BUS_MAX_OPEN];
+
+static int bus_fd_close(void *priv) {
+  bus_handle_t *h = (bus_handle_t *)priv;
+  if (h->flags & V_BUS_RD)
+    v_bus_unsubscribe(&h->sub); // releases its claim on unread messages
+  h->used = 0;
+  return 0;
+}
+static const v_file_ops bus_fd_ops = {
+    .read = NULL, .write = NULL, .close = bus_fd_close};
+
+int v_bus_open(const char *name, int flags) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_bus_open, (uintptr_t)name, (uint32_t)flags);
+#endif
+  if (!name || !(flags & (V_BUS_RD | V_BUS_WR)))
+    return V_BUS_EINVAL;
+  v_bus_topic_t *t = topic_by_name(name);
+  if (!t)
+    return V_BUS_EINVAL; // no such topic on any initialised bus
+
+  bus_handle_t *h = 0;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  for (int i = 0; i < VAIOS_BUS_MAX_OPEN && !h; i++)
+    if (!bus_handles[i].used)
+      h = &bus_handles[i];
+  if (h) {
+    h->used = 1;
+    h->topic = t;
+    h->flags = (uint8_t)flags;
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
+  if (!h)
+    return V_BUS_EBUSY; // no free handle (VAIOS_BUS_MAX_OPEN)
+
+  if (flags & V_BUS_RD) {
+    int r = v_bus_subscribe(t, &h->sub);
+    if (r != VA_PASS) { // e.g. a pipe topic that already has its one reader
+      h->used = 0;
+      return r;
+    }
+  }
+  int fd = v_fd_alloc(&bus_fd_ops, h);
+  if (fd < 0) {
+    bus_fd_close(h);
+    return V_BUS_EBUSY; // no free descriptor in this task
+  }
+  return fd;
+}
+
+int v_bus_send(int fd, const void *payload, uint16_t len) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc3(SYS_bus_send, (uint32_t)fd, (uintptr_t)payload, len);
+#endif
+  bus_handle_t *h = (bus_handle_t *)v_fd_obj(fd, &bus_fd_ops);
+  if (!h || !(h->flags & V_BUS_WR))
+    return V_BUS_EINVAL;
+  return v_bus_publish(h->topic, payload, len);
+}
+
+int v_bus_recv(int fd, v_bus_rx_t *rx) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_bus_recv, (uint32_t)fd, (uintptr_t)rx);
+#endif
+  if (!rx)
+    return V_BUS_EINVAL;
+  bus_handle_t *h = (bus_handle_t *)v_fd_obj(fd, &bus_fd_ops);
+  if (!h || !(h->flags & V_BUS_RD))
+    return V_BUS_EINVAL;
+  return v_bus_pop(&h->sub, rx->buf, rx->cap, &rx->len, &rx->missed);
+}
+#endif // VAIOS_DEVFS
