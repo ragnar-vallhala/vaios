@@ -74,6 +74,13 @@ typedef enum {
                         //   outranking its parent.
   SYS_task_kill = 39,   // end a task you spawned. Nobody may end a task they
                         //   did not create; a task ends itself with SYS_exit.
+  SYS_q_open = 40,      // queues on the fd table (M4): open a registered queue
+  SYS_q_send = 41,      //   by name, then send / receive one element, whose
+  SYS_q_recv = 42,      //   size comes from the queue, not from the caller.
+  SYS_q_wait = 43,      // park until a queue handle can send/receive. Split from
+                        //   the transfer for the same reason SYS_bus_wait is:
+                        //   a parked task holds no buffer of its own, and the
+                        //   queue's own counters are never consumed by a waiter.
   SYS_MAX
 } v_syscall_t;
 

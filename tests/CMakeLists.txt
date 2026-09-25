@@ -319,6 +319,7 @@ add_executable(vaios_syscall_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
     "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"
+    "${VAIOS_ROOT}/kernel/structure.c"                # SYS_q_* bodies (M4)
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/devfs.c"                    # fd table (IPC_FD/DEVFS)
@@ -343,6 +344,7 @@ target_compile_definitions(vaios_syscall_tests PRIVATE
     VAIOS_PBUS_XFER_MAX=64
     VAIOS_MODULE_BUS=1
     VAIOS_BUS_MAX_OPEN=4
+    VAIOS_QUEUE_MAX_OPEN=4
     VAIOS_MODULE_VFS=0
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0
@@ -372,10 +374,12 @@ add_executable(vaios_ipcfd_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/test_ipcfd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_pbus_fd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_bus_fd.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_queue_fd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/syscall_stubs.c"  # svc host hooks + perf/kmsg stubs
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
     "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"          # v_wait etc. trap via svc
+    "${VAIOS_ROOT}/kernel/structure.c"                   # SYS_q_* bodies (M4)
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/devfs.c"
@@ -399,6 +403,7 @@ target_compile_definitions(vaios_ipcfd_tests PRIVATE
     VAIOS_PBUS_XFER_MAX=64
     VAIOS_MODULE_BUS=1
     VAIOS_BUS_MAX_OPEN=4
+    VAIOS_QUEUE_MAX_OPEN=4
     VAIOS_MODULE_VFS=0
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0

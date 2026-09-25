@@ -18,6 +18,7 @@
 #include "memory.h"
 #include "perf.h"
 #include "periph_bus.h"
+#include "structure.h" // queue fds (M4)
 #include "port.h"
 #include "task.h"
 #include "vfile.h"
@@ -116,6 +117,24 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
 #endif
+#if VAIOS_DEVFS
+    case SYS_q_open:
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      break;
+    case SYS_q_send:
+    case SYS_q_recv: {
+      // One whole element crosses, and its size is the QUEUE's — the caller
+      // never states a length, so it cannot lie about one. A bad fd is left for
+      // the body to report as EINVAL rather than being confused with EFAULT.
+      int n = v_queue_elem_size((int)args[0]);
+      if (n > 0 &&
+          !v_access_ok((void *)(uintptr_t)args[1], (uint32_t)n,
+                       num == SYS_q_recv))
+        return V_EFAULT;
+      break;
+    }
+#endif
     case SYS_task_spawn: {
       // The descriptor is read out of the caller's own memory...
       const v_task_spawn_t *cfg = (const v_task_spawn_t *)(uintptr_t)args[0];
@@ -213,6 +232,22 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        child is unprivileged like every created task and cannot outrank its
        parent; only the parent may later end it. */
     return v_task_spawn((const v_task_spawn_t *)(uintptr_t)args[0]);
+#if VAIOS_DEVFS
+  case SYS_q_open:
+    /* Open a registered queue by name. args[0]=name, args[1]=V_Q_RD/V_Q_WR. */
+    return v_queue_open((const char *)(uintptr_t)args[0], (int)args[1]);
+  case SYS_q_wait:
+    /* Park until a queue handle can move an element. args[0]=fd, args[1]=ticks,
+       args[2]=1 for send. Blocking, deferred-result; the queue's own counters
+       are never consumed by a waiter, only its wake hint. */
+    return v_queue_wait((int)args[0], args[1], (int)args[2]);
+  case SYS_q_send:
+    /* One element in. args[0]=fd, args[1]=item, args[2]=ticks. */
+    return v_queue_send((int)args[0], (const void *)(uintptr_t)args[1], args[2]);
+  case SYS_q_recv:
+    /* One element out. args[0]=fd, args[1]=buffer, args[2]=ticks. */
+    return v_queue_recv((int)args[0], (void *)(uintptr_t)args[1], args[2]);
+#endif
   case SYS_task_kill:
     /* End a task the caller spawned. args[0] = child id. Ownership is the whole
        check: not privilege, not priority — only the task that created it. */

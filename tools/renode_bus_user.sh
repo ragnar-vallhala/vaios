@@ -63,6 +63,7 @@ assert_present "consumer B read in order"   '\[busu\] B PASS'
 assert_absent  "no task failed"             '\[busu\] [PABH] FAIL'
 assert_absent  "self-info intact"           '\[busu\] self:'
 assert_absent  "ownership enforced"          'killed a stranger|kill own child failed|spawn escalated'
+assert_absent  "queue fds work"              'queue send failed|queue got'
 assert_absent  "no kernel panic / fault"   'KERNEL PANIC|System Halted|MPU fault'
 
 if [ "$fail" -eq 0 ]; then

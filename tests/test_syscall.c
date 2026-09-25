@@ -21,6 +21,7 @@
 #include "framework.h"
 #include "bus.h"
 #include "perf.h"
+#include "structure.h"
 #include "periph_bus.h"
 #include "syscall.h"
 #include <stdint.h>
@@ -290,6 +291,29 @@ static void test_unpriv_ro_pbus_tx_ok_rx_refused(void) {
   stub_set_user_ro(0, 0);
 }
 
+/* ---- Queues (M4): the name is a user string, and the element buffer is bounded
+ * by the QUEUE's elem_size — the caller never states a length, so it cannot lie
+ * about one. No queue is registered in this binary, so a bad fd falls through to
+ * the body's EINVAL rather than being confused with EFAULT. */
+static void test_unpriv_q_open_bad_str_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_q_open, BAD_PTR, 1 /*V_Q_RD*/, 0), T_EFAULT);
+}
+static void test_unpriv_q_unknown_fd_is_einval_not_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  /* fd 3 is not a queue handle: elem_size is unknown, so there is nothing to
+   * bound-check and the body reports EINVAL. A bad pointer must not be reported
+   * as a queue error, nor a bad fd as a fault. */
+  int r = call(SYS_q_recv, 3, BAD_PTR, 0);
+  TEST_ASSERT(r != T_EFAULT);
+  TEST_ASSERT_EQ(r, V_Q_EINVAL);
+}
+static void test_unpriv_q_wait_takes_no_pointer(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  /* Scalars only: it must never be refused as a fault. */
+  TEST_ASSERT(call(SYS_q_wait, 3, 10, 0) != T_EFAULT);
+}
+
 /* ---- Spawning (M3): the descriptor is the caller's, the ENTRY POINT must be
  * code. v_access_ok covers data regions; a RAM entry would mean asking the
  * kernel to start a task on a buffer the caller wrote, so it is refused here. */
@@ -382,6 +406,9 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+    TEST_CASE(test_unpriv_q_open_bad_str_efault),
+    TEST_CASE(test_unpriv_q_unknown_fd_is_einval_not_efault),
+    TEST_CASE(test_unpriv_q_wait_takes_no_pointer),
     TEST_CASE(test_unpriv_spawn_bad_desc_efault),
     TEST_CASE(test_unpriv_spawn_ram_entry_refused),
     TEST_CASE(test_unpriv_spawn_flash_entry_accepted),

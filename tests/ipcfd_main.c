@@ -5,6 +5,7 @@
 extern const test_suite_t ipcfd_suite;
 extern const test_suite_t pbus_fd_suite;
 extern const test_suite_t bus_fd_suite;
+extern const test_suite_t queue_fd_suite;
 extern int v_test_in_handler; // syscall_stubs.c
 
 int main(void) {
@@ -13,6 +14,6 @@ int main(void) {
   // pointers these tests pass (names, fd buffers). This exercises the same fix
   // logic without the pointer-width mismatch.
   v_test_in_handler = 1;
-  const test_suite_t *const suites[] = {&ipcfd_suite, &pbus_fd_suite, &bus_fd_suite};
+  const test_suite_t *const suites[] = {&ipcfd_suite, &pbus_fd_suite, &bus_fd_suite, &queue_fd_suite};
   return run_test_suites(suites, TEST_COUNT(suites));
 }
