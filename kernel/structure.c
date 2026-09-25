@@ -654,10 +654,14 @@ int v_queue_elem_size(int fd) {
   return n && n <= 0x7FFF ? (int)n : V_Q_EINVAL;
 }
 
-// One attempt, no waiting: this is what runs inside the syscall, because a
-// syscall body cannot block AND copy — blocking returns V_SYSCALL_BLOCKED and
-// the kernel does not get to run again on the caller's behalf. So the wait is a
-// syscall of its own and the transfer is always a try.
+// One attempt, no waiting. A syscall body cannot block AND copy: blocking marks
+// the task parked and returns V_SYSCALL_BLOCKED, and the kernel never runs again
+// on that caller's behalf — the wake only writes a result into its stacked r0.
+// So the retry loop CANNOT live in here. If it did, a transfer whose wait blocked
+// would return the wait's success while having copied nothing, and the caller
+// would read whatever its buffer held before (a stale duplicate, which is exactly
+// how this was found on target). The loop therefore lives in the caller, below,
+// out of trapping calls.
 static int q_try(q_handle_t *h, void *item, int write) {
   if (h->entry->mpmc) {
     mpmc_queue_t *q = h->entry->mpmc;
@@ -691,18 +695,38 @@ int v_queue_wait(int fd, uint32_t ticks, int for_write) {
   return v_semaphore_take(wake, ticks);
 }
 
-// Try, then wait, then try again until the deadline. The hint may be spurious
-// or already spent, and another task may take the slot first, so what bounds
-// this is the deadline, not the signal.
+int v_queue_try_send(int fd, const void *item) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_q_send, (uint32_t)fd, (uintptr_t)item);
+#endif
+  q_handle_t *h = (q_handle_t *)v_fd_obj(fd, &q_fd_ops);
+  if (!h || !item || !(h->flags & V_Q_WR))
+    return V_Q_EINVAL;
+  return q_try(h, (void *)item, 1);
+}
+
+int v_queue_try_recv(int fd, void *item) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_q_recv, (uint32_t)fd, (uintptr_t)item);
+#endif
+  q_handle_t *h = (q_handle_t *)v_fd_obj(fd, &q_fd_ops);
+  if (!h || !item || !(h->flags & V_Q_RD))
+    return V_Q_EINVAL;
+  return q_try(h, item, 0);
+}
+
+// Try, then wait, then try again until the deadline — all from the CALLER's side,
+// so every step is its own syscall and a wake always returns to a retry. The hint
+// may be spurious or already spent and another task may take the slot first, so
+// what bounds this is the deadline, not the signal.
 static int q_transfer(int fd, void *item, uint32_t ticks, int write) {
   uint32_t start = v_get_ticks();
   for (;;) {
-    q_handle_t *h = (q_handle_t *)v_fd_obj(fd, &q_fd_ops);
-    if (!h || !item || !(h->flags & (write ? V_Q_WR : V_Q_RD)))
-      return V_Q_EINVAL;
-    int r = q_try(h, item, write);
-    if (r == VA_PASS)
-      return VA_PASS;
+    int r = write ? v_queue_try_send(fd, item) : v_queue_try_recv(fd, item);
+    if (r != VA_FAIL)
+      return r; // moved it, or a real error (EINVAL)
     uint32_t spent = v_get_ticks() - start;
     if (spent >= ticks)
       return VA_FAIL; // full/empty (ticks == 0 lands here: a plain try)
@@ -712,18 +736,10 @@ static int q_transfer(int fd, void *item, uint32_t ticks, int write) {
 }
 
 int v_queue_send(int fd, const void *item, uint32_t ticks) {
-#if VAIOS_SYSCALL_SVC
-  if (v_in_thread_mode())
-    return v_svc3(SYS_q_send, (uint32_t)fd, (uintptr_t)item, ticks);
-#endif
   return q_transfer(fd, (void *)item, ticks, 1);
 }
 
 int v_queue_recv(int fd, void *item, uint32_t ticks) {
-#if VAIOS_SYSCALL_SVC
-  if (v_in_thread_mode())
-    return v_svc3(SYS_q_recv, (uint32_t)fd, (uintptr_t)item, ticks);
-#endif
   return q_transfer(fd, item, ticks, 0);
 }
 #endif // VAIOS_DEVFS

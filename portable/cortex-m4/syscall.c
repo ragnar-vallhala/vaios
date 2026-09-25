@@ -285,11 +285,13 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        are never consumed by a waiter, only its wake hint. */
     return v_queue_wait((int)args[0], args[1], (int)args[2]);
   case SYS_q_send:
-    /* One element in. args[0]=fd, args[1]=item, args[2]=ticks. */
-    return v_queue_send((int)args[0], (const void *)(uintptr_t)args[1], args[2]);
+    /* ONE attempt in. args[0]=fd, args[1]=item. Waiting is SYS_q_wait, called
+       from the caller's own loop: a body that blocked here would report the
+       wait's success having copied nothing. */
+    return v_queue_try_send((int)args[0], (const void *)(uintptr_t)args[1]);
   case SYS_q_recv:
-    /* One element out. args[0]=fd, args[1]=buffer, args[2]=ticks. */
-    return v_queue_recv((int)args[0], (void *)(uintptr_t)args[1], args[2]);
+    /* ONE attempt out. args[0]=fd, args[1]=buffer. */
+    return v_queue_try_recv((int)args[0], (void *)(uintptr_t)args[1]);
 #endif
   case SYS_task_kill:
     /* End a task the caller spawned. args[0] = child id. Ownership is the whole

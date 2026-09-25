@@ -357,7 +357,7 @@ config VAIOS_QUEUE_MAX_OPEN
 config VAIOS_BUS_MAX_OPEN
     int "Bus IPC user handles (system-wide)"
     depends on VAIOS_DEVFS
-    default 8 if EXAMPLE_BUS_USER
+    default 8 if EXAMPLE_BUS_USER || EXAMPLE_FLIGHT_USER
     default 4
     help
       Open v_bus_open() handles across all tasks. Each carries a
