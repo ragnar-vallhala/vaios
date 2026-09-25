@@ -498,6 +498,25 @@ Three modes; the app chooses per subscription.
 | **Blocking** | subscriber blocks on a per-sub `SemaphoreHandle_t`; publish `v_semaphore_give`s it (`ipc.h`) | timeout + PI via existing sema path |
 | **Callback** | dispatched from the **bus worker task**, not an ISR | notification-only |
 
+**As built (blocking half).** A subscription carries an optional `notify`
+semaphore; `link_msg` and `pipe_publish` signal it (via the from-ISR form, which
+is safe in both contexts) and pend one switch after leaving the critical
+section. The fd layer arms it for every reader out of static storage in the
+handle, so blocking costs no heap and one NULL test per subscriber per publish.
+
+The user-facing call is `v_bus_recv_wait(fd, rx, ticks)`, composed of
+`SYS_bus_recv` and a new `SYS_bus_wait` — deliberately two steps. A single
+"recv with timeout" syscall would have to keep the caller's `rx` buffer in
+kernel state while the task sleeps, which is precisely the stack-escape hazard
+that `v_pbus_lock` had to be rewritten to avoid (#47). Waiting therefore holds
+nothing of the caller's, and the read happens after the wake.
+
+The signal is a hint, not a promise: a binary semaphore banks one wake, and a
+message can be evicted between signal and wake, so `v_bus_wait` re-checks the
+subscription's own state before sleeping (a queued message with a spent signal
+must not park) and `v_bus_recv_wait` re-reads within its deadline. Missed wakes
+are what would break it, and the on-target scenario turns one into a timeout.
+
 **Challenge — "callbacks execute from a software interrupt" but vaios has no
 SWI/softirq** (only PendSV context-switch; `include/qemu_irq.h` is empty).
 **Solution:** a dedicated high-priority **bus worker task**, blocked on a
@@ -793,7 +812,7 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **PIPE** | Pipe topics: caller-promised SPSC, lock-free ring of reserved slots (§11.2) | unit: drop/overwrite/seqlock under fuzz; Renode benchmark — **done** |
 | **B4** | QoS as **soft reservations** (§4.5): per-topic stash (`cfg.reserve`), loans to overwrite topics, bounded reclaim by eviction | unit: guarantee asserted under fuzz; Renode: reserved drop topic 0 drops under an overwrite flood — **done** |
 | **B5** | Multi-producer 3-stage pipeline + PI (§6.2) | unit: H7/H8/H11; concurrency on the host port (real scheduler) + SITL |
-| **B6** | Notification engine: blocking + callback worker task (§6.4) | SITL: ISR publish → callback wake |
+| **B6** | Notification engine: blocking recv (§6.4) | unit: park/wake/timeout + SITL blocked unprivileged reader — **blocking done**; callback worker outstanding |
 | **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | Stage-2 scenario example |
 | **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | benchmark report committed |
 | **B9** | Unprivileged access: topic fds + `SYS_bus_*` (§17) | host dispatch tests + Renode user-task scenario — **done** |

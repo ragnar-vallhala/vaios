@@ -8,9 +8,10 @@
  * topics and each task only opens one by name.
  *
  *   sensor.q  default (drop) topic. The producer task sends a counter at
- *             ~1 kHz; two consumer tasks read it at their own pace, each
- *             checking order and that its own `missed` stays 0 (drop policy
- *             never overwrites what a reader still owes).
+ *             ~1 kHz; two consumer tasks BLOCK on it (v_bus_recv_wait, B6)
+ *             rather than polling, each checking order and that its own
+ *             `missed` stays 0 (drop policy never overwrites what a reader
+ *             still owes). A missed wake shows up as a timeout.
  *   cmd.pipe  a pipe topic (SPSC ring): the producer writes, consumer A reads,
  *             and consumer B's open must be refused — one reader only, checked
  *             through the syscall path too.
@@ -209,7 +210,10 @@ static void consumer(void *arg) {
   for (uint32_t spins = 0; !bad && last + 1 < MSGS && spins < 400000u; spins++) {
     uint32_t v;
     v_bus_rx_t rx = {.buf = &v, .cap = sizeof v};
-    if (v_bus_recv(q, &rx) == VA_PASS) {
+    // Blocking recv (B6): sleep until the producer publishes instead of
+    // polling. A missed wake would show up as a timeout here, and the count
+    // below would fall short.
+    if (v_bus_recv_wait(q, &rx, 200) == VA_PASS) {
       // A subscription starts empty: whatever this reader sees first is its
       // base (the producer may already have sent a few). From there the
       // sequence must be unbroken, and drop policy keeps `missed` at 0.
@@ -220,8 +224,9 @@ static void consumer(void *arg) {
       expect = v + 1;
       last = v;
       got++;
-    } else {
-      v_delay(1); // nothing queued for us yet
+    } else if (got < MSGS) {
+      say("[busu] recv timed out at %d\r\n", (int)got, 0);
+      bad = 1;
     }
     if (p >= 0) {
       v_bus_rx_t prx = {.buf = &v, .cap = sizeof v};

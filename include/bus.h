@@ -9,7 +9,8 @@
 // single-block messages (reserve/commit, peek/release), per-topic soft
 // reservations (cfg.reserve), and pipe topics (cfg.pipe: a lock-free
 // single-producer/single-consumer ring for hot point-to-point paths), and the
-// fd API unprivileged tasks reach a topic through (B9).
+// fd API unprivileged tasks reach a topic through (B9), and blocking recv so a
+// reader sleeps instead of polling (B6).
 //
 // Storage is caller-owned, like the peripheral-bus arbiter (periph_bus.h): the
 // kernel keeps no object table and the data path never allocates.
@@ -40,7 +41,7 @@
 //
 // Built only with VAIOS_MODULE_BUS.
 
-#include "ipc.h" // VA_PASS / VA_FAIL
+#include "ipc.h" // VA_PASS / VA_FAIL, SemaphoreHandle_t
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -130,6 +131,10 @@ struct v_bus_sub {
   uint16_t cursor;   // next unread message, V_BUS_NIL when caught up
   uint16_t peeked;   // message held by v_bus_peek, V_BUS_NIL if none
   uint32_t expect;   // seq it expects next; a gap = messages it missed
+  // Blocking mode (B6): when armed, publish signals this so a reader can sleep
+  // instead of polling. 0 = polling only. Armed per subscription, so one
+  // reader blocking costs nothing to the others.
+  SemaphoreHandle_t notify;
 };
 
 // Bytes of bus header at the start of each message's first block.
@@ -261,6 +266,23 @@ int v_bus_send(int fd, const void *payload, uint16_t len);
 // setting rx->len and rx->missed: as v_bus_pop, including V_BUS_EMSGSIZE when
 // it doesn't fit (rx->len says how big it is; the message stays unread).
 int v_bus_recv(int fd, v_bus_rx_t *rx);
+// As v_bus_recv, but waits up to `ticks` for a message instead of reporting the
+// topic empty. ticks == 0 is exactly v_bus_recv. Returns VA_PASS, VA_FAIL on
+// timeout, or the same errors v_bus_recv reports.
+//
+// Sleeping, not spinning: the handle's subscription carries a semaphore that
+// publish signals (from an ISR too), and this waits on it and re-reads. The
+// signal is a HINT, not a promise: it banks one wake, and a message can be
+// evicted between the signal and the reader running, so a wake with nothing to
+// read costs another turn of the loop and never a missed message. The
+// wait and the read are separate steps on purpose — a blocked reader parks with
+// NO pointer of its own left in kernel state, so a task that dies while waiting
+// cannot leave the kernel writing into a stack that is gone.
+int v_bus_recv_wait(int fd, v_bus_rx_t *rx, uint32_t ticks);
+// Wait for this handle to have something to read, without reading it: VA_PASS
+// when a message is (or became) available, VA_FAIL on timeout. v_bus_recv_wait
+// is this plus v_bus_recv, and is what callers normally want.
+int v_bus_wait(int fd, uint32_t ticks);
 #endif
 
 // --- Pool state ---------------------------------------------------------------

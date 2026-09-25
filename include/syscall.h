@@ -66,6 +66,9 @@ typedef enum {
                         //   in the TCB, which is kernel memory.
   SYS_perf_snapshot = 36, // perf counters out (args[0] system, args[1] self);
                         //   the DWT and the counters are privileged-only.
+  SYS_bus_wait = 37,    // park until a topic handle has a message (B6). Split
+                        //   from SYS_bus_recv so a blocked reader leaves no
+                        //   pointer of its own in kernel state.
   SYS_MAX
 } v_syscall_t;
 

@@ -453,6 +453,15 @@ static inline uint16_t alloc_msg(v_bus_topic_t *topic, uint32_t n) {
   return head;
 }
 
+// Blocking mode (B6): wake the readers that asked to sleep. Called with the
+// topic's critical section held, from task OR ISR context — the from_isr form is
+// the one that is safe in both (it reports the wake instead of yielding), and
+// the caller pends the switch once afterwards, outside the section.
+static inline void notify_sub(const v_bus_sub_t *x, int *woke) {
+  if (x->notify)
+    v_semaphore_give_from_isr(x->notify, woke);
+}
+
 // Make a filled-in message visible. seq and refs are set under the same
 // critical section as subscribe, so refs counts exactly the subscribers whose
 // cursor can reach it. Nobody subscribed any more: free it instead.
@@ -477,10 +486,15 @@ static inline void link_msg(v_bus_topic_t *topic, uint16_t msg, uint16_t len,
     topic->head = msg;
   topic->tail = msg;
   topic->blocks = (uint16_t)(topic->blocks + n);
-  for (v_bus_sub_t *x = topic->subs; x; x = x->next)
+  int woke = 0;
+  for (v_bus_sub_t *x = topic->subs; x; x = x->next) {
     if (x->cursor == V_BUS_NIL) // caught up: this is its next message
       x->cursor = msg;
+    notify_sub(x, &woke);
+  }
   EXIT_CRITICAL_FROM_ISR(s);
+  if (woke) // a sleeping reader outranks us: switch now, not at the next tick
+    v_port_trigger_pendsv();
 }
 
 #ifdef VAIOS_HOST_TEST
@@ -516,6 +530,12 @@ static inline void pipe_publish(v_bus_topic_t *t, uint16_t b, uint16_t len) {
   V_PORT_MB(); // stamp before the reader can see next_seq move
   STORE32(t->next_seq, w + 1u);
   t->pipe_wr = t->bus->desc[b].next;
+  if (t->subs && t->subs->notify) { // the pipe's one reader, if it sleeps
+    int woke = 0;
+    notify_sub(t->subs, &woke);
+    if (woke)
+      v_port_trigger_pendsv();
+  }
 }
 
 // Consumer: find the oldest message it hasn't read, copying it into `out` or
@@ -946,6 +966,9 @@ static v_bus_topic_t *topic_by_name(const char *name) {
 typedef struct {
   v_bus_topic_t *topic;
   v_bus_sub_t sub; // used only when the handle was opened V_BUS_RD
+  // Blocking recv (B6). Static storage, so arming costs no heap and a handle
+  // that dies takes its semaphore with it.
+  StaticSemaphore_t sem_store;
   uint8_t used;
   uint8_t flags;
 } bus_handle_t;
@@ -954,8 +977,14 @@ static bus_handle_t bus_handles[VAIOS_BUS_MAX_OPEN];
 
 static int bus_fd_close(void *priv) {
   bus_handle_t *h = (bus_handle_t *)priv;
-  if (h->flags & V_BUS_RD)
+  if (h->flags & V_BUS_RD) {
+    // Ordering-defensive: publish and unsubscribe serialise on the same
+    // critical section, so no signal can reach a half-removed subscription
+    // anyway — but the handle's semaphore storage is reused by the next open,
+    // and clearing first states that intent rather than relying on the lock.
+    h->sub.notify = 0;
     v_bus_unsubscribe(&h->sub); // releases its claim on unread messages
+  }
   h->used = 0;
   return 0;
 }
@@ -993,6 +1022,10 @@ int v_bus_open(const char *name, int flags) {
       h->used = 0;
       return r;
     }
+    // Arm blocking mode: v_bus_wait sleeps on this, publish signals it. Armed
+    // for every reader because the cost when nobody waits is one NULL test per
+    // subscriber per publish.
+    h->sub.notify = v_semaphore_create_binary_static(&h->sem_store);
   }
   int fd = v_fd_alloc(&bus_fd_ops, h);
   if (fd < 0) {
@@ -1024,5 +1057,45 @@ int v_bus_recv(int fd, v_bus_rx_t *rx) {
   if (!h || !(h->flags & V_BUS_RD))
     return V_BUS_EINVAL;
   return v_bus_pop(&h->sub, rx->buf, rx->cap, &rx->len, &rx->missed);
+}
+
+// Has this subscription got something to read right now? A pipe reader's
+// position lives in the ring, a queued topic's in its cursor.
+static int sub_ready(v_bus_sub_t *sub) {
+  if (sub->topic && sub->topic->cfg.pipe)
+    return pipe_next(sub) != 0;
+  return sub->cursor != V_BUS_NIL;
+}
+
+int v_bus_wait(int fd, uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_bus_wait, (uint32_t)fd, ticks);
+#endif
+  bus_handle_t *h = (bus_handle_t *)v_fd_obj(fd, &bus_fd_ops);
+  if (!h || !(h->flags & V_BUS_RD) || !h->sub.notify)
+    return V_BUS_EINVAL;
+  if (sub_ready(&h->sub))
+    return VA_PASS; // already there: don't sleep on a signal already consumed
+  return v_semaphore_take(h->sub.notify, ticks);
+}
+
+int v_bus_recv_wait(int fd, v_bus_rx_t *rx, uint32_t ticks) {
+  // Composed of trapping calls, so it needs no trampoline of its own — and the
+  // read is a separate step from the wait, which is what keeps the caller's
+  // buffer out of kernel state while it sleeps.
+  uint32_t start = v_get_ticks();
+  for (;;) {
+    int r = v_bus_recv(fd, rx);
+    if (r != VA_FAIL)
+      return r; // a message, or a real error (EINVAL/EMSGSIZE/...)
+    uint32_t spent = v_get_ticks() - start;
+    if (spent >= ticks)
+      return VA_FAIL; // timed out (ticks == 0 lands here: plain v_bus_recv)
+    if (v_bus_wait(fd, ticks - spent) != VA_PASS)
+      return VA_FAIL;
+    // Woken: loop and read. A signal whose message was evicted before we ran
+    // just costs another turn of this loop, bounded by the deadline.
+  }
 }
 #endif // VAIOS_DEVFS
