@@ -102,3 +102,6 @@ jobs:
 
       - name: Bus IPC (ISR producer, overwrite + drop topics) in Renode
         run: bash tools/renode_bus_ipc.sh
+
+      - name: Bus IPC unprivileged access (fd syscalls) in Renode
+        run: bash tools/renode_bus_user.sh

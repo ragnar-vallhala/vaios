@@ -323,6 +323,7 @@ add_executable(vaios_syscall_tests
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/devfs.c"                    # fd table (IPC_FD/DEVFS)
     "${VAIOS_ROOT}/kernel/periph_bus.c"               # pbus fd syscalls (DEVFS)
+    "${VAIOS_ROOT}/kernel/bus.c"                      # bus fd syscalls (DEVFS)
     "${VAIOS_ROOT}/kernel/memory/memory.c"
     "${VAIOS_ROOT}/kernel/memory/seglist.c"
     "${VAIOS_ROOT}/kernel/memory/tlsf.c"
@@ -340,6 +341,8 @@ target_compile_definitions(vaios_syscall_tests PRIVATE
     VAIOS_MAX_FDS=8
     VAIOS_PBUS_MAX_OPEN=4
     VAIOS_PBUS_XFER_MAX=64
+    VAIOS_MODULE_BUS=1
+    VAIOS_BUS_MAX_OPEN=4
     VAIOS_MODULE_VFS=0
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0
@@ -368,6 +371,7 @@ add_executable(vaios_ipcfd_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_ipcfd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_pbus_fd.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_bus_fd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/syscall_stubs.c"  # svc host hooks + perf/kmsg stubs
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
@@ -376,6 +380,7 @@ add_executable(vaios_ipcfd_tests
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/devfs.c"
     "${VAIOS_ROOT}/kernel/periph_bus.c"               # pbus fd syscalls (DEVFS)
+    "${VAIOS_ROOT}/kernel/bus.c"                      # bus fd syscalls (DEVFS)
     "${VAIOS_ROOT}/kernel/memory/memory.c"
     "${VAIOS_ROOT}/kernel/memory/seglist.c"
     "${VAIOS_ROOT}/kernel/memory/tlsf.c"
@@ -392,6 +397,8 @@ target_compile_definitions(vaios_ipcfd_tests PRIVATE
     VAIOS_MAX_FDS=8
     VAIOS_PBUS_MAX_OPEN=4
     VAIOS_PBUS_XFER_MAX=64
+    VAIOS_MODULE_BUS=1
+    VAIOS_BUS_MAX_OPEN=4
     VAIOS_MODULE_VFS=0
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0

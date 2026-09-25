@@ -14,6 +14,7 @@
 #if VAIOS_SYSCALL_SVC
 
 #include "ipc.h"
+#include "bus.h"
 #include "memory.h"
 #include "periph_bus.h"
 #include "port.h"
@@ -113,6 +114,27 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
 #endif
+#if VAIOS_DEVFS && VAIOS_MODULE_BUS
+    case SYS_bus_open:
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) <
+          0)
+        return V_EFAULT;
+      break;
+    case SYS_bus_send:
+      if (args[2] && !v_access_ok((const void *)(uintptr_t)args[1], args[2], 0))
+        return V_EFAULT;
+      break;
+    case SYS_bus_recv: {
+      // The rx block is written back (len/missed), and the payload buffer it
+      // points at is written too.
+      v_bus_rx_t *rx = (v_bus_rx_t *)(uintptr_t)args[1];
+      if (!v_access_ok(rx, sizeof(*rx), 1))
+        return V_EFAULT;
+      if (rx->cap && !v_access_ok(rx->buf, rx->cap, 1))
+        return V_EFAULT;
+      break;
+    }
+#endif
 #if VAIOS_IPC_FD
     case SYS_wait:
       // Reject an oversized nfds BEFORE computing the byte length: args[1] *
@@ -190,6 +212,22 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        args[1]=rx, args[2]=rx_len. */
     return v_pbus_xfer_finish((int)args[0], (void *)(uintptr_t)args[1],
                               args[2]);
+#endif
+#if VAIOS_DEVFS && VAIOS_MODULE_BUS
+  case SYS_bus_open:
+    /* Resolve a topic by name -> an fd holding a kernel-side subscription.
+       args[0]=name, args[1]=V_BUS_RD/V_BUS_WR. */
+    return v_bus_open((const char *)(uintptr_t)args[0], (int)args[1]);
+  case SYS_bus_send:
+    /* Copy the payload into a message on the handle's topic. args[0]=fd,
+       args[1]=payload, args[2]=len. */
+    return v_bus_send((int)args[0], (const void *)(uintptr_t)args[1],
+                      (uint16_t)args[2]);
+  case SYS_bus_recv:
+    /* Copy this handle's oldest unread message out. args[0]=fd,
+       args[1]=v_bus_rx_t (buf/cap in, len/missed out). Polling: blocking pop
+       lands with the notification engine (plan B6). */
+    return v_bus_recv((int)args[0], (v_bus_rx_t *)(uintptr_t)args[1]);
 #endif
 #if VAIOS_IPC_FD
   case SYS_sem_open:

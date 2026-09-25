@@ -42,6 +42,17 @@ config EXAMPLE_MPU_USER_DEMO
 	select VAIOS_TASK_HEAP
 	select VAIOS_MPU_USER_SEPARATION
 
+config EXAMPLE_BUS_USER
+	bool "bus_user"
+	# Unprivileged tasks on the Bus IPC through the fd syscalls (v_bus_open /
+	# v_bus_send / v_bus_recv), including the pointer-validation refusals.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_MODULE_BUS
+
 config EXAMPLE_PBUS_USER
 	bool "pbus_user"
 	# Unprivileged tasks doing peripheral-bus transfers through the fd +

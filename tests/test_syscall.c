@@ -19,6 +19,7 @@
  * here now would fail against the current buggy code.
  */
 #include "framework.h"
+#include "bus.h"
 #include "periph_bus.h"
 #include "syscall.h"
 #include <stdint.h>
@@ -135,6 +136,49 @@ static void test_unpriv_pbus_finish_bad_rx_efault(void) {
   TEST_ASSERT_EQ(call(SYS_pbus_finish, 3, BAD_PTR, 8), T_EFAULT);
 }
 
+/* ---- Bus IPC syscalls (plan B9): the topic name, the payload it publishes,
+ * and both levels of the rx block must be the caller's own. */
+static void test_unpriv_bus_open_bad_str_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_bus_open, BAD_PTR, V_BUS_RD, 0), T_EFAULT);
+}
+static void test_unpriv_bus_send_bad_payload_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_bus_send, 3, BAD_PTR, 4), T_EFAULT);
+}
+static void test_unpriv_bus_recv_bad_rx_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_bus_recv, 3, BAD_PTR, 0), T_EFAULT);
+}
+/* The rx block itself is in the caller's memory, but the buffer it points at
+ * is not: the second check is what stops a task writing where it pleases. */
+static void test_unpriv_bus_recv_bad_rx_buf_efault(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  v_bus_rx_t *rx = (v_bus_rx_t *)(uintptr_t)base;
+  *rx = (v_bus_rx_t){.buf = (void *)BAD_PTR, .cap = 4};
+  TEST_ASSERT_EQ(call(SYS_bus_recv, 3, base, 0), T_EFAULT);
+}
+static void test_unpriv_bus_valid_passes(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_bus_rx_t *rx = (v_bus_rx_t *)(uintptr_t)base;
+  *rx = (v_bus_rx_t){.buf = (void *)(uintptr_t)(base + 64), .cap = 4};
+  /* Validation passes; the body then rejects fd 3 (no bus handle here). */
+  TEST_ASSERT_EQ(call(SYS_bus_recv, 3, base, 0), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(call(SYS_bus_send, 3, base + 64, 4), V_BUS_EINVAL);
+  /* No bus is initialised in this binary, so a valid name finds no topic. */
+  TEST_ASSERT_EQ(call(SYS_bus_open, base, V_BUS_RD, 0), V_BUS_EINVAL);
+}
+/* A zero-length send and a zero-cap recv carry no buffer to check: the
+ * validator must not reject them on a pointer it was never given. */
+static void test_unpriv_bus_zero_len_not_faulted(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_bus_send, 3, BAD_PTR, 0), V_BUS_EINVAL);
+  v_bus_rx_t *rx = (v_bus_rx_t *)(uintptr_t)base;
+  *rx = (v_bus_rx_t){.buf = (void *)BAD_PTR, .cap = 0};
+  TEST_ASSERT_EQ(call(SYS_bus_recv, 3, base, 0), V_BUS_EINVAL);
+}
+
 /* ---- Read-only memory every task can read (flash on target): accepted for
  * reads, never for writes, and never past its end. */
 void stub_set_user_ro(uintptr_t lo, uintptr_t hi); /* tests/stubs/stubs.c */
@@ -220,6 +264,12 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+    TEST_CASE(test_unpriv_bus_open_bad_str_efault),
+    TEST_CASE(test_unpriv_bus_send_bad_payload_efault),
+    TEST_CASE(test_unpriv_bus_recv_bad_rx_efault),
+    TEST_CASE(test_unpriv_bus_recv_bad_rx_buf_efault),
+    TEST_CASE(test_unpriv_bus_valid_passes),
+    TEST_CASE(test_unpriv_bus_zero_len_not_faulted),
     TEST_CASE(test_unpriv_ro_read_ok_write_refused),
     TEST_CASE(test_unpriv_ro_string_accepted),
     TEST_CASE(test_unpriv_ro_pbus_tx_ok_rx_refused),

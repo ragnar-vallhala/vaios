@@ -796,7 +796,7 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **B6** | Notification engine: blocking + callback worker task (§6.4) | SITL: ISR publish → callback wake |
 | **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | Stage-2 scenario example |
 | **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | benchmark report committed |
-| **B9** | Unprivileged access: topic fds + `SYS_bus_*` (§17) | host dispatch tests + Renode user-task scenario |
+| **B9** | Unprivileged access: topic fds + `SYS_bus_*` (§17) | host dispatch tests + Renode user-task scenario — **done** |
 
 ---
 
@@ -853,6 +853,19 @@ peripheral-bus arbiter already solved the same problem (`v_pbus_open` /
   task that wants "callback" semantics blocks in a thread of its own.
 - **Teardown:** a killed task's subscriptions must not leak `refs` (H6); the
   fd `close` runs `unsubscribe`, which already walks cursor→tail.
+
+**As built (B9).** `v_bus_open(name, V_BUS_RD|V_BUS_WR)` resolves a topic across
+every initialised bus (`v_bus_init` registers itself), takes one of
+`VAIOS_BUS_MAX_OPEN` kernel handles and returns an fd; `v_bus_send(fd, buf,
+len)` and `v_bus_recv(fd, &rx)` are `SYS_bus_send` / `SYS_bus_recv`, with `rx`
+carrying `buf`/`cap` in and `len`/`missed` out. The dispatch validates the name
+as a user string, the payload as a read (flash included), and the `rx` block
+then the buffer it points at as writes — two levels, so a valid block cannot
+smuggle a kernel pointer. Direction is enforced per handle; `close` (explicit or
+via task exit) unsubscribes. Blocking recv waits for B6 — recv polls today.
+Tests: `tests/test_bus_fd.c` (fd semantics through the real dispatch),
+`tests/test_syscall.c` (the pointer checks), `tools/renode_bus_user.sh` +
+`examples/57_bus_user.c` (three unprivileged tasks on target).
 
 ---
 

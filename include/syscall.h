@@ -55,6 +55,9 @@ typedef enum {
   SYS_pbus_submit = 27, //   registered bus -> fd, then submit / wait / finish
   SYS_pbus_wait = 28,   //   one bounce-buffered transfer (v_pbus_xfer).
   SYS_pbus_finish = 29,
+  SYS_bus_open = 30,    // Bus IPC user access (VAIOS_DEVFS + VAIOS_MODULE_BUS):
+  SYS_bus_send = 31,    //   open a topic by name -> fd, then publish / take
+  SYS_bus_recv = 32,    //   messages through it (payloads are copied).
   SYS_MAX
 } v_syscall_t;
 

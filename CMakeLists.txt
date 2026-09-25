@@ -126,10 +126,15 @@ endif()
 
 # Same for the Bus IPC example: kernel/bus.c is off by default while the
 # subsystem is in progress.
-if(VAIOS_EXAMPLE STREQUAL "BUS_IPC" AND NOT VAIOS_MODULE_BUS)
+if((VAIOS_EXAMPLE STREQUAL "BUS_IPC" OR VAIOS_EXAMPLE STREQUAL "BUS_USER") AND NOT VAIOS_MODULE_BUS)
   message(STATUS "VAIOS_EXAMPLE=${VAIOS_EXAMPLE} uses the Bus IPC API -- forcing VAIOS_MODULE_BUS ON.")
   set(VAIOS_MODULE_BUS ON CACHE BOOL "Build the Bus IPC subsystem (in progress)" FORCE)
 endif()
+
+# The Bus IPC syscalls live in the port's dispatch (portable/), not in the
+# kernel target, so both must agree on whether the module exists: the kernel
+# target's own -D would otherwise leave portable/ reading the Kconfig default.
+add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
 
 message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "

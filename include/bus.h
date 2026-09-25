@@ -8,21 +8,25 @@
 // policy and slow-subscriber recovery (B3), a zero-copy path for
 // single-block messages (reserve/commit, peek/release), per-topic soft
 // reservations (cfg.reserve), and pipe topics (cfg.pipe: a lock-free
-// single-producer/single-consumer ring for hot point-to-point paths).
+// single-producer/single-consumer ring for hot point-to-point paths), and the
+// fd API unprivileged tasks reach a topic through (B9).
 //
 // Storage is caller-owned, like the peripheral-bus arbiter (periph_bus.h): the
 // kernel keeps no object table and the data path never allocates.
 //
-// PRIVILEGED CALLERS ONLY, so far: kernel code, ISRs (the single-producer
-// publish path is meant for them) and privileged tasks. The bus, its topics and
-// the pool are kernel memory, and the critical sections are BASEPRI writes an
-// unprivileged task's MSR silently skips — so under VAIOS_MPU_USER_SEPARATION a
-// user task would fault on the first block it touched, without even being
-// atomic. Access for user tasks is phase B9 of the plan (topic fds +
-// SYS_bus_*, copying in and out, as v_pbus_open/v_pbus_xfer do). Note the
-// zero-copy calls below hand out a pointer INTO the pool, so they cannot be
-// exposed to a user task without granting it the whole pool: a user-facing
-// zero-copy path means a pipe whose ring is mapped to that one task.
+// The API below is for PRIVILEGED callers: kernel code, ISRs (the
+// single-producer publish path is meant for them) and privileged tasks. The
+// bus, its topics and the pool are kernel memory, and the critical sections are
+// BASEPRI writes an unprivileged task's MSR silently skips — so under
+// VAIOS_MPU_USER_SEPARATION a user task calling these would fault on the first
+// block it touched, without even being atomic.
+//
+// Unprivileged tasks use the fd API at the bottom of this file instead
+// (v_bus_open / v_bus_send / v_bus_recv): a topic opened by name, payloads
+// copied in and out through syscalls. The zero-copy calls stay privileged —
+// they hand out a pointer INTO the shared pool, so exposing them would grant a
+// task every topic's messages; a user-facing zero-copy path means a pipe whose
+// ring is mapped to that one task.
 //
 //   V_BUS_POOL(ctl_pool, 64, 128);   // 128 blocks of 64 bytes, static
 //   static v_bus_t ctl;
@@ -219,6 +223,45 @@ int v_bus_peek(v_bus_sub_t *sub, const void **data, uint16_t *len,
 // V_BUS_OVERWRITE pipe (the only case where the writer isn't held back),
 // V_BUS_ESTALE says the slot was overwritten while it was being read.
 int v_bus_release(v_bus_sub_t *sub);
+
+// --- User access: topics on the fd table (VAIOS_DEVFS) ------------------------
+// A privileged init declares the topics; a task opens one by name and talks to
+// it through syscalls, so it never touches kernel memory:
+//
+//   int fd = v_bus_open("imu.raw", V_BUS_RD);
+//   v_bus_rx_t rx = {.buf = &sample, .cap = sizeof sample};
+//   if (v_bus_recv(fd, &rx) == VA_PASS) use(&sample, rx.len, rx.missed);
+//   v_file_close(fd);
+//
+// Polling only for now (blocking pop is phase B6), and one subscription per
+// open handle (VAIOS_BUS_MAX_OPEN of them, in kernel RAM, released by close —
+// so a task that exits mid-stream drops its claim on queued messages).
+#define V_BUS_RD 0x1 // subscribe: this handle can receive
+#define V_BUS_WR 0x2 // this handle can publish
+
+// v_bus_recv's in/out block: `buf`/`cap` in, `len`/`missed` out.
+typedef struct {
+  void *buf;
+  uint16_t cap;
+  uint16_t len;
+  uint32_t missed;
+} v_bus_rx_t;
+
+#if VAIOS_DEVFS
+// Open a declared topic by name (searched across every initialised bus).
+// Returns an fd (>= 0), or a negative error: V_BUS_EINVAL for an unknown name
+// or no direction, V_BUS_EBUSY when no handle or descriptor is free (or the
+// topic is a pipe that already has its one reader). Never VA_FAIL, which would
+// be indistinguishable from fd 0. Close it with v_file_close.
+int v_bus_open(const char *name, int flags);
+// Publish through a V_BUS_WR handle: as v_bus_publish (VA_PASS, VA_FAIL when
+// the pool is full and the topic drops, V_BUS_EINVAL on bad arguments).
+int v_bus_send(int fd, const void *payload, uint16_t len);
+// Take this handle's oldest unread message into rx->buf (rx->cap bytes),
+// setting rx->len and rx->missed: as v_bus_pop, including V_BUS_EMSGSIZE when
+// it doesn't fit (rx->len says how big it is; the message stays unread).
+int v_bus_recv(int fd, v_bus_rx_t *rx);
+#endif
 
 // --- Pool state ---------------------------------------------------------------
 // Blocks in the shared pool (not counting topics' reserved stashes).
