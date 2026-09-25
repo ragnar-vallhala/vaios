@@ -56,6 +56,19 @@ void v_port_hw_clock_init(uint8_t internal_clock_setup) {
 #endif
 }
 
+void v_port_hw_debug_init(void) {
+#if VAIOS_DEBUG_IN_SLEEP
+  // DBGMCU_CR: keep the debug interface clocked through WFI/WFE (DBG_SLEEP) and
+  // the stop/standby modes. Without this, the first time the idle task sleeps
+  // the debug AP loses bus access — the probe then reads a chip ID of 0 and any
+  // attempt to inspect RAM fails, which is exactly what happens when reading a
+  // log ring over SWD from a running system.
+  // Cortex-M4 debug block, ARMv7-M: 0xE0042004, bits 0..2.
+  volatile uint32_t *dbgmcu_cr = (volatile uint32_t *)0xE0042004u;
+  *dbgmcu_cr |= 0x7u; // DBG_SLEEP | DBG_STOP | DBG_STANDBY
+#endif
+}
+
 void v_port_hw_fpu_enable(void) {
 #if defined(NAVHAL) && defined(_FPU_ENABLED)
   hal_fpu_enable();
@@ -152,6 +165,17 @@ uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
 
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 #ifdef NAVHAL
+#if VAIOS_CONSOLE_USB_CDC
+  // The console is the board's own USB port, not USART2. The point is a board
+  // whose debug probe has no VCP: the log needs no second cable and no probe.
+  // Nothing is transmitted until the host opens the port, so early output is
+  // lost unless VAIOS_CONSOLE_TO_KMSG is on to keep it in RAM — boot does NOT
+  // wait for a host here, because a flight build must not depend on one.
+  (void)baudrate;
+  (void)dma_tx_done_cb;
+  hal_usb_cdc_init();
+  return;
+#endif
   hal_uart_config_t uart_cfg = {.baudrate = baudrate};
   hal_uart_init(HAL_UART_2, &uart_cfg);
 #if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA) &&                     \
@@ -169,7 +193,11 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 }
 
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
-#if defined(NAVHAL) && defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
+#if defined(NAVHAL) && VAIOS_CONSOLE_USB_CDC
+  // CDC has no DMA path of its own; the driver's write already copies into the
+  // peripheral FIFO, so the buffered logger's "DMA" write is a plain write.
+  hal_usb_cdc_write(bytes, (uint16_t)len);
+#elif defined(NAVHAL) && defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
   hal_uart_write_dma(HAL_UART_2, bytes, len);
 #else
   (void)bytes;
@@ -179,7 +207,11 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
 
 void v_port_hw_console_write_string(const char *str) {
 #ifdef NAVHAL
+#if VAIOS_CONSOLE_USB_CDC
+  hal_usb_cdc_write_string(str);
+#else
   hal_uart_write_string(HAL_UART_2, str);
+#endif
 #else
   sh_write0(str);
 #endif
@@ -187,7 +219,14 @@ void v_port_hw_console_write_string(const char *str) {
 
 char v_port_hw_console_read_char(void) {
 #ifdef NAVHAL
+#if VAIOS_CONSOLE_USB_CDC
+  uint8_t c = 0;
+  while (hal_usb_cdc_read(&c, 1) == 0) // CDC reads never block; the console
+    ;                                  // contract here is blocking
+  return (char)c;
+#else
   return hal_uart_read_char(HAL_UART_2);
+#endif
 #else
   return sh_readc();
 #endif

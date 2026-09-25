@@ -70,6 +70,7 @@ int v_port_hw_in_isr(void);
 /* Port hardware facade — same prototypes as the real port.h. Host
  * implementations are no-op/stub equivalents in tests/stubs/port_hw_stub.c. */
 void v_port_hw_clock_init(uint8_t internal_clock_setup);
+void v_port_hw_debug_init(void); // keep SWD alive in sleep; no-op off-target
 void v_port_hw_fpu_enable(void);
 void v_port_hw_systick_init(uint32_t period_us);
 void v_port_hw_sched_irq_init(void);

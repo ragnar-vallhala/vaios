@@ -313,6 +313,148 @@ const char *task_get_name_by_id(uint32_t task_id) {
   return task_get_name(get_task_by_id(task_id));
 }
 
+// Every live task, for the ownership walks below. Callers hold no critical
+// section: each helper takes its own, because get_task_by_id does too and
+// ENTER_CRITICAL does not nest.
+// Every list walk below is bounded by the number of tasks that can exist. A
+// scheduler list is singly linked and has been self-linked by a double enqueue
+// before (see task_exit_request), and a kernel that spins forever on a corrupt
+// list is worse than one that gives up: the bound turns a hang into a miscount.
+#define TASK_WALK_MAX (task_count + 2u)
+
+static uint32_t count_children(uint32_t parent_id) {
+  uint32_t n = 0, steps = 0;
+  ENTER_CRITICAL();
+  for (uint8_t p = 0; p <= MAX_PRIORITY; p++)
+    for (TCB *t = ready_lists[p]; t && steps < TASK_WALK_MAX; t = t->next, steps++)
+      if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
+        n++;
+  steps = 0;
+  for (TCB *t = blocked_list; t && steps < TASK_WALK_MAX; t = t->next, steps++)
+    if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
+      n++;
+  steps = 0;
+  for (TCB *t = delayed_list; t && steps < TASK_WALK_MAX; t = t->next, steps++)
+    if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
+      n++;
+  EXIT_CRITICAL();
+  return n;
+}
+
+// The id of one live task whose owner is gone (terminated or already reaped),
+// or 0. parent_id 0 means "created by privileged init" and is never an orphan.
+static uint32_t find_orphan(void) {
+  uint32_t ids[1] = {0}, steps = 0;
+  ENTER_CRITICAL();
+  TCB *lists[2] = {blocked_list, delayed_list};
+  for (uint8_t p = 0; p <= MAX_PRIORITY && !ids[0]; p++)
+    for (TCB *t = ready_lists[p]; t && !ids[0] && steps < TASK_WALK_MAX;
+         t = t->next, steps++)
+      if (t->parent_id && t->status != TASK_TERMINATED)
+        ids[0] = t->task_id;
+  for (int i = 0; i < 2 && !ids[0]; i++) {
+    steps = 0;
+    for (TCB *t = lists[i]; t && !ids[0] && steps < TASK_WALK_MAX;
+         t = t->next, steps++)
+      if (t->parent_id && t->status != TASK_TERMINATED)
+        ids[0] = t->task_id;
+  }
+  EXIT_CRITICAL();
+  if (!ids[0])
+    return 0;
+  // Outside the section (get_task_by_id takes its own): is its owner gone?
+  TCB *child = get_task_by_id(ids[0]);
+  if (!child)
+    return 0;
+  TCB *owner = get_task_by_id(child->parent_id);
+  if (owner && owner->status != TASK_TERMINATED)
+    return 0; // owner still alive: not an orphan
+  return ids[0];
+}
+
+// Children die with their owner, at any depth. Iterative on purpose: recursing
+// per generation would put an unbounded chain on the handler stack. Each pass
+// terminates one orphan and rescans, so any nesting drains, and the loop is
+// capped by the number of tasks that exist. A parent_id can never alias a new
+// task, because ids only ever increase.
+static void reap_orphans(void) {
+  for (uint32_t guard = 0; guard <= task_count; guard++) {
+    uint32_t victim = find_orphan();
+    if (!victim)
+      return;
+    task_exit_request(victim); // marks it terminated; its own children follow
+  }
+}
+
+int v_task_kill(uint32_t child_id) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc1(SYS_task_kill, child_id);
+#endif
+  if (!child_id)
+    return V_TASK_EINVAL;
+  TCB *t = get_task_by_id(child_id);
+  if (!t || t->status == TASK_TERMINATED)
+    return V_TASK_EINVAL;
+  // Ownership, not privilege: even a privileged task may not end someone
+  // else's child. current_task == NULL is init, before anyone owns anything.
+  if (current_task && t->parent_id != current_task->task_id)
+    return V_TASK_EPERM;
+  task_exit_request(child_id);
+  return VA_PASS;
+}
+
+int v_task_spawn(const v_task_spawn_t *cfg) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc1(SYS_task_spawn, (uintptr_t)cfg);
+#endif
+  if (!cfg || !cfg->entry || !cfg->stack_size)
+    return V_TASK_EINVAL;
+  if (cfg->stack_size > VAIOS_TASK_SPAWN_STACK_MAX || cfg->priority > MAX_PRIORITY)
+    return V_TASK_EINVAL;
+  TCB *parent = current_task;
+  if (parent) {
+    // A child may not outrank its parent: spawning must not be a way to get
+    // scheduling weight the caller does not already have.
+    if (cfg->priority > parent->priority)
+      return V_TASK_EPERM;
+    if (count_children(parent->task_id) >= VAIOS_TASK_MAX_CHILDREN)
+      return V_TASK_EAGAIN;
+  }
+  uint32_t id = task_create_named(cfg->entry, cfg->arg, cfg->stack_size,
+                                  cfg->priority, cfg->name ? cfg->name : "");
+  if (id == 0u)
+    return V_TASK_ENOMEM; // no stack: the heap said no
+  TCB *child = get_task_by_id(id);
+  if (!child)
+    return V_TASK_ENOMEM; // created but unreachable: treat as failure
+  ENTER_CRITICAL();
+  child->parent_id = parent ? parent->task_id : 0u;
+  EXIT_CRITICAL();
+  return (int)id;
+}
+
+int v_task_info(v_task_info_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc1(SYS_task_info, (uintptr_t)out);
+#endif
+  if (!out || current_task == NULL)
+    return VA_FAIL;
+  ENTER_CRITICAL();
+  out->id = current_task->task_id;
+  out->priority = current_task->priority;
+  out->stack_size = current_task->stack_size;
+  const char *n = task_get_name(current_task);
+  uint32_t i = 0;
+  for (; i + 1u < V_TASK_NAME_MAX && n[i]; i++) // bounded: a long name truncates
+    out->name[i] = n[i];
+  out->name[i] = 0;
+  EXIT_CRITICAL();
+  return VA_PASS;
+}
+
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------
@@ -379,6 +521,7 @@ void v_task_exit_impl(void) {
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
   EXIT_CRITICAL();
+  reap_orphans(); // a task that exits takes the tasks it spawned with it (M3b)
   v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 
@@ -483,6 +626,7 @@ void task_exit_request(uint32_t task_id) {
   _terminated_count++;
   EXIT_CRITICAL();
 
+  reap_orphans(); // anything this task spawned goes with it (M3b)
   v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 //-----------------------------------------------------------------------------

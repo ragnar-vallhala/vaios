@@ -31,13 +31,6 @@ static int dev_node_count;
 
 extern TCB *current_task;
 
-static int str_eq(const char *a, const char *b) {
-  while (*a && *a == *b) {
-    a++;
-    b++;
-  }
-  return *a == *b;
-}
 
 int v_devfs_register(const char *name, const v_file_ops *ops, void *priv) {
   if (dev_node_count >= MAX_DEV_NODES)
@@ -49,10 +42,29 @@ int v_devfs_register(const char *name, const v_file_ops *ops, void *priv) {
   return 0;
 }
 
-static dev_node_t *dev_find(const char *path) {
-  for (int i = 0; i < dev_node_count; i++)
-    if (str_eq(dev_nodes[i].name, path))
+// Exact match, or — for a node whose name ends in '/' — a prefix match, which
+// is what makes a MOUNT: "/mnt/" claims every path under it. *tail is set to the
+// rest of the path for a prefix match, and to "" for an exact one.
+static dev_node_t *dev_find(const char *path, const char **tail) {
+  for (int i = 0; i < dev_node_count; i++) {
+    const char *n = dev_nodes[i].name, *p = path;
+    while (*n && *n == *p) {
+      n++;
+      p++;
+    }
+    if (!*n && !*p) { // exact
+      if (tail)
+        *tail = "";
       return &dev_nodes[i];
+    }
+    // the whole node name matched and it is a mount prefix: the rest is the
+    // path within the mount, and it must not be empty.
+    if (!*n && *p && n != dev_nodes[i].name && n[-1] == '/') {
+      if (tail)
+        *tail = p;
+      return &dev_nodes[i];
+    }
+  }
   return NULL;
 }
 
@@ -63,7 +75,7 @@ void v_fd_table_init(TCB *t) {
     t->fds[i].priv = NULL;
   }
   // Pre-open stdin/stdout/stderr -> /dev/console (registered at boot).
-  dev_node_t *con = dev_find("/dev/console");
+  dev_node_t *con = dev_find("/dev/console", NULL);
   if (con)
     for (int fd = 0; fd < 3 && fd < VAIOS_MAX_FDS; fd++) {
       t->fds[fd].ops = con->ops;
@@ -114,11 +126,22 @@ int v_file_open(const char *path, int flags) {
   if (v_in_thread_mode())
     return v_svc2(SYS_open, (uintptr_t)path, (uint32_t)flags);
 #endif
-  (void)flags;
-  dev_node_t *node = dev_find(path);
+  const char *tail = "";
+  dev_node_t *node = dev_find(path, &tail);
   if (!node)
     return -1; // no such device
-  return v_fd_alloc(node->ops, node->priv);
+  if (!node->ops->open) {
+    (void)flags;
+    return v_fd_alloc(node->ops, node->priv); // a device: one shared priv
+  }
+  void *priv = NULL; // a mount: per-open state, from the node itself
+  int r = node->ops->open(tail, flags, &priv);
+  if (r < 0)
+    return r;
+  int fd = v_fd_alloc(node->ops, priv);
+  if (fd < 0 && node->ops->close)
+    node->ops->close(priv); // no descriptor left: don't leak the open file
+  return fd;
 }
 
 int v_file_write(int fd, const void *buf, uint32_t len) {
@@ -174,6 +197,14 @@ static int console_write(void *priv, const void *buf, uint32_t len) {
       tmp[i] = p[done + i];
     tmp[chunk] = '\0';
     v_port_hw_console_write_string(tmp);
+#if VAIOS_CONSOLE_TO_KMSG
+    // Mirror into the kernel log ring as well, so console output is recoverable
+    // from RAM: readable through /dev/kmsg, and — the reason this exists — over
+    // SWD after the fact on a board whose debug probe has no serial port, or
+    // post-mortem after a fault took the UART with it. Costs one memcpy into a
+    // ring; off by default.
+    v_kmsg_append(tmp, chunk);
+#endif
     done += chunk;
   }
   return (int)len;

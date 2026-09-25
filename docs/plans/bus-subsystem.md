@@ -434,6 +434,23 @@ ISR that is the sole publisher of `imu.raw` publishes with no mutex.
 
 ### 6.2 Multi-producer topics — three-stage publish pipeline
 
+> **As built (B5): the pipeline was not needed.** A publisher allocates inside
+> the allocator's critical section, copies into blocks it already owns (marked
+> `used`, so no other publisher can take them), and links inside a critical
+> section that also assigns `seq`. Nothing is held across the copy and nothing
+> about the copy is shared, so publishers — tasks or an ISR preempting one — are
+> independent without any per-topic mutex. The three mutexes below would add
+> ordering and PI machinery to serialise writers that never contend.
+>
+> What that claim needs is proof, not trust, so `kernel/bus.c` has a host-test
+> seam between the copy and the link: a test publishes a second message exactly
+> in that window and asserts both arrive, in link order, with `seq` and `missed`
+> intact. Mutating the code to assign `seq` before the window, or to stop marking
+> blocks owned, fails those tests. A two-producer fuzz covers the rest.
+>
+> Pipe topics stay single-producer: that is the caller's promise, by definition.
+
+
 Multiple producers to one topic use a **hand-over-hand pipeline** with three
 per-topic mutexes (`rmutex_t`, so priority inheritance + chain-walk come free —
 `ipc.c`). A publisher **acquires the next stage before releasing the
@@ -498,6 +515,25 @@ Three modes; the app chooses per subscription.
 | **Blocking** | subscriber blocks on a per-sub `SemaphoreHandle_t`; publish `v_semaphore_give`s it (`ipc.h`) | timeout + PI via existing sema path |
 | **Callback** | dispatched from the **bus worker task**, not an ISR | notification-only |
 
+**As built (blocking half).** A subscription carries an optional `notify`
+semaphore; `link_msg` and `pipe_publish` signal it (via the from-ISR form, which
+is safe in both contexts) and pend one switch after leaving the critical
+section. The fd layer arms it for every reader out of static storage in the
+handle, so blocking costs no heap and one NULL test per subscriber per publish.
+
+The user-facing call is `v_bus_recv_wait(fd, rx, ticks)`, composed of
+`SYS_bus_recv` and a new `SYS_bus_wait` — deliberately two steps. A single
+"recv with timeout" syscall would have to keep the caller's `rx` buffer in
+kernel state while the task sleeps, which is precisely the stack-escape hazard
+that `v_pbus_lock` had to be rewritten to avoid (#47). Waiting therefore holds
+nothing of the caller's, and the read happens after the wake.
+
+The signal is a hint, not a promise: a binary semaphore banks one wake, and a
+message can be evicted between signal and wake, so `v_bus_wait` re-checks the
+subscription's own state before sleeping (a queued message with a spent signal
+must not park) and `v_bus_recv_wait` re-reads within its deadline. Missed wakes
+are what would break it, and the on-target scenario turns one into a timeout.
+
 **Challenge — "callbacks execute from a software interrupt" but vaios has no
 SWI/softirq** (only PendSV context-switch; `include/qemu_irq.h` is empty).
 **Solution:** a dedicated high-priority **bus worker task**, blocked on a
@@ -531,6 +567,15 @@ short-critical-section allocator underneath, task-level pipeline mutexes on top
 ---
 
 ## 8. Snapshotter
+
+> **Status note (M5).** The VFS is now reachable from an unprivileged task: it
+> mounts as a devfs node, so `open`/`read`/`write`/`close` work through the file
+> syscalls, with `lseek`/`stat`/`mkdir`/`unlink`/`sync`/`opendir`/`readdir` added
+> as their own. What is NOT covered on target: Renode's generic STM32F4 has no SD
+> card, so a real file write is a PITL-only check. The host suite covers the
+> layer against a recorded-call filesystem; the snapshotter below inherits both
+> the capability and that testing gap.
+
 
 A **background observer task** (low priority) that copies best-effort messages to
 persistent storage via the VFS (`include/vfs.h`) for black-box logging,
@@ -792,10 +837,10 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **ZC** | Zero-copy path for single-block messages: `v_bus_reserve`/`commit`/`cancel`, `v_bus_peek`/`release`; a peeked message is pinned against eviction (§11.1) | unit: pinning vs eviction under fuzz; Renode benchmark — **done** |
 | **PIPE** | Pipe topics: caller-promised SPSC, lock-free ring of reserved slots (§11.2) | unit: drop/overwrite/seqlock under fuzz; Renode benchmark — **done** |
 | **B4** | QoS as **soft reservations** (§4.5): per-topic stash (`cfg.reserve`), loans to overwrite topics, bounded reclaim by eviction | unit: guarantee asserted under fuzz; Renode: reserved drop topic 0 drops under an overwrite flood — **done** |
-| **B5** | Multi-producer 3-stage pipeline + PI (§6.2) | unit: H7/H8/H11; concurrency on the host port (real scheduler) + SITL |
-| **B6** | Notification engine: blocking + callback worker task (§6.4) | SITL: ISR publish → callback wake |
-| **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | Stage-2 scenario example |
-| **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | benchmark report committed |
+| **B5** | Multi-producer topics | **done — WITHOUT the pipeline**: publishers are independent by construction (see §6.2), proven by a deterministic mid-copy interleave + a two-producer fuzz |
+| **B6** | Notification engine: blocking recv (§6.4) | **blocking done** (unit: park/wake/timeout; SITL: blocked unprivileged reader); callback worker outstanding |
+| **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | **done** — stats counted where the state changes; snapshotter is a pump the app drives from its own low-priority task |
+| **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | **done** — measured on an F401 at 84 MHz: pipe 6.7 µs, zero copy 8.6 µs, copy 10.0 µs, copy under a full pool 12.0 µs mean; worst case 21.4 µs = 2.1% of a 1 kHz period. Eviction under load costs ~20%, so the allocator's reclaim loop does NOT need to be made incremental. See `docs/benchmark/bus-ipc.md` |
 | **B9** | Unprivileged access: topic fds + `SYS_bus_*` (§17) | host dispatch tests + Renode user-task scenario — **done** |
 
 ---
@@ -821,6 +866,13 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 5. **Multi-block payload copy** crossing non-contiguous blocks needs a scatter
    copy in the Copy stage — straightforward but must stay outside the allocator
    critical section (§7).
+
+> **Measured (B8).** The concern behind questions 2 and 4 — that the allocator's
+> reclaim/evict loop is a critical section whose length grows with pool pressure —
+> is now quantified: saturating the pool costs +167 cycles mean (~2 µs) and +10%
+> on the worst case, on an F401 at 84 MHz. It is a cost, not a cliff, so the loop
+> stays as it is. Guard-region sizing (question 2) can be chosen for memory rather
+> than for jitter.
 
 ---
 

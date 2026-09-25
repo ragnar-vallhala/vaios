@@ -312,6 +312,41 @@ config VAIOS_MAX_FDS
     int "File descriptors per task"
     depends on VAIOS_DEVFS
     default 8
+config VAIOS_DEBUG_IN_SLEEP
+    bool "Keep the debug interface alive while the core sleeps"
+    default n
+    help
+      Set DBGMCU_CR's DBG_SLEEP/DBG_STOP/DBG_STANDBY so SWD keeps bus access
+      once the idle task starts sleeping. Without it a debugger loses the target
+      the moment the system goes idle (the probe reads a chip ID of 0), which
+      makes reading anything out of a RUNNING system impossible. Costs the debug
+      block staying clocked, so it is off by default and belongs in debug and
+      hardware-test builds.
+
+config VAIOS_CONSOLE_USB_CDC
+    bool "Console on USB CDC instead of USART2 (NavHAL builds)"
+    default n
+    help
+      Route console output and input to the board's own USB port
+      (hal_usb_cdc_*, which needs NAVHAL_CONFIG_DRV_USB_CDC and a PLL Q of
+      exactly 48 MHz) instead of USART2. For a board whose debug probe has no
+      virtual COM port, this is the log channel that needs no extra cable.
+
+      A CDC port transmits nothing until the host opens it, so output before
+      that is lost; pair this with VAIOS_CONSOLE_TO_KMSG to keep early boot
+      output in RAM. Boot never waits for a host.
+
+config VAIOS_CONSOLE_TO_KMSG
+    bool "Mirror console writes into the /dev/kmsg ring"
+    depends on VAIOS_DEVFS
+    default n
+    help
+      Console writes normally go straight to the UART. With this on they are
+      also appended to the kernel log ring, which makes them readable through
+      /dev/kmsg and — the reason it exists — recoverable from RAM over SWD when
+      the board's debug probe has no serial port, or after a fault has taken the
+      console with it. Costs one memcpy per write chunk.
+
 config VAIOS_IPC_FD
     bool "fd-typed IPC (named semaphores on the fd table)"
     depends on VAIOS_DEVFS
@@ -323,10 +358,41 @@ config VAIOS_IPC_FD
       close(fd) drops the reference (object destroyed at refcount 0). This
       removes the raw kernel pointer from user handles and gives per-task
       capability isolation. The pointer-based v_semaphore_* API still exists.
+config VAIOS_TASK_SPAWN_STACK_MAX
+    int "Largest stack a task may request when spawning (bytes)"
+    default 4096
+    help
+      Upper bound on v_task_spawn's stack_size. A task spawns from the global
+      heap, so without a cap one task can exhaust the heap and take the system
+      with it. Privileged init is not bound by this (task_create takes any size).
+config VAIOS_TASK_MAX_CHILDREN
+    int "Live children one task may have at once"
+    default 4
+    help
+      v_task_spawn refuses past this with -EAGAIN. Counts children currently
+      alive; a child that exits gives its slot back. Bounds the fan-out of a
+      spawn loop, together with VAIOS_TASK_SPAWN_STACK_MAX.
+
+config VAIOS_VFS_MAX_OPEN
+    int "Files+directories a system may have open through the VFS mount"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_file_open("/mnt/...") handles across all tasks, in static kernel
+      RAM. Each holds one vfs_fd_t or vfs_dir_t.
+
+config VAIOS_QUEUE_MAX_OPEN
+    int "Queue handles a system may have open (v_queue_open)"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_queue_open() handles across all tasks, in static kernel RAM. Like
+      VAIOS_BUS_MAX_OPEN, this bounds the fd layer, not the queues themselves.
+
 config VAIOS_BUS_MAX_OPEN
     int "Bus IPC user handles (system-wide)"
     depends on VAIOS_DEVFS
-    default 8 if EXAMPLE_BUS_USER
+    default 8 if EXAMPLE_BUS_USER || EXAMPLE_FLIGHT_USER
     default 4
     help
       Open v_bus_open() handles across all tasks. Each carries a

@@ -137,6 +137,10 @@ static void benchmark_runner(void *arg) {
   v_delay(50);
 
   /* ---- Run all benchmark categories -------------------------------- */
+  /* -DVAIOS_BENCH_ONLY_BUS runs just the Bus IPC suite (B8). The full set takes
+   * far longer than an emulator run is worth, and the bus numbers are the ones
+   * the plan asks to be committed. */
+#ifndef VAIOS_BENCH_ONLY_BUS
   bench_fpu_run();
   v_delay(20);
 
@@ -153,6 +157,11 @@ static void benchmark_runner(void *arg) {
   v_delay(20);
 
   bench_stress_run();
+#endif /* !VAIOS_BENCH_ONLY_BUS */
+
+#if VAIOS_MODULE_BUS
+  bench_bus_run();
+#endif
   v_delay(20);
 
   /* ---- Print final summary ----------------------------------------- */

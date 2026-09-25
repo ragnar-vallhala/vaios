@@ -64,6 +64,37 @@ vfs_dir_t vfs_opendir(const char *path);
 int vfs_readdir(vfs_dir_t d, vfs_dirent_t *ent);
 int vfs_closedir(vfs_dir_t d);
 
+/* --------------------------------------------------------------------------
+ * VFS on the fd table (M5) — how an unprivileged task reaches a file.
+ *
+ * SYS_open/read/write/close route to DEVFS, not here, and every vfs_* entry
+ * point locks a mutex through the raw-handle API a task may not use. So the VFS
+ * mounts itself as a devfs node: v_vfs_mount("/mnt/") claims every path under
+ * that prefix, and the existing file syscalls then work unchanged —
+ * v_file_open("/mnt/log.csv", ...) returns an fd whose reads and writes are
+ * vfs_read and vfs_write. Only the operations with no fd equivalent need
+ * syscalls of their own (below).
+ * -------------------------------------------------------------------------- */
+#if VAIOS_DEVFS && VAIOS_MODULE_VFS
+#define V_VFS_EINVAL (-22) /* bad path or handle */
+#define V_VFS_EBUSY (-16)  /* no free mount handle (VAIOS_VFS_MAX_OPEN) */
+
+/* Privileged, at init: publish the VFS under a devfs path prefix (which must end
+ * in '/', e.g. "/mnt/"). VA_PASS or V_VFS_EINVAL. */
+int v_vfs_mount(const char *prefix);
+
+/* The rest of the file API, for a task. Paths are within the mount, exactly as
+ * they are for v_file_open. Each returns >= 0 / VA_PASS, or negative. */
+long v_file_lseek(int fd, long offset, int whence);
+int v_file_stat(const char *path, vfs_stat_t *st);
+int v_file_mkdir(const char *path);
+int v_file_unlink(const char *path);
+int v_file_sync(int fd);
+/* Directory listing: opendir returns an fd, closed with v_file_close. */
+int v_dir_open(const char *path);
+int v_dir_read(int fd, vfs_dirent_t *ent);
+#endif /* VAIOS_DEVFS && VAIOS_MODULE_VFS */
+
 #ifdef __cplusplus
 }
 #endif

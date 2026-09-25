@@ -58,7 +58,12 @@ typedef struct Task_Control_Block {
   void *arg;              // Task argument
   void (*entry)(void *);  // Task entry function
   uint32_t stack_size;    // Stack size in bytes
-  uint32_t task_id;       // Unique task identifier
+  uint32_t task_id;       // Unique task identifier (monotonic; never reused)
+  // Lifecycle ownership (M3): the task that spawned this one, 0 for tasks
+  // created by privileged init. Only the parent may end a child, and a task's
+  // live children die with it. Counted by scanning when needed rather than
+  // cached, so there is no counter to drift across the exit paths.
+  uint32_t parent_id;
   const char *name;       // Optional human-readable name (flash literal, not
                           // owned/copied; "" when unset). See task_get_name.
   uint32_t delay_ticks;   // Absolute wakeup tick (deadline)
@@ -181,6 +186,50 @@ uint32_t task_create_named(void (*entry)(void *), void *arg, uint32_t size,
 void task_set_name(uint32_t task_id, const char *name);
 // Human-readable task name, or "" if unset. Never returns NULL.
 const char *task_get_name(const TCB *task);
+
+// What a task may know about itself. Everything here lives in the TCB, which is
+// kernel memory, so an unprivileged task reads it through SYS_task_info: the
+// fields are COPIED into the caller's own struct (the name too — never the
+// kernel pointer task_get_name returns).
+#define V_TASK_NAME_MAX 16
+typedef struct {
+  uint32_t id;         // task id (monotonic; never reused)
+  uint32_t priority;   // current priority, after any inheritance
+  uint32_t stack_size; // bytes reserved for this task's stack
+  char name[V_TASK_NAME_MAX]; // NUL-terminated, truncated if longer
+} v_task_info_t;
+
+// --- Spawning from a task (M3) ------------------------------------------------
+// A task may create tasks of its own, and owns their lifecycle: only the parent
+// may end a child (see task_exit_request). A child is ALWAYS unprivileged and
+// may not outrank its parent, so spawning grants nothing the parent did not
+// already have.
+#define V_TASK_EPERM (-1)   // not yours to do (priority escalation, not parent)
+#define V_TASK_ENOMEM (-12) // no stack available
+#define V_TASK_EAGAIN (-11) // this task already has VAIOS_TASK_MAX_CHILDREN
+#define V_TASK_EINVAL (-22) // bad descriptor
+typedef struct {
+  void (*entry)(void *);  // must point into flash: RAM is execute-never
+  void *arg;              // OPAQUE to the child: a pointer into the parent's
+                          // block is NOT readable by it (separate MPU region).
+                          // Pass an integer or a handle, not a pointer.
+  uint32_t stack_size;    // bytes, <= VAIOS_TASK_SPAWN_STACK_MAX
+  uint32_t priority;      // <= the spawning task's own priority
+  const char *name;       // optional flash literal, or NULL
+} v_task_spawn_t;
+// Create a child task. Returns its id (> 0), or V_TASK_E* on refusal.
+int v_task_spawn(const v_task_spawn_t *cfg);
+// End a task this one spawned: VA_PASS, V_TASK_EPERM if it is not yours,
+// V_TASK_EINVAL if there is no such live task. A task ends ITSELF with
+// task_exit() instead; nothing else may end it. When a task goes, the tasks it
+// spawned go too, at any depth — its owner is gone, so nobody is left who may
+// end them.
+int v_task_kill(uint32_t child_id);
+
+// Fill `out` with the CALLING task's own info. VA_PASS, or VA_FAIL when there
+// is no current task. Self only: an id-taking form would let any task
+// enumerate the task table.
+int v_task_info(v_task_info_t *out);
 // Look up a task's name by id, or "" if the id is unknown/unset. Never returns
 // NULL. Lets callers (e.g. a telemetry request handler) resolve names on demand
 // without holding a TCB pointer.
