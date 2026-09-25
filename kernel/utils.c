@@ -91,7 +91,9 @@ float v_atof(const char *s) {
 // The kernel printk path (v_print / direct_dma_print) mirrors its console
 // output into this ring; a task drains it by read()ing /dev/kmsg. Single
 // logical reader (drain-on-read); oldest bytes are overwritten when full.
+#ifndef KMSG_RING_SIZE
 #define KMSG_RING_SIZE 1024
+#endif
 static char kmsg_ring[KMSG_RING_SIZE];
 static volatile uint32_t kmsg_head, kmsg_tail;
 
@@ -923,6 +925,14 @@ void v_log(Log_Type type, const char *msg, ...) {
 
   EXIT_CRITICAL();
   va_end(args);
+
+  // Nothing flushes this buffer until something calls v_log_flush, and the only
+  // callers run under the scheduler. So before scheduler_start — clock, SD,
+  // filesystem and MPU bring-up, and every `log an error then while(1)` path in
+  // there — a log would be written into RAM and never seen: a board that looks
+  // dead with no message. Flush inline while nothing else can.
+  if (!scheduler_running)
+    v_log_flush();
 #else // unbuffered — the only other value of the BUFFERED_LOGGING bool
   const char *typeName;
   const char *typeColor;

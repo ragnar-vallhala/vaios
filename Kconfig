@@ -312,6 +312,41 @@ config VAIOS_MAX_FDS
     int "File descriptors per task"
     depends on VAIOS_DEVFS
     default 8
+config VAIOS_DEBUG_IN_SLEEP
+    bool "Keep the debug interface alive while the core sleeps"
+    default n
+    help
+      Set DBGMCU_CR's DBG_SLEEP/DBG_STOP/DBG_STANDBY so SWD keeps bus access
+      once the idle task starts sleeping. Without it a debugger loses the target
+      the moment the system goes idle (the probe reads a chip ID of 0), which
+      makes reading anything out of a RUNNING system impossible. Costs the debug
+      block staying clocked, so it is off by default and belongs in debug and
+      hardware-test builds.
+
+config VAIOS_CONSOLE_USB_CDC
+    bool "Console on USB CDC instead of USART2 (NavHAL builds)"
+    default n
+    help
+      Route console output and input to the board's own USB port
+      (hal_usb_cdc_*, which needs NAVHAL_CONFIG_DRV_USB_CDC and a PLL Q of
+      exactly 48 MHz) instead of USART2. For a board whose debug probe has no
+      virtual COM port, this is the log channel that needs no extra cable.
+
+      A CDC port transmits nothing until the host opens it, so output before
+      that is lost; pair this with VAIOS_CONSOLE_TO_KMSG to keep early boot
+      output in RAM. Boot never waits for a host.
+
+config VAIOS_CONSOLE_TO_KMSG
+    bool "Mirror console writes into the /dev/kmsg ring"
+    depends on VAIOS_DEVFS
+    default n
+    help
+      Console writes normally go straight to the UART. With this on they are
+      also appended to the kernel log ring, which makes them readable through
+      /dev/kmsg and — the reason it exists — recoverable from RAM over SWD when
+      the board's debug probe has no serial port, or after a fault has taken the
+      console with it. Costs one memcpy per write chunk.
+
 config VAIOS_IPC_FD
     bool "fd-typed IPC (named semaphores on the fd table)"
     depends on VAIOS_DEVFS

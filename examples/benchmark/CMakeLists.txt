@@ -19,6 +19,15 @@ set(BENCH_SRCS
 
 add_executable(benchmark ${BENCH_SRCS} ${STARTUP_FILE})
 
+# The Bus IPC suite alone (plan B8). The full set takes far longer than one
+# emulator run is worth, and these are the numbers the plan asks to be committed.
+# A CMake option, not -DCMAKE_C_FLAGS: the root CMakeLists overwrites that.
+option(VAIOS_BENCH_ONLY_BUS "Run only the Bus IPC benchmark suite" OFF)
+if(VAIOS_BENCH_ONLY_BUS)
+  target_compile_definitions(benchmark PRIVATE VAIOS_BENCH_ONLY_BUS=1)
+  message(STATUS "benchmark: Bus IPC suite only")
+endif()
+
 # Include the benchmark's own directory for benchmark.h
 target_include_directories(benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

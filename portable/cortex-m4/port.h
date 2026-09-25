@@ -200,6 +200,11 @@ int v_port_hw_in_isr(void);
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
 
 // Console: log/terminal UART on hardware, semihosting under QEMU.
+// Keep the debug interface alive across WFI/stop (VAIOS_DEBUG_IN_SLEEP), so a
+// debugger can still read memory once the idle task starts sleeping. No-op when
+// the option is off, which is the default: it leaves the debug block clocked.
+void v_port_hw_debug_init(void);
+
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);

@@ -23,6 +23,7 @@ void v_host_on_tick(void);
 void v_port_hw_clock_init(uint8_t internal_clock_setup) {
   (void)internal_clock_setup;
 }
+void v_port_hw_debug_init(void) {} // no debug block to configure here
 void v_port_hw_fpu_enable(void) {}
 
 // --- SysTick == a SIGALRM interval timer. ------------------------------------

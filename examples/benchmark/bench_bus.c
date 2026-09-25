@@ -51,6 +51,12 @@ static v_bus_sub_t s_copy, s_pipe, s_lag;
 static const v_bus_topic_cfg_t PIPE_CFG = {.pipe = 1, .reserve = 8};
 static const v_bus_topic_cfg_t OVERWRITE = {.overflow = V_BUS_OVERWRITE};
 
+/* min / mean / max per case, kept where a debugger can read them. A board whose
+ * probe has no serial port still has SWD, and these four rows are the whole
+ * report — so the numbers do not depend on a console existing. Order matches the
+ * BM_BUS_* ids. */
+uint32_t bus_bench_cycles[4][3];
+
 /* Record a result the way the rest of the suite does, with the worst case in
  * `detail` because that is the figure a realtime budget is built from. */
 static void record(int id, const char *name, const stat_t *s, uint32_t ticks) {
@@ -60,6 +66,12 @@ static void record(int id, const char *name, const stat_t *s, uint32_t ticks) {
   g_results[id].ops = s->n;
   g_results[id].ops_per_sec = BENCH_OPS_PER_SEC(s->n, ticks);
   g_results[id].detail = s->max;
+  int row = id - BM_BUS_COPY;
+  if (row >= 0 && row < 4) {
+    bus_bench_cycles[row][0] = s->min;
+    bus_bench_cycles[row][1] = stat_mean(s);
+    bus_bench_cycles[row][2] = s->max;
+  }
   BENCH_LOG(LOG_INFO, "%s: min=%u mean=%u max=%u cycles (%u ops)", name,
             s->min, stat_mean(s), s->max, s->n);
 }

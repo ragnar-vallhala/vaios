@@ -82,6 +82,7 @@ void v_port_mpu_apply(const uint32_t enc[2], uint32_t count);
 
 // --- Port hardware facade (see portable/cortex-m4/port.h for the contract) ---
 void v_port_hw_clock_init(uint8_t internal_clock_setup);
+void v_port_hw_debug_init(void); // keep SWD alive in sleep; no-op off-target
 void v_port_hw_fpu_enable(void);
 void v_port_hw_systick_init(uint32_t period_us);
 void v_port_hw_sched_irq_init(void);

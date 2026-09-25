@@ -197,6 +197,14 @@ static int console_write(void *priv, const void *buf, uint32_t len) {
       tmp[i] = p[done + i];
     tmp[chunk] = '\0';
     v_port_hw_console_write_string(tmp);
+#if VAIOS_CONSOLE_TO_KMSG
+    // Mirror into the kernel log ring as well, so console output is recoverable
+    // from RAM: readable through /dev/kmsg, and — the reason this exists — over
+    // SWD after the fact on a board whose debug probe has no serial port, or
+    // post-mortem after a fault took the UART with it. Costs one memcpy into a
+    // ring; off by default.
+    v_kmsg_append(tmp, chunk);
+#endif
     done += chunk;
   }
   return (int)len;

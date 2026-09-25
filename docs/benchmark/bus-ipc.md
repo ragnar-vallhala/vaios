@@ -1,9 +1,8 @@
 # Bus IPC benchmark (plan B8)
 
-What it measures, how to run it, and what the numbers may and may not be used
-for. The benchmark itself is `examples/benchmark/bench_bus.c`, part of the
-committed suite rather than an ad-hoc script, so a future change can be compared
-against the same four cases.
+Measured numbers, how they were taken, and what they settle. The benchmark is
+`examples/benchmark/bench_bus.c` — part of the committed suite rather than an
+ad-hoc script, so a future change can be compared against the same four cases.
 
 ## The four cases
 
@@ -14,16 +13,47 @@ against the same four cases.
 | `BUS pipe publish+pop` | the same round trip on a pipe topic (the lock-free SPSC ring) |
 | `BUS copy under a full pool` | the copying path again with the pool saturated and a second reader that never reads, so every publish must evict before it can allocate |
 
-Each reports **min / mean / max cycles** per round trip, and records the max in
-the result table's `detail` field.
-
 **The max is the point.** A mean tells you throughput; the worst case tells you
-whether a 1 kHz control loop makes its deadline. The fourth case exists because
-that is when the allocator does its most work — reclaim, then eviction — and it
-is the figure a realtime budget has to survive, not the idle one.
+whether a 1 kHz control loop makes its deadline.
 
-Cycles come from the DWT counter, so the benchmark calls `v_perf_init()` first:
-`v_init()` alone does not arm it, and without that every reading is zero.
+## Results — STM32F401RE, 84 MHz, 2026-09-25
+
+200 round trips per case, DWT cycle counter, hard-float, `-O2`, ART accelerator
+**off** (a NavHAL clock-init gap, fix upstream). One cycle = 11.9 ns.
+
+| Case | min | mean | max | mean µs | max µs |
+|---|---|---|---|---|---|
+| pipe publish+pop | 563 | 566 | 1355 | 6.7 | 16.1 |
+| zero-copy reserve+peek | 717 | 720 | 1508 | 8.6 | 18.0 |
+| copy publish+pop | 833 | 841 | 1637 | 10.0 | 19.5 |
+| copy under a full pool | 1001 | 1008 | 1800 | 12.0 | 21.4 |
+
+### What these say
+
+**Eviction under a full pool costs about 20%, not a cliff.** Mean goes 841 →
+1008 cycles (+167, ≈2 µs) and the max 1637 → 1800 (+10%). That answers the open
+question about `alloc_msg`'s reclaim/evict loop being the one critical section
+whose length grows with pool pressure: it does grow, but by two microseconds, and
+**it does not need to be made incremental.** Revisit only if a future change
+lengthens that loop.
+
+**The worst case is interrupt intrusion, not allocator variance.** Every case's
+max sits near 2× its min while min and mean are within 1% of each other. A 1 kHz
+SysTick inside a ~10 µs measurement window lands in roughly one sample in a
+hundred, which is exactly the shape seen. So the bus's own worst case is close to
+its mean; the max quoted here includes a tick ISR.
+
+**Ordering is as designed.** Pipe < zero copy < copy < copy-under-load. The pipe
+is the fast path because it takes no critical section at all on the hot path; zero
+copy beats copying because the payload never moves.
+
+**Budget:** at a 1 kHz control loop (1000 µs), the worst case measured here is
+2.1% of the period.
+
+These are not comparable to the ad-hoc figures taken while the zero-copy and pipe
+paths were being written: that harness measured different call sequences, and the
+publish path has since gained the B7 statistics counters. Treat this table as the
+baseline.
 
 ## Running it
 
@@ -31,57 +61,51 @@ Cycles come from the DWT counter, so the benchmark calls `v_perf_init()` first:
 export srctree="$PWD/extern/NavHAL"
 cmake -S . -B build_bench -DNAVHAL=ON -DEXAMPLES=ON \
       -DVAIOS_EXAMPLE=BENCHMARK -DVAIOS_MODULE_BUS=ON \
-      -DCMAKE_C_FLAGS="-DVAIOS_BENCH_ONLY_BUS=1"
+      -DVAIOS_BENCH_ONLY_BUS=ON
+# This example's statics plus the default 88 KB heap do not fit in the F401's
+# 96 KB of SRAM — see below. Give it a smaller heap:
+echo 'CONFIG_HEAP_SIZE=0x4000' >> build_bench/.config
 cmake --build build_bench -j
 ```
 
-`-DVAIOS_BENCH_ONLY_BUS=1` skips the FPU/DMA/task/IPC/memory/stress suites, which
-take far longer than one emulator run is worth.
+`-DVAIOS_BENCH_ONLY_BUS=ON` skips the FPU/DMA/task/IPC/memory/stress suites.
 
-Then flash it and read the UART (`tools/flash.sh`, `tools/run_hw_tests.sh` shows
-the serial-port selection this repo uses with several probes attached).
+Reading the results needs no serial port: they are in `bus_bench_cycles[4][3]`
+(min/mean/max per case) and in `g_results[BM_BUS_*]`, so a debugger can read them
+straight out of RAM — which is how the table above was taken, on a board whose
+ST-Link clone has no VCP:
 
-## Status: the numbers are not committed yet
+```sh
+tools/pitl_run.sh --kmsg build_bench 12     # flash + run
+st-util --no-reset -p 4242 &
+gdb-multiarch -batch -ex 'target extended-remote :4242' -ex interrupt \
+  -ex 'print bus_bench_cycles' build_bench/examples/benchmark/benchmark
+```
 
-Two honest caveats, both about the measurement rather than the code:
+## Two things that had to be fixed to get here
 
-1. **The benchmark example does not currently run under Renode.** It is a
-   bare-`main` program, and in the emulator it stops with `systick_count` at 2
-   and no UART output — before any benchmark runs. Every *scheduler-based*
-   example (`56_bus_ipc.c`, `57_bus_user.c`) runs there fine, so this is
-   specific to the benchmark example's startup, and it predates B8. Until that is
-   fixed, these numbers come from hardware.
+Both were pre-existing, and worth recording because they made the benchmark look
+like it "didn't start":
 
-2. **The board's flash accelerator is off.** Earlier bus measurements on the F401
-   read roughly 2x their Renode equivalents because NavHAL's clock init leaves the
-   ART accelerator disabled. That fix is upstream. Numbers taken before it lands
-   would be recorded against a configuration nobody ships, so the table below is
-   deliberately left as a baseline to beat, not a result.
+1. **The heap did not fit in RAM, and failed silently.** `_heap_start` sits after
+   `.bss`; with this example's ~36 KB of statics and the default `HEAP_SIZE` of
+   88 KB, the arena ended past the top of SRAM and `v_heap_memory_init`'s
+   `memset` walked off the end — BusFault, escalated to HardFault, at boot.
+   `v_heap_memory_init` now checks the arena against `v_port_ptr_is_ram` and
+   panics with a message naming the size and address instead.
+2. **Nothing before `scheduler_start` could be seen.** With `BUFFERED_LOGGING=1`,
+   `v_log` writes into a double buffer that only reaches the console when
+   `v_log_flush` runs — and its callers run under the scheduler. So every early
+   bring-up failure, including the `log an error then while(1)` paths in
+   `v_system_init`, produced a dead board with no output. `v_log` now flushes
+   inline when the scheduler is not running.
 
-### Baseline to beat (ad-hoc, pre-B8, single-block messages)
+An earlier version of this document blamed Renode for the benchmark not starting.
+That was wrong: it was failing the same way everywhere, and nothing could say so.
 
-Measured by hand while the zero-copy and pipe paths were built, on Renode and on
-an F401 with the accelerator off. Kept here only so a regression is visible; it
-is not a B8 report.
+## Still to do
 
-| Path | Renode cycles | board cycles | board µs |
-|---|---|---|---|
-| SPSC zero copy (raw ring, for comparison) | 100 | 180 | 2.14 |
-| pipe zero copy | 175 | 361 | 4.30 |
-| reserved topic, zero copy | 291 | 585 | 6.96 |
-| pool topic, zero copy | 314 | 647 | 7.70 |
-| SPSC copy (raw ring, for comparison) | 318 | 684 | 8.14 |
-| pipe copy | 346 | 734 | 8.74 |
-
-What it already tells us: a pipe is about 2x a raw SPSC ring while keeping named
-topics, `missed` accounting and fd access; bus zero copy beats an SPSC ring that
-copies; and fan-out to three readers is cheaper on the bus than three rings.
-
-### To finish B8
-
-- Re-baseline on hardware once the NavHAL accelerator fix lands, and state the
-  clock and cache configuration next to the numbers.
-- Add the under-load max from `BUS copy under a full pool`, which is the figure
-  the flight loop's budget is built from.
-- Either fix the benchmark example's startup under Renode or record that this
-  suite is hardware-only, so nobody expects SITL to produce it.
+- Re-baseline once NavHAL ships the ART accelerator enabled; expect these to drop
+  materially, and state the flash/cache configuration next to the new numbers.
+- Take the same four cases on an M7 part (F767) for comparison, where the cache
+  and the wider bus change the shape.
