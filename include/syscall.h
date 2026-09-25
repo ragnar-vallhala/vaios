@@ -69,6 +69,11 @@ typedef enum {
   SYS_bus_wait = 37,    // park until a topic handle has a message (B6). Split
                         //   from SYS_bus_recv so a blocked reader leaves no
                         //   pointer of its own in kernel state.
+  SYS_task_spawn = 38,  // a task creating a task (M3): descriptor in the
+                        //   caller's own memory, child unprivileged and never
+                        //   outranking its parent.
+  SYS_task_kill = 39,   // end a task you spawned. Nobody may end a task they
+                        //   did not create; a task ends itself with SYS_exit.
   SYS_MAX
 } v_syscall_t;
 

@@ -54,12 +54,15 @@ assert_absent() { if echo "$clean" | grep -aqE "$2"; then echo "  FAIL: $1  (saw
 assert_present "producer runs unprivileged"  '\[busu\] P nPRIV=1'
 assert_present "consumer A unprivileged"    '\[busu\] A nPRIV=1'
 assert_present "consumer B unprivileged"    '\[busu\] B nPRIV=1'
+assert_present "spawned task unprivileged"  '\[busu\] H nPRIV=1'
+assert_present "spawned task ran"           '\[busu\] H PASS'
 assert_present "tasks know themselves"       '\[busu\] id=[0-9]+ prio=[0-9]+'
 assert_present "producer sent + EFAULTs"    '\[busu\] P PASS'
 assert_present "consumer A read in order"   '\[busu\] A PASS'
 assert_present "consumer B read in order"   '\[busu\] B PASS'
-assert_absent  "no task failed"             '\[busu\] [PAB] FAIL'
+assert_absent  "no task failed"             '\[busu\] [PABH] FAIL'
 assert_absent  "self-info intact"           '\[busu\] self:'
+assert_absent  "ownership enforced"          'killed a stranger|kill own child failed|spawn escalated'
 assert_absent  "no kernel panic / fault"   'KERNEL PANIC|System Halted|MPU fault'
 
 if [ "$fail" -eq 0 ]; then

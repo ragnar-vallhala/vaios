@@ -393,6 +393,195 @@ static void test_task_naming(void) {
   TEST_ASSERT_EQ(strcmp(task_get_name_by_id(0xDEADBEEF), ""), 0);
 }
 
+/* v_task_spawn: a task creating tasks, and the rules that make it safe to let
+ * an unprivileged caller do it — a child never outranks its parent, the fan-out
+ * is bounded, and ownership is recorded so only the parent can end it (M3b). */
+static void test_task_spawn_rules(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t pid = task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  TEST_ASSERT_EQ(current_task->task_id, pid);
+
+  /* A child at or below the parent's priority is fine, and is recorded as the
+   * parent's. */
+  v_task_spawn_t cfg = {.entry = dummy_task, .arg = (void *)7,
+                        .stack_size = 256, .priority = 2, .name = "worker"};
+  int cid = v_task_spawn(&cfg);
+  TEST_ASSERT(cid > 0);
+  TCB *child = ready_lists[2]; /* only task at that priority */
+  TEST_ASSERT_NOT_NULL(child);
+  TEST_ASSERT_EQ(child->task_id, (uint32_t)cid);
+  TEST_ASSERT_EQ(child->parent_id, pid);
+  TEST_ASSERT_EQ(child->priority, 2u);
+  TEST_ASSERT_EQ(strcmp(task_get_name(child), "worker"), 0);
+  /* (That the child is unprivileged is task_create's invariant — privileged
+   * is only a field when MPU separation is compiled in, and the on-target
+   * scenario asserts nPRIV=1 for every spawned task.) */
+
+  /* Outranking the parent is refused: spawning must not buy scheduling weight. */
+  cfg.priority = 4;
+  TEST_ASSERT_EQ(v_task_spawn(&cfg), V_TASK_EPERM);
+  cfg.priority = 3; /* equal is allowed */
+  int same = v_task_spawn(&cfg);
+  TEST_ASSERT(same > 0);
+
+  /* Bad descriptors. */
+  TEST_ASSERT_EQ(v_task_spawn(NULL), V_TASK_EINVAL);
+  v_task_spawn_t bad = cfg;
+  bad.entry = NULL;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+  bad = cfg;
+  bad.stack_size = 0;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+  bad = cfg;
+  bad.stack_size = VAIOS_TASK_SPAWN_STACK_MAX + 1u;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+  bad = cfg;
+  bad.priority = MAX_PRIORITY + 1u;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+
+  /* Fan-out is bounded: a spawn loop cannot exhaust the heap. Two children
+   * exist already, so the rest of the allowance goes here. */
+  cfg.priority = 1;
+  for (int i = 2; i < VAIOS_TASK_MAX_CHILDREN; i++)
+    TEST_ASSERT(v_task_spawn(&cfg) > 0);
+  TEST_ASSERT_EQ(v_task_spawn(&cfg), V_TASK_EAGAIN);
+}
+
+/* A task created by privileged init has no parent, so nobody but itself may end
+ * it — the id 0 is not a task and cannot be impersonated. */
+static void test_task_spawn_init_tasks_have_no_parent(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t a = task_create(dummy_task, NULL, 256, 2);
+  TCB *t = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(t);
+  TEST_ASSERT_EQ(t->task_id, a);
+  TEST_ASSERT_EQ(t->parent_id, 0u);
+}
+
+/* v_task_kill: ownership is the whole permission model. A task may end what it
+ * spawned and nothing else — not a sibling, not its own parent, not a task
+ * privileged init created, and not a stale id. */
+static void test_task_kill_permissions(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t init_task = task_create_named(dummy_task, NULL, 256, 1, "from_init");
+  uint32_t pid = task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  TEST_ASSERT_EQ(current_task->task_id, pid);
+
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "mine"};
+  int mine = v_task_spawn(&cfg);
+  TEST_ASSERT(mine > 0);
+
+  /* Not ours: a task init created, and a bogus id. */
+  TEST_ASSERT_EQ(v_task_kill(init_task), V_TASK_EPERM);
+  TEST_ASSERT_EQ(v_task_kill(0), V_TASK_EINVAL);
+  TEST_ASSERT_EQ(v_task_kill(0xDEADBEEF), V_TASK_EINVAL);
+  /* Not even ourselves: a task exits itself, it does not kill itself. */
+  TEST_ASSERT_EQ(v_task_kill(pid), V_TASK_EPERM);
+
+  /* Ours: allowed, and it really is terminated. */
+  TEST_ASSERT_EQ(v_task_kill((uint32_t)mine), 1);
+  TEST_ASSERT_EQ(v_task_kill((uint32_t)mine), V_TASK_EINVAL); /* already gone */
+
+  /* A sibling may not end its sibling: both are the parent's, neither is the
+   * other's. Run as the first child and try to kill the second. */
+  int a = v_task_spawn(&cfg);
+  int b = v_task_spawn(&cfg);
+  TEST_ASSERT(a > 0 && b > 0);
+  TCB *ta = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(ta);
+  current_task = ta; /* pretend a sibling is running */
+  uint32_t other = (ta->task_id == (uint32_t)a) ? (uint32_t)b : (uint32_t)a;
+  TEST_ASSERT_EQ(v_task_kill(other), V_TASK_EPERM);
+  /* ...and a child may not end its parent. */
+  TEST_ASSERT_EQ(v_task_kill(pid), V_TASK_EPERM);
+}
+
+/* A task's children die with it, at any depth: the owner is gone, so nobody is
+ * left who may end them. */
+static void test_task_kill_cascades(void) {
+  full_reset();
+  scheduler_init();
+  (void)task_create_named(dummy_task, NULL, 512, 3, "root");
+  current_task = ready_lists[3];
+
+  /* root -> kid -> grandkid, each spawned by the one above it. */
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "kid"};
+  int kid = v_task_spawn(&cfg);
+  TEST_ASSERT(kid > 0);
+  TCB *tkid = ready_lists[2];
+  TEST_ASSERT_EQ(tkid->task_id, (uint32_t)kid);
+
+  current_task = tkid; /* the kid spawns its own worker */
+  cfg.priority = 1;
+  cfg.name = "grandkid";
+  int grandkid = v_task_spawn(&cfg);
+  TEST_ASSERT(grandkid > 0);
+  TCB *tgk = ready_lists[1];
+  TEST_ASSERT_EQ(tgk->task_id, (uint32_t)grandkid);
+  TEST_ASSERT_EQ(tgk->parent_id, (uint32_t)kid);
+
+  /* root ends the kid: the grandkid must go too, though root never knew it. */
+  current_task = ready_lists[3];
+  TEST_ASSERT_EQ(v_task_kill((uint32_t)kid), 1);
+  TEST_ASSERT_EQ(tkid->status, TASK_TERMINATED);
+  TEST_ASSERT_EQ(tgk->status, TASK_TERMINATED);
+
+  /* A task created by init is nobody's child and survives the sweep. */
+  uint32_t independent = task_create_named(dummy_task, NULL, 256, 1, "indep");
+  TCB *ti = NULL;
+  for (TCB *t = ready_lists[1]; t; t = t->next)
+    if (t->task_id == independent)
+      ti = t;
+  TEST_ASSERT_NOT_NULL(ti);
+  TEST_ASSERT(ti->status != TASK_TERMINATED);
+}
+
+/* Exiting cascades exactly like being killed: the rule is about the owner being
+ * gone, not about how it went. */
+static void test_task_exit_cascades(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t pid = task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "worker"};
+  int w1 = v_task_spawn(&cfg);
+  int w2 = v_task_spawn(&cfg);
+  TEST_ASSERT(w1 > 0 && w2 > 0);
+  TCB *t1 = ready_lists[2], *t2 = t1 ? t1->next : NULL;
+  TEST_ASSERT_NOT_NULL(t1);
+  TEST_ASSERT_NOT_NULL(t2);
+
+  task_exit_request(pid); /* the parent goes */
+  TEST_ASSERT_EQ(t1->status, TASK_TERMINATED);
+  TEST_ASSERT_EQ(t2->status, TASK_TERMINATED);
+}
+
+/* ...including when the parent exits itself. This is the SYS_exit body, a
+ * different path from task_exit_request, and it must cascade the same way. */
+static void test_task_self_exit_cascades(void) {
+  full_reset();
+  scheduler_init();
+  (void)task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "worker"};
+  TEST_ASSERT(v_task_spawn(&cfg) > 0);
+  TCB *worker = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(worker);
+
+  v_task_exit_impl(); /* the parent ends itself */
+  TEST_ASSERT_EQ(current_task->status, TASK_TERMINATED);
+  TEST_ASSERT_EQ(worker->status, TASK_TERMINATED);
+}
+
 /* v_task_info: the caller's own id, priority, stack size and NAME — the name
  * copied into the caller's struct, never the kernel pointer. */
 static void test_task_info_self(void) {
@@ -556,6 +745,12 @@ static const test_case_t scheduler_cases[] = {
     TEST_CASE(test_task_block_idle_is_noop),
     TEST_CASE(test_task_exit_request_terminates),
     TEST_CASE(test_v_task_exit_impl_terminates_current),
+    TEST_CASE(test_task_spawn_rules),
+    TEST_CASE(test_task_kill_permissions),
+    TEST_CASE(test_task_kill_cascades),
+    TEST_CASE(test_task_exit_cascades),
+    TEST_CASE(test_task_self_exit_cascades),
+    TEST_CASE(test_task_spawn_init_tasks_have_no_parent),
     TEST_CASE(test_task_info_self),
     TEST_CASE(test_task_delay_until),
     TEST_CASE(test_task_naming),
