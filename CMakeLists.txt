@@ -126,7 +126,8 @@ endif()
 
 # Same for the Bus IPC example: kernel/bus.c is off by default while the
 # subsystem is in progress.
-if((VAIOS_EXAMPLE STREQUAL "BUS_IPC" OR VAIOS_EXAMPLE STREQUAL "BUS_USER") AND NOT VAIOS_MODULE_BUS)
+if((VAIOS_EXAMPLE STREQUAL "BUS_IPC" OR VAIOS_EXAMPLE STREQUAL "BUS_USER" OR
+    VAIOS_EXAMPLE STREQUAL "FLIGHT_USER") AND NOT VAIOS_MODULE_BUS)
   message(STATUS "VAIOS_EXAMPLE=${VAIOS_EXAMPLE} uses the Bus IPC API -- forcing VAIOS_MODULE_BUS ON.")
   set(VAIOS_MODULE_BUS ON CACHE BOOL "Build the Bus IPC subsystem (in progress)" FORCE)
 endif()

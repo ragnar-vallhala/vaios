@@ -150,6 +150,13 @@ int v_queue_open(const char *name, int flags);
  * room (MPMC only; an SPSC queue has nothing to sleep on and returns VA_FAIL at
  * once). VA_PASS, VA_FAIL when full/timed out, V_Q_EINVAL on a bad handle. */
 int v_queue_send(int fd, const void *item, uint32_t ticks);
+/* One attempt, never waiting: VA_PASS, VA_FAIL when full/empty, V_Q_EINVAL on a
+ * bad handle. These are the syscalls; send/recv above are these plus v_queue_wait
+ * in a loop, composed on the CALLER's side. That split is not cosmetic — a
+ * syscall body cannot both block and copy, so a transfer that waited inside the
+ * kernel would report the wait's success having copied nothing. */
+int v_queue_try_send(int fd, const void *item);
+int v_queue_try_recv(int fd, void *item);
 /* Wait for room (for_write) or for an element, up to ticks. VA_PASS when the
  * queue is (or became) ready, VA_FAIL on timeout, V_Q_EINVAL on a bad handle or
  * an SPSC queue (which has nothing to sleep on). v_queue_send/recv are this plus
