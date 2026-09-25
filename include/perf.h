@@ -135,6 +135,12 @@ void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out);
  * Good enough for diagnostic display; not for cross-domain math. */
 void v_perf_snapshot(v_perf_snapshot_t *out);
 
+/* The calling task's own counters. v_perf_task_stats takes a TCB pointer, which
+ * an unprivileged task cannot hold, so this is the user-facing form: it resolves
+ * the caller itself and copies the counters out. Self only — one task has no
+ * business reading another's. */
+void v_perf_self_stats(v_perf_task_t *out);
+
 /* Pretty-print the snapshot via print_fmt — multi-line, UART-bound. Slow:
  * use v_perf_dump_to_file (Phase 6b) for long-run capture to avoid
  * stretching the serial console. */
@@ -175,6 +181,9 @@ static inline void v_perf_task_stats(struct Task_Control_Block *t,
 }
 static inline void v_perf_snapshot(v_perf_snapshot_t *out) {
   if (out) { v_perf_snapshot_t z = {0}; *out = z; }
+}
+static inline void v_perf_self_stats(v_perf_task_t *out) {
+  if (out) { v_perf_task_t z = {0}; *out = z; }
 }
 static inline void v_perf_dump(void) {}
 static inline void v_perf_reset(void) {}

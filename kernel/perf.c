@@ -14,6 +14,7 @@
 #include "atomic.h"
 #include "port.h" /* ENTER_CRITICAL / EXIT_CRITICAL */
 #include "task.h"
+#include "syscall.h" /* SVC trap wrappers (VAIOS_SYSCALL_SVC) */
 #include "utils.h" /* print_fmt, print_fmt_buf, v_get_ticks */
 
 #include <stddef.h>
@@ -264,9 +265,23 @@ void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out) {
      * With no heap, the run starts at the block base (index 0), matching the
      * original stack-only measurement. */
     uint32_t start = 0;
+#if VAIOS_MPU_STACK_GUARD
+    /* The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack-overflow
+     * guard region. AP=000 denies EVERYONE, privileged included, so scanning
+     * from the block base faults the kernel — and from a syscall handler that
+     * fault escalates with the logger unavailable, which looks like a hang.
+     * task.c skips the guard the same way wherever it walks a task block. */
+    start = VAIOS_MPU_GUARD_SIZE / sizeof(uint32_t);
+#endif
 #if VAIOS_TASK_HEAP
-    start = (uint32_t)((t->heap_peak_brk - (uint8_t *)t->mem_block) /
-                       sizeof(uint32_t));
+    /* The heap's peak break is already above the guard (heap_base = block base
+     * + guard), and memory the heap never reached still holds the sentinel. */
+    if (t->heap_peak_brk) {
+      uint32_t h = (uint32_t)((t->heap_peak_brk - (uint8_t *)t->mem_block) /
+                              sizeof(uint32_t));
+      if (h > start)
+        start = h;
+    }
 #endif
     uint32_t j = start;
     while (j < total && t->mem_block[j] == V_PERF_STACK_FILL)
@@ -293,6 +308,12 @@ void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out) {
  * -------------------------------------------------------------------------- */
 
 void v_perf_snapshot(v_perf_snapshot_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) { // task-facing: the DWT and the counters are kernel-side
+    v_svc2(SYS_perf_snapshot, (uintptr_t)out, 0);
+    return;
+  }
+#endif
   if (!out) return;
   ENTER_CRITICAL();
   out->cycles         = v_perf_cycles();
@@ -303,6 +324,16 @@ void v_perf_snapshot(v_perf_snapshot_t *out) {
   v_perf_isr_stats(&out->isr);
   v_perf_ipc_stats(&out->ipc);
   v_perf_heap_stats(&out->heap);
+}
+
+void v_perf_self_stats(v_perf_task_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) {
+    v_svc2(SYS_perf_snapshot, 0, (uintptr_t)out);
+    return;
+  }
+#endif
+  v_perf_task_stats(get_current_task(), out);
 }
 
 /* --------------------------------------------------------------------------

@@ -27,6 +27,8 @@
  * topics — the message count is a compile-time constant and each side counts
  * its own — and v_bus_check stays in the privileged host suite. A leaked block
  * shows up here as the producer stalling, which fails the consumers' count.
+ * Each task also asks who it is (v_task_info) and reads its own perf counters
+ * (v_perf_self_stats) — both are TCB/kernel state, so both are syscalls.
  * The producer also reads the clock and runs a drift-free cadence
  * (v_get_ticks / task_delay_until), which are kernel globals behind SYS_ticks
  * and SYS_delay_until. Each task prints "[busu] <P|A|B> PASS" / "FAIL".
@@ -35,6 +37,7 @@
 #error "NAVHAL is required for this example"
 #endif
 #include "bus.h"
+#include "perf.h"
 #include "navhal.h"
 #include "port.h" // v_port_is_privileged
 #include "task.h"
@@ -58,6 +61,26 @@ static void say(const char *fmt, int a, int b) {
   char buf[96];
   int n = print_fmt_buf(buf, sizeof buf, fmt, a, b);
   v_file_write(1, buf, n);
+}
+
+// Who am I, and what have I done: both read kernel-side state (the TCB, the
+// perf counters), so both arrive through syscalls. The name is compared against
+// the literal main created the task with, which proves it was COPIED out of the
+// TCB rather than handed over as a kernel pointer.
+static int check_self(const char *expect_name) {
+  v_task_info_t me;
+  if (v_task_info(&me) != VA_PASS || v_strcmp(me.name, expect_name) != 0) {
+    say("[busu] self: bad info\r\n", 0, 0);
+    return 1;
+  }
+  v_perf_task_t mine;
+  v_perf_self_stats(&mine);
+  if (mine.switches_in == 0) { /* it is running, so it was switched in */
+    say("[busu] self: no perf counters\r\n", 0, 0);
+    return 1;
+  }
+  say("[busu] id=%d prio=%d\r\n", (int)me.id, (int)me.priority);
+  return 0;
 }
 
 // The pointer checks, run against the producer's own handles. The sends go to
@@ -106,6 +129,7 @@ static void producer(void *arg) {
   (void)arg;
   int bad = 0;
   say("[busu] P nPRIV=%d\r\n", v_port_is_privileged() ? 0 : 1, 0);
+  bad |= check_self("prod");
 
   int q = v_bus_open("sensor.q", V_BUS_WR); // names read straight from flash
   int p = v_bus_open("cmd.pipe", V_BUS_WR);
@@ -166,6 +190,7 @@ static void consumer(void *arg) {
 
   say(id == 1 ? "[busu] A nPRIV=%d\r\n" : "[busu] B nPRIV=%d\r\n",
       v_port_is_privileged() ? 0 : 1, 0);
+  bad |= check_self(id == 1 ? "consA" : "consB");
 
   int q = v_bus_open("sensor.q", V_BUS_RD);
   if (q < 0) {
@@ -232,9 +257,9 @@ int main(void) {
   v_log(LOG_INFO, "bus_user: start (privileged main)");
 
   // Consumers above the producer, so they subscribe before it publishes.
-  task_create(producer, NULL, 2048, 2);
-  task_create(consumer, (void *)1, 2048, 3);
-  task_create(consumer, (void *)2, 2048, 3);
+  task_create_named(producer, NULL, 2048, 2, "prod");
+  task_create_named(consumer, (void *)1, 2048, 3, "consA");
+  task_create_named(consumer, (void *)2, 2048, 3, "consB");
   scheduler_start();
   for (;;)
     ;

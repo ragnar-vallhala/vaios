@@ -313,6 +313,26 @@ const char *task_get_name_by_id(uint32_t task_id) {
   return task_get_name(get_task_by_id(task_id));
 }
 
+int v_task_info(v_task_info_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc1(SYS_task_info, (uintptr_t)out);
+#endif
+  if (!out || current_task == NULL)
+    return VA_FAIL;
+  ENTER_CRITICAL();
+  out->id = current_task->task_id;
+  out->priority = current_task->priority;
+  out->stack_size = current_task->stack_size;
+  const char *n = task_get_name(current_task);
+  uint32_t i = 0;
+  for (; i + 1u < V_TASK_NAME_MAX && n[i]; i++) // bounded: a long name truncates
+    out->name[i] = n[i];
+  out->name[i] = 0;
+  EXIT_CRITICAL();
+  return VA_PASS;
+}
+
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------

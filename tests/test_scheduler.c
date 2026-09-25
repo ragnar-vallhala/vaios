@@ -393,6 +393,38 @@ static void test_task_naming(void) {
   TEST_ASSERT_EQ(strcmp(task_get_name_by_id(0xDEADBEEF), ""), 0);
 }
 
+/* v_task_info: the caller's own id, priority, stack size and NAME — the name
+ * copied into the caller's struct, never the kernel pointer. */
+static void test_task_info_self(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t id = task_create_named(dummy_task, NULL, 256, 2, "rate_ctl");
+  TEST_ASSERT(id != 0u);
+  current_task = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(current_task);
+
+  v_task_info_t info;
+  memset(&info, 0xAA, sizeof info);
+  TEST_ASSERT_EQ(v_task_info(&info), 1);
+  TEST_ASSERT_EQ(info.id, id);
+  TEST_ASSERT_EQ(info.priority, 2u);
+  TEST_ASSERT_EQ(info.stack_size, current_task->stack_size);
+  TEST_ASSERT_EQ(strcmp(info.name, "rate_ctl"), 0);
+  /* The struct holds a copy: it must not alias the TCB's flash pointer. */
+  TEST_ASSERT((const char *)info.name != task_get_name(current_task));
+
+  /* A name longer than the field truncates instead of overrunning. */
+  task_set_name(id, "a_very_long_task_name_indeed");
+  TEST_ASSERT_EQ(v_task_info(&info), 1);
+  TEST_ASSERT_EQ(strlen(info.name), (size_t)(V_TASK_NAME_MAX - 1));
+  TEST_ASSERT_EQ(strncmp(info.name, "a_very_long_tas", 15), 0);
+
+  /* Guards. */
+  TEST_ASSERT_EQ(v_task_info(NULL), 0);
+  current_task = NULL;
+  TEST_ASSERT_EQ(v_task_info(&info), 0);
+}
+
 /* task_delay_until: drift-free periodic delay. Blocks until the ABSOLUTE tick
  * *last_wake + period (set as the task's deadline) and advances *last_wake;
  * returns false without blocking when the deadline already passed (overrun). */
@@ -524,6 +556,7 @@ static const test_case_t scheduler_cases[] = {
     TEST_CASE(test_task_block_idle_is_noop),
     TEST_CASE(test_task_exit_request_terminates),
     TEST_CASE(test_v_task_exit_impl_terminates_current),
+    TEST_CASE(test_task_info_self),
     TEST_CASE(test_task_delay_until),
     TEST_CASE(test_task_naming),
     TEST_CASE(test_task_snapshot_list_covers_all_once),
