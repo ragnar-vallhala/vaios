@@ -67,6 +67,21 @@ void v_heap_memory_init(void) {
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
+  // Does the heap actually fit in RAM? _heap_start sits after .bss, so a build
+  // whose statics grew (or whose HEAP_SIZE was never sized for this part) puts
+  // the arena's end past the top of SRAM — and the memset below then walks off
+  // the end and takes a BusFault, escalated to HardFault, before a single line
+  // of output exists. That is a miserable way to learn about a sizing mistake,
+  // so say it instead.
+  // Through uintptr_t, not pointer arithmetic: _heap_start is a linker symbol
+  // declared as a one-element array, so indexing it draws a bogus
+  // -Warray-bounds (the same fiction this file already suppresses below).
+  const uintptr_t heap_last = (uintptr_t)heap_mem_head + HEAP_SIZE - 1u;
+  if (!v_port_ptr_is_ram((const void *)heap_last))
+    v_panic(__FILE__, __LINE__,
+            "heap does not fit: %u bytes at %x runs past the end of RAM",
+            (unsigned)HEAP_SIZE, (unsigned)(uintptr_t)heap_mem_head);
+
   v_memset(heap_mem_head, 0, HEAP_SIZE);
 
   vheap_index_reset();

@@ -42,6 +42,19 @@ config EXAMPLE_MPU_USER_DEMO
 	select VAIOS_TASK_HEAP
 	select VAIOS_MPU_USER_SEPARATION
 
+config EXAMPLE_SD_USER
+	bool "sd_user"
+	# An unprivileged task using the SD card through the VFS mount (M5's
+	# on-target gate), plus a higher-priority task measuring what a synchronous
+	# filesystem syscall does to its cadence (decision D3). Hardware only:
+	# Renode's STM32F4 has no card.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_MODULE_VFS
+
 config EXAMPLE_FLIGHT_USER
 	bool "flight_user"
 	# The release gate for unprivileged operation (roadmap M7): a flight-shaped

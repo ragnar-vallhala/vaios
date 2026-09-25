@@ -840,7 +840,7 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **B5** | Multi-producer topics | **done — WITHOUT the pipeline**: publishers are independent by construction (see §6.2), proven by a deterministic mid-copy interleave + a two-producer fuzz |
 | **B6** | Notification engine: blocking recv (§6.4) | **blocking done** (unit: park/wake/timeout; SITL: blocked unprivileged reader); callback worker outstanding |
 | **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | **done** — stats counted where the state changes; snapshotter is a pump the app drives from its own low-priority task |
-| **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | benchmark **committed** (`examples/benchmark/bench_bus.c`, incl. the under-load case); the numbers wait on hardware — see `docs/benchmark/bus-ipc.md` |
+| **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | **done** — measured on an F401 at 84 MHz: pipe 6.7 µs, zero copy 8.6 µs, copy 10.0 µs, copy under a full pool 12.0 µs mean; worst case 21.4 µs = 2.1% of a 1 kHz period. Eviction under load costs ~20%, so the allocator's reclaim loop does NOT need to be made incremental. See `docs/benchmark/bus-ipc.md` |
 | **B9** | Unprivileged access: topic fds + `SYS_bus_*` (§17) | host dispatch tests + Renode user-task scenario — **done** |
 
 ---
@@ -866,6 +866,13 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 5. **Multi-block payload copy** crossing non-contiguous blocks needs a scatter
    copy in the Copy stage — straightforward but must stay outside the allocator
    critical section (§7).
+
+> **Measured (B8).** The concern behind questions 2 and 4 — that the allocator's
+> reclaim/evict loop is a critical section whose length grows with pool pressure —
+> is now quantified: saturating the pool costs +167 cycles mean (~2 µs) and +10%
+> on the worst case, on an F401 at 84 MHz. It is a cost, not a cliff, so the loop
+> stays as it is. Guard-region sizing (question 2) can be chosen for memory rather
+> than for jitter.
 
 ---
 
