@@ -48,12 +48,14 @@
 
 #define MSGS 400
 #define BLOCKS 24
+#define HELPER_MARK 0xC0DEu
+#define HELPER_MSGS 5
 #define KERNEL_SRAM ((void *)0x20000010u)
 #define EFAULT_RC (-14)
 
 V_BUS_POOL(pool, 32, BLOCKS);
 static v_bus_t bus;
-static v_bus_topic_t sensor, cmd;
+static v_bus_topic_t sensor, cmd, helper;
 static const v_bus_topic_cfg_t PIPE_CFG = {.pipe = 1, .reserve = 4};
 
 // Console via fd 1: read-only syscall arguments may point into flash, so the
@@ -125,6 +127,28 @@ static int check_efault(int wfd, int rfd) {
   return bad;
 }
 
+// Spawned by the producer through SYS_task_spawn (M3): an unprivileged task
+// creating another unprivileged task. It reports back the only way it can — over
+// a topic — since it shares no memory with its parent.
+static void helper_task(void *arg) {
+  (void)arg;
+  int bad = 0;
+  say("[busu] H nPRIV=%d\r\n", v_port_is_privileged() ? 0 : 1, 0);
+  bad |= check_self("helper");
+  int w = v_bus_open("helper.q", V_BUS_WR);
+  if (w < 0)
+    bad = 1;
+  for (int i = 0; i < HELPER_MSGS && !bad; i++) {
+    uint32_t mark = HELPER_MARK;
+    if (v_bus_send(w, &mark, sizeof mark) != VA_PASS)
+      bad = 1;
+    v_delay(2);
+  }
+  say(bad ? "[busu] H FAIL\r\n" : "[busu] H PASS\r\n", 0, 0);
+  for (;;)
+    v_delay(1000);
+}
+
 // Producer: publishes a counter on sensor.q and mirrors it onto cmd.pipe.
 static void producer(void *arg) {
   (void)arg;
@@ -148,6 +172,46 @@ static void producer(void *arg) {
   }
   if (!bad)
     bad = check_efault(p, q);
+
+  // Spawn a worker of our own. Priority 1 is below ours, which is the rule;
+  // asking for more would be refused.
+  if (!bad) {
+    v_task_spawn_t child = {.entry = helper_task, .arg = 0, .stack_size = 1024,
+                            .priority = 1, .name = "helper"};
+    int hid = v_task_spawn(&child);
+    if (hid <= 0) {
+      say("[busu] P spawn failed %d\r\n", hid, 0);
+      bad = 1;
+    }
+    // Outranking ourselves must be refused, whatever we ask for.
+    child.priority = 3;
+    if (v_task_spawn(&child) != V_TASK_EPERM) {
+      say("[busu] P spawn escalated\r\n", 0, 0);
+      bad = 1;
+    }
+    // Ownership: a second worker, ended by us because it is ours...
+    child.priority = 1;
+    child.name = "doomed";
+    int did = v_task_spawn(&child);
+    if (did <= 0 || v_task_kill((uint32_t)did) != VA_PASS) {
+      say("[busu] P kill own child failed %d\r\n", did, 0);
+      bad = 1;
+    }
+    // ...while a task we did not create is not ours to end. consA is a sibling
+    // created by init, so its id is near ours and definitely not our child.
+    v_task_info_t me;
+    if (v_task_info(&me) == VA_PASS) {
+      for (uint32_t other = 1; other <= 4u; other++) {
+        if (other == me.id)
+          continue;
+        int rc = v_task_kill(other);
+        if (rc == VA_PASS) { // it killed something that was not its child
+          say("[busu] P killed a stranger %d\r\n", (int)other, 0);
+          bad = 1;
+        }
+      }
+    }
+  }
 
   for (uint32_t i = 0; i < MSGS && !bad; i++) {
     // Drop policy: a full pool refuses the send, so retry rather than skip —
@@ -199,6 +263,8 @@ static void consumer(void *arg) {
     bad = 1;
   }
   int p = v_bus_open("cmd.pipe", V_BUS_RD); // only one of the two gets it
+  int hq = id == 1 ? v_bus_open("helper.q", V_BUS_RD) : -1;
+  uint32_t helper_seen = 0;
   if (id == 2 && p != V_BUS_EBUSY) {
     say("[busu] second pipe reader p=%d (want %d)\r\n", p, V_BUS_EBUSY);
     bad = 1;
@@ -233,11 +299,21 @@ static void consumer(void *arg) {
       if (v_bus_recv(p, &prx) == VA_PASS)
         pipe_got++;
     }
+    if (hq >= 0) { // messages from the task the producer spawned
+      uint32_t hv;
+      v_bus_rx_t hrx = {.buf = &hv, .cap = sizeof hv};
+      if (v_bus_recv(hq, &hrx) == VA_PASS && hv == HELPER_MARK)
+        helper_seen++;
+    }
   }
   // It must have followed the stream to the end, and read most of it (a few
   // early messages predate its subscription).
   if (!bad && (last + 1 != MSGS || got < MSGS - 16)) {
     say("[busu] only got %d, last %d\r\n", (int)got, (int)last);
+    bad = 1;
+  }
+  if (!bad && hq >= 0 && helper_seen == 0) {
+    say("[busu] nothing from the spawned task\r\n", 0, 0);
     bad = 1;
   }
   if (!bad && p >= 0 && pipe_got == 0) {
@@ -259,6 +335,7 @@ int main(void) {
   v_bus_init(&bus, pool_blocks, pool_desc, 32, BLOCKS);
   v_bus_topic_declare(&bus, &sensor, "sensor.q", NULL);
   v_bus_topic_declare(&bus, &cmd, "cmd.pipe", &PIPE_CFG);
+  v_bus_topic_declare(&bus, &helper, "helper.q", NULL); // what a spawned task writes
   v_log(LOG_INFO, "bus_user: start (privileged main)");
 
   // Consumers above the producer, so they subscribe before it publishes.

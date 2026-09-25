@@ -116,6 +116,26 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
 #endif
+    case SYS_task_spawn: {
+      // The descriptor is read out of the caller's own memory...
+      const v_task_spawn_t *cfg = (const v_task_spawn_t *)(uintptr_t)args[0];
+      if (!v_access_ok(cfg, sizeof(*cfg), 0))
+        return V_EFAULT;
+      // ...the entry point must be CODE. v_access_ok covers data regions only;
+      // the flash window (read + execute, no write) is the one a task may enter,
+      // and SRAM is execute-never, so a RAM entry is refused here with a clear
+      // errno instead of faulting on the child's first instruction.
+      uintptr_t end;
+      if (!v_port_user_region((uintptr_t)(void *)cfg->entry, 0, &end))
+        return V_EFAULT;
+      // ...and the name, when given, is a user string like any other.
+      if (cfg->name &&
+          v_strnlen_user(cfg->name, V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      // cfg->arg is deliberately NOT validated: it is opaque to the kernel and
+      // the child cannot read the parent's block anyway.
+      break;
+    }
     case SYS_task_info:
       if (!v_access_ok((void *)(uintptr_t)args[0], sizeof(v_task_info_t), 1))
         return V_EFAULT;
@@ -188,6 +208,15 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        runs the body. args[0] = ticks. */
     task_delay(args[0]);
     return 0;
+  case SYS_task_spawn:
+    /* Create a child task, owned by the caller. args[0] = v_task_spawn_t. The
+       child is unprivileged like every created task and cannot outrank its
+       parent; only the parent may later end it. */
+    return v_task_spawn((const v_task_spawn_t *)(uintptr_t)args[0]);
+  case SYS_task_kill:
+    /* End a task the caller spawned. args[0] = child id. Ownership is the whole
+       check: not privilege, not priority — only the task that created it. */
+    return v_task_kill((uint32_t)args[0]);
   case SYS_task_info:
     /* The caller's own id / priority / name / stack size, copied out of the
        TCB. args[0] = v_task_info_t to fill. */

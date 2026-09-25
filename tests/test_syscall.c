@@ -290,6 +290,48 @@ static void test_unpriv_ro_pbus_tx_ok_rx_refused(void) {
   stub_set_user_ro(0, 0);
 }
 
+/* ---- Spawning (M3): the descriptor is the caller's, the ENTRY POINT must be
+ * code. v_access_ok covers data regions; a RAM entry would mean asking the
+ * kernel to start a task on a buffer the caller wrote, so it is refused here. */
+static void test_unpriv_spawn_bad_desc_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_task_spawn, BAD_PTR, 0, 0), T_EFAULT);
+}
+static void test_unpriv_spawn_ram_entry_refused(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  v_task_spawn_t *cfg = (v_task_spawn_t *)(uintptr_t)base;
+  *cfg = (v_task_spawn_t){.entry = (void (*)(void *))(uintptr_t)(base + 64),
+                          .stack_size = 256, .priority = 1};
+  /* entry points into the caller's own block: data, not code. */
+  TEST_ASSERT_EQ(call(SYS_task_spawn, base, 0, 0), T_EFAULT);
+}
+/* With a read-only (flash-like) window armed, an entry inside it passes
+ * validation; the same entry is refused the moment that window is gone. */
+static void test_unpriv_spawn_flash_entry_accepted(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_task_spawn_t *cfg = (v_task_spawn_t *)(uintptr_t)base;
+  *cfg = (v_task_spawn_t){.entry = (void (*)(void *))RO_LO,
+                          .stack_size = 256, .priority = 1};
+  TEST_ASSERT_EQ(call(SYS_task_spawn, base, 0, 0), T_EFAULT); /* window off */
+  stub_set_user_ro(RO_LO, RO_HI);
+  TEST_ASSERT(call(SYS_task_spawn, base, 0, 0) != T_EFAULT); /* validated */
+  stub_set_user_ro(0, 0);
+}
+/* A name is a user string like any other, and NULL is legal (unnamed child). */
+static void test_unpriv_spawn_name_validated(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_task_spawn_t *cfg = (v_task_spawn_t *)(uintptr_t)base;
+  stub_set_user_ro(RO_LO, RO_HI);
+  *cfg = (v_task_spawn_t){.entry = (void (*)(void *))RO_LO,
+                          .stack_size = 256, .priority = 1,
+                          .name = (const char *)BAD_PTR};
+  TEST_ASSERT_EQ(call(SYS_task_spawn, base, 0, 0), T_EFAULT);
+  cfg->name = NULL;
+  TEST_ASSERT(call(SYS_task_spawn, base, 0, 0) != T_EFAULT);
+  stub_set_user_ro(0, 0);
+}
+
 /* ---- A privileged caller bypasses the validation switch entirely. --------- */
 static void test_priv_caller_skips_validation(void) {
   (void)syscall_set_caller(BLOCK_SZ, /*unpriv=*/0);
@@ -340,6 +382,10 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+    TEST_CASE(test_unpriv_spawn_bad_desc_efault),
+    TEST_CASE(test_unpriv_spawn_ram_entry_refused),
+    TEST_CASE(test_unpriv_spawn_flash_entry_accepted),
+    TEST_CASE(test_unpriv_spawn_name_validated),
     TEST_CASE(test_unpriv_task_info_bad_ptr_efault),
     TEST_CASE(test_unpriv_task_info_valid_passes),
     TEST_CASE(test_unpriv_perf_bad_ptrs_efault),

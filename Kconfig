@@ -323,6 +323,21 @@ config VAIOS_IPC_FD
       close(fd) drops the reference (object destroyed at refcount 0). This
       removes the raw kernel pointer from user handles and gives per-task
       capability isolation. The pointer-based v_semaphore_* API still exists.
+config VAIOS_TASK_SPAWN_STACK_MAX
+    int "Largest stack a task may request when spawning (bytes)"
+    default 4096
+    help
+      Upper bound on v_task_spawn's stack_size. A task spawns from the global
+      heap, so without a cap one task can exhaust the heap and take the system
+      with it. Privileged init is not bound by this (task_create takes any size).
+config VAIOS_TASK_MAX_CHILDREN
+    int "Live children one task may have at once"
+    default 4
+    help
+      v_task_spawn refuses past this with -EAGAIN. Counts children currently
+      alive; a child that exits gives its slot back. Bounds the fan-out of a
+      spawn loop, together with VAIOS_TASK_SPAWN_STACK_MAX.
+
 config VAIOS_BUS_MAX_OPEN
     int "Bus IPC user handles (system-wide)"
     depends on VAIOS_DEVFS
