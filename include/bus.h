@@ -13,6 +13,17 @@
 // Storage is caller-owned, like the peripheral-bus arbiter (periph_bus.h): the
 // kernel keeps no object table and the data path never allocates.
 //
+// PRIVILEGED CALLERS ONLY, so far: kernel code, ISRs (the single-producer
+// publish path is meant for them) and privileged tasks. The bus, its topics and
+// the pool are kernel memory, and the critical sections are BASEPRI writes an
+// unprivileged task's MSR silently skips — so under VAIOS_MPU_USER_SEPARATION a
+// user task would fault on the first block it touched, without even being
+// atomic. Access for user tasks is phase B9 of the plan (topic fds +
+// SYS_bus_*, copying in and out, as v_pbus_open/v_pbus_xfer do). Note the
+// zero-copy calls below hand out a pointer INTO the pool, so they cannot be
+// exposed to a user task without granting it the whole pool: a user-facing
+// zero-copy path means a pipe whose ring is mapped to that one task.
+//
 //   V_BUS_POOL(ctl_pool, 64, 128);   // 128 blocks of 64 bytes, static
 //   static v_bus_t ctl;
 //   static v_bus_topic_t imu;
