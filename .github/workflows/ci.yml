@@ -23,7 +23,10 @@ jobs:
           # runs at configure time (tools/kconfig.py). cppcheck backs the static
           # analysis gate run_tests.sh invokes (tools/run_static_analysis.sh);
           # gcc -fanalyzer ships with gcc above.
-          python3 -m pip install --break-system-packages kconfiglib
+          # gcovr merges the gcov runs of every test binary for the coverage
+          # step below; without it tools/coverage.sh falls back to a
+          # per-file approximation.
+          python3 -m pip install --break-system-packages kconfiglib gcovr
 
       # Fails fast, before the build, if any hardware-specific code (inline asm,
       # arch macros, vendor includes, memory-mapped I/O) leaked into kernel/ or
@@ -39,6 +42,12 @@ jobs:
       # unprivileged syscalls with rodata / own-stack pointers.
       - name: Host-port user-pointer check
         run: bash tools/run_host.sh HOST_USER_RO
+
+      # Line/branch/function coverage of the host-compiled kernel + port
+      # sources, merged across every test binary. The floor guards against a
+      # drop; raise it as coverage improves (73.0% at the time of writing).
+      - name: Host coverage
+        run: bash tools/coverage.sh --min-lines 70
 
   sitl:
     name: On-target (Renode) tests
@@ -90,3 +99,9 @@ jobs:
 
       - name: Peripheral-bus unprivileged access in Renode
         run: bash tools/renode_pbus_user.sh
+
+      - name: Bus IPC (ISR producer, overwrite + drop topics) in Renode
+        run: bash tools/renode_bus_ipc.sh
+
+      - name: Bus IPC unprivileged access (fd syscalls) in Renode
+        run: bash tools/renode_bus_user.sh

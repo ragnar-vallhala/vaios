@@ -98,6 +98,7 @@ option(VAIOS_MODULE_VFS         "Build the virtual file system (FatFs)"    OFF)
 option(VAIOS_MODULE_SEMIHOSTING "Build the semihosting debug I/O module"   ON)
 option(VAIOS_MODULE_FIFO        "Build the SPSC/MPMC FIFO data structures" ON)
 option(VAIOS_MODULE_PERF        "Build the kernel performance counters"    ON)
+option(VAIOS_MODULE_BUS         "Build the Bus IPC subsystem (in progress)" OFF)
 
 # Dependency resolution (Kconfig-style 'select').
 if(VAIOS_MODULE_TERMINAL AND NOT VAIOS_MODULE_SEMIHOSTING)
@@ -123,9 +124,21 @@ if(VAIOS_EXAMPLE STREQUAL "VFS_PERF" OR
   endif()
 endif()
 
+# Same for the Bus IPC example: kernel/bus.c is off by default while the
+# subsystem is in progress.
+if((VAIOS_EXAMPLE STREQUAL "BUS_IPC" OR VAIOS_EXAMPLE STREQUAL "BUS_USER") AND NOT VAIOS_MODULE_BUS)
+  message(STATUS "VAIOS_EXAMPLE=${VAIOS_EXAMPLE} uses the Bus IPC API -- forcing VAIOS_MODULE_BUS ON.")
+  set(VAIOS_MODULE_BUS ON CACHE BOOL "Build the Bus IPC subsystem (in progress)" FORCE)
+endif()
+
+# The Bus IPC syscalls live in the port's dispatch (portable/), not in the
+# kernel target, so both must agree on whether the module exists: the kernel
+# target's own -D would otherwise leave portable/ reading the Kconfig default.
+add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
+
 message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
-               "perf=${VAIOS_MODULE_PERF}")
+               "perf=${VAIOS_MODULE_PERF} bus=${VAIOS_MODULE_BUS}")
 
 # Heap allocator selection. The facade kernel/memory/memory.c always compiles;
 # the free-block index backends kernel/memory/seglist.c (segregated fit) and
