@@ -338,6 +338,14 @@ config VAIOS_TASK_MAX_CHILDREN
       alive; a child that exits gives its slot back. Bounds the fan-out of a
       spawn loop, together with VAIOS_TASK_SPAWN_STACK_MAX.
 
+config VAIOS_QUEUE_MAX_OPEN
+    int "Queue handles a system may have open (v_queue_open)"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_queue_open() handles across all tasks, in static kernel RAM. Like
+      VAIOS_BUS_MAX_OPEN, this bounds the fd layer, not the queues themselves.
+
 config VAIOS_BUS_MAX_OPEN
     int "Bus IPC user handles (system-wide)"
     depends on VAIOS_DEVFS

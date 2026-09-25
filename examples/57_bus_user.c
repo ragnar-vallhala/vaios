@@ -39,6 +39,7 @@
 #endif
 #include "bus.h"
 #include "perf.h"
+#include "structure.h"
 #include "navhal.h"
 #include "port.h" // v_port_is_privileged
 #include "task.h"
@@ -48,12 +49,17 @@
 
 #define MSGS 400
 #define BLOCKS 24
+#define TELEM_CAP 4
 #define HELPER_MARK 0xC0DEu
 #define HELPER_MSGS 5
 #define KERNEL_SRAM ((void *)0x20000010u)
 #define EFAULT_RC (-14)
 
 V_BUS_POOL(pool, 32, BLOCKS);
+// An MPMC queue a task reaches by name (M4). Declared and registered here,
+// privileged; the tasks only ever see an fd.
+static mpmc_queue_t telem;
+static uint32_t telem_buf[TELEM_CAP];
 static v_bus_t bus;
 static v_bus_topic_t sensor, cmd, helper;
 static const v_bus_topic_cfg_t PIPE_CFG = {.pipe = 1, .reserve = 4};
@@ -136,12 +142,20 @@ static void helper_task(void *arg) {
   say("[busu] H nPRIV=%d\r\n", v_port_is_privileged() ? 0 : 1, 0);
   bad |= check_self("helper");
   int w = v_bus_open("helper.q", V_BUS_WR);
-  if (w < 0)
+  int q = v_queue_open("/q/telem", V_Q_WR); // an MPMC queue, by name (M4)
+  if (w < 0 || q < 0)
     bad = 1;
   for (int i = 0; i < HELPER_MSGS && !bad; i++) {
     uint32_t mark = HELPER_MARK;
     if (v_bus_send(w, &mark, sizeof mark) != VA_PASS)
       bad = 1;
+    // The queue is small and consumer B drains it: wait for room rather than
+    // dropping, which is the whole point of a blocking send.
+    uint32_t item = HELPER_MARK + (uint32_t)i;
+    if (v_queue_send(q, &item, 100) != VA_PASS) {
+      say("[busu] H queue send failed at %d\r\n", i, 0);
+      bad = 1;
+    }
     v_delay(2);
   }
   say(bad ? "[busu] H FAIL\r\n" : "[busu] H PASS\r\n", 0, 0);
@@ -264,7 +278,8 @@ static void consumer(void *arg) {
   }
   int p = v_bus_open("cmd.pipe", V_BUS_RD); // only one of the two gets it
   int hq = id == 1 ? v_bus_open("helper.q", V_BUS_RD) : -1;
-  uint32_t helper_seen = 0;
+  int tq = id == 2 ? v_queue_open("/q/telem", V_Q_RD) : -1;
+  uint32_t helper_seen = 0, queue_seen = 0;
   if (id == 2 && p != V_BUS_EBUSY) {
     say("[busu] second pipe reader p=%d (want %d)\r\n", p, V_BUS_EBUSY);
     bad = 1;
@@ -299,6 +314,11 @@ static void consumer(void *arg) {
       if (v_bus_recv(p, &prx) == VA_PASS)
         pipe_got++;
     }
+    if (tq >= 0) { // the spawned worker's telemetry, over an MPMC queue
+      uint32_t qv;
+      if (v_queue_recv(tq, &qv, 0) == VA_PASS && qv >= HELPER_MARK)
+        queue_seen++;
+    }
     if (hq >= 0) { // messages from the task the producer spawned
       uint32_t hv;
       v_bus_rx_t hrx = {.buf = &hv, .cap = sizeof hv};
@@ -311,6 +331,16 @@ static void consumer(void *arg) {
   if (!bad && (last + 1 != MSGS || got < MSGS - 16)) {
     say("[busu] only got %d, last %d\r\n", (int)got, (int)last);
     bad = 1;
+  }
+  if (!bad && tq >= 0) {
+    // Drain whatever is left, blocking briefly: every element must arrive.
+    uint32_t qv;
+    while (v_queue_recv(tq, &qv, 20) == VA_PASS)
+      queue_seen++;
+    if (queue_seen != HELPER_MSGS) {
+      say("[busu] queue got %d of %d\r\n", (int)queue_seen, HELPER_MSGS);
+      bad = 1;
+    }
   }
   if (!bad && hq >= 0 && helper_seen == 0) {
     say("[busu] nothing from the spawned task\r\n", 0, 0);
@@ -336,6 +366,8 @@ int main(void) {
   v_bus_topic_declare(&bus, &sensor, "sensor.q", NULL);
   v_bus_topic_declare(&bus, &cmd, "cmd.pipe", &PIPE_CFG);
   v_bus_topic_declare(&bus, &helper, "helper.q", NULL); // what a spawned task writes
+  mpmc_init(&telem, telem_buf, TELEM_CAP, sizeof(uint32_t));
+  v_queue_register("/q/telem", &telem);
   v_log(LOG_INFO, "bus_user: start (privileged main)");
 
   // Consumers above the producer, so they subscribe before it publishes.
