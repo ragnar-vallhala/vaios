@@ -181,6 +181,23 @@ uint32_t task_create_named(void (*entry)(void *), void *arg, uint32_t size,
 void task_set_name(uint32_t task_id, const char *name);
 // Human-readable task name, or "" if unset. Never returns NULL.
 const char *task_get_name(const TCB *task);
+
+// What a task may know about itself. Everything here lives in the TCB, which is
+// kernel memory, so an unprivileged task reads it through SYS_task_info: the
+// fields are COPIED into the caller's own struct (the name too — never the
+// kernel pointer task_get_name returns).
+#define V_TASK_NAME_MAX 16
+typedef struct {
+  uint32_t id;         // task id (monotonic; never reused)
+  uint32_t priority;   // current priority, after any inheritance
+  uint32_t stack_size; // bytes reserved for this task's stack
+  char name[V_TASK_NAME_MAX]; // NUL-terminated, truncated if longer
+} v_task_info_t;
+
+// Fill `out` with the CALLING task's own info. VA_PASS, or VA_FAIL when there
+// is no current task. Self only: an id-taking form would let any task
+// enumerate the task table.
+int v_task_info(v_task_info_t *out);
 // Look up a task's name by id, or "" if the id is unknown/unset. Never returns
 // NULL. Lets callers (e.g. a telemetry request handler) resolve names on demand
 // without holding a TCB pointer.

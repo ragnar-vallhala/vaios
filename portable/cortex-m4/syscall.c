@@ -16,6 +16,7 @@
 #include "ipc.h"
 #include "bus.h"
 #include "memory.h"
+#include "perf.h"
 #include "periph_bus.h"
 #include "port.h"
 #include "task.h"
@@ -115,6 +116,22 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
 #endif
+    case SYS_task_info:
+      if (!v_access_ok((void *)(uintptr_t)args[0], sizeof(v_task_info_t), 1))
+        return V_EFAULT;
+      break;
+#if VAIOS_MODULE_PERF
+    case SYS_perf_snapshot:
+      // Either pointer may be NULL (the caller picks which reading it wants);
+      // whichever is given is written by the kernel.
+      if (args[0] &&
+          !v_access_ok((void *)(uintptr_t)args[0], sizeof(v_perf_snapshot_t), 1))
+        return V_EFAULT;
+      if (args[1] &&
+          !v_access_ok((void *)(uintptr_t)args[1], sizeof(v_perf_task_t), 1))
+        return V_EFAULT;
+      break;
+#endif
     case SYS_delay_until:
       // *last_wake is read and written in place: the caller's own word.
       if (!v_access_ok((void *)(uintptr_t)args[0], sizeof(uint32_t), 1))
@@ -171,6 +188,22 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        runs the body. args[0] = ticks. */
     task_delay(args[0]);
     return 0;
+  case SYS_task_info:
+    /* The caller's own id / priority / name / stack size, copied out of the
+       TCB. args[0] = v_task_info_t to fill. */
+    return v_task_info((v_task_info_t *)(uintptr_t)args[0]);
+#if VAIOS_MODULE_PERF
+  case SYS_perf_snapshot:
+    /* Read-only counters. args[0] = system snapshot (or NULL), args[1] = this
+       task's own counters (or NULL). The DWT stays privileged: a trap costs
+       more cycles than a fine-grained measurement is worth, so this is the
+       honest granularity. */
+    if (args[0])
+      v_perf_snapshot((v_perf_snapshot_t *)(uintptr_t)args[0]);
+    if (args[1])
+      v_perf_self_stats((v_perf_task_t *)(uintptr_t)args[1]);
+    return 0;
+#endif
   case SYS_ticks:
     /* The tick counter lives in kernel memory; this is the only way a user
        task can read it. */

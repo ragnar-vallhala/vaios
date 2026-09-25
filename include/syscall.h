@@ -62,6 +62,10 @@ typedef enum {
                         //   task cannot read it directly).
   SYS_delay_until = 34, // drift-free periodic wait: absolute deadline kept in
                         //   the caller's own *last_wake.
+  SYS_task_info = 35,   // a task's own id / priority / name / stack size: all
+                        //   in the TCB, which is kernel memory.
+  SYS_perf_snapshot = 36, // perf counters out (args[0] system, args[1] self);
+                        //   the DWT and the counters are privileged-only.
   SYS_MAX
 } v_syscall_t;
 

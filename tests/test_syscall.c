@@ -20,6 +20,7 @@
  */
 #include "framework.h"
 #include "bus.h"
+#include "perf.h"
 #include "periph_bus.h"
 #include "syscall.h"
 #include <stdint.h>
@@ -134,6 +135,48 @@ static void test_unpriv_pbus_submit_valid_passes(void) {
 static void test_unpriv_pbus_finish_bad_rx_efault(void) {
   (void)syscall_set_caller(BLOCK_SZ, 1);
   TEST_ASSERT_EQ(call(SYS_pbus_finish, 3, BAD_PTR, 8), T_EFAULT);
+}
+
+/* ---- Self-info and perf: both copy kernel-side state into the caller's own
+ * struct, so both are pure write-validation cases. */
+extern uint32_t stub_perf_sys_calls, stub_perf_self_calls; /* syscall_stubs.c */
+
+static void test_unpriv_task_info_bad_ptr_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_task_info, BAD_PTR, 0, 0), T_EFAULT);
+}
+static void test_unpriv_task_info_valid_passes(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  TEST_ASSERT(call(SYS_task_info, base, 0, 0) != T_EFAULT);
+}
+static void test_unpriv_perf_bad_ptrs_efault(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, BAD_PTR, 0, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, 0, BAD_PTR, 0), T_EFAULT);
+  /* A good system pointer does not excuse a bad self pointer. */
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, base, BAD_PTR, 0), T_EFAULT);
+}
+/* Both pointers are optional: the caller picks which reading it wants, and
+ * asking for neither must not be rejected as if a pointer were missing. */
+static void test_unpriv_perf_optional_pointers(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_perf_snapshot_t *sys = (v_perf_snapshot_t *)(uintptr_t)base;
+  v_perf_task_t *self = (v_perf_task_t *)(uintptr_t)(base + sizeof(*sys));
+  sys->uptime_ticks = 0;
+  self->switches_in = 0;
+
+  uint32_t n_sys = stub_perf_sys_calls, n_self = stub_perf_self_calls;
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, 0, 0, 0), 0); /* neither: legal no-op */
+  TEST_ASSERT_EQ(stub_perf_sys_calls, n_sys);
+  TEST_ASSERT_EQ(stub_perf_self_calls, n_self);
+
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, base, 0, 0), 0); /* system only */
+  TEST_ASSERT_EQ(sys->uptime_ticks, 0xABCDu);
+  TEST_ASSERT_EQ(stub_perf_self_calls, n_self); /* self not touched */
+
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, 0, (uintptr_t)self, 0), 0); /* self only */
+  TEST_ASSERT_EQ(self->switches_in, 0x5A5Au);
 }
 
 /* ---- Ticks + drift-free periodic wait: the two kernel globals a user task
@@ -297,6 +340,10 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+    TEST_CASE(test_unpriv_task_info_bad_ptr_efault),
+    TEST_CASE(test_unpriv_task_info_valid_passes),
+    TEST_CASE(test_unpriv_perf_bad_ptrs_efault),
+    TEST_CASE(test_unpriv_perf_optional_pointers),
     TEST_CASE(test_unpriv_ticks_reaches_body),
     TEST_CASE(test_unpriv_delay_until_bad_ptr_efault),
     TEST_CASE(test_unpriv_delay_until_valid_passes),
