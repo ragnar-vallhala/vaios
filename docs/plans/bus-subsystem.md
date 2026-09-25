@@ -842,6 +842,12 @@ peripheral-bus arbiter already solved the same problem (`v_pbus_open` /
   bounce buffer: the dispatch validates the user buffer (`v_access_ok`, which
   since #47 also accepts read-only flash for publish), then calls the kernel
   path. Blocking pop uses the deferred-result mechanism `SYS_sem_take` uses.
+- **Zero copy is not exposed as-is.** `v_bus_peek` hands out a pointer into the
+  shared pool, so granting a task access to it would grant every topic's
+  messages — isolation gone. A user task gets the copying syscalls; a
+  user-facing zero-copy path means a **pipe whose ring is mapped to that one
+  task** as its own MPU region (one trusted producer/consumer pair, isolated
+  from the rest of the bus).
 - **Notification modes for user tasks:** poll and block only. Callback mode
   stays privileged (the worker would otherwise call into user code); a user
   task that wants "callback" semantics blocks in a thread of its own.
