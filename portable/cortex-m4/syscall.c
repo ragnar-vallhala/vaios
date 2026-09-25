@@ -20,6 +20,7 @@
 #include "port.h"
 #include "task.h"
 #include "vfile.h"
+#include "utils.h"  // v_get_ticks (SYS_ticks)
 #include <stdint.h>
 
 #if VAIOS_MPU_USER_SEPARATION
@@ -114,6 +115,11 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
 #endif
+    case SYS_delay_until:
+      // *last_wake is read and written in place: the caller's own word.
+      if (!v_access_ok((void *)(uintptr_t)args[0], sizeof(uint32_t), 1))
+        return V_EFAULT;
+      break;
 #if VAIOS_DEVFS && VAIOS_MODULE_BUS
     case SYS_bus_open:
       if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) <
@@ -165,6 +171,16 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        runs the body. args[0] = ticks. */
     task_delay(args[0]);
     return 0;
+  case SYS_ticks:
+    /* The tick counter lives in kernel memory; this is the only way a user
+       task can read it. */
+    return (intptr_t)v_get_ticks();
+  case SYS_delay_until:
+    /* Drift-free periodic wait: the deadline is *args[0] + args[1], kept in the
+       caller's own word so the kernel holds no per-task timer state. Like
+       SYS_delay this marks the caller DELAYED and pends PendSV; the switch runs
+       on SVCall return. Returns 1 if it slept, 0 if the deadline had passed. */
+    return task_delay_until((uint32_t *)(uintptr_t)args[0], (uint32_t)args[1]);
   case SYS_sem_give:
     /* Non-blocking: signal + maybe wake a waiter (result known immediately).
        args[0] = semaphore handle. */

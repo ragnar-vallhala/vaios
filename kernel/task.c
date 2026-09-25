@@ -607,6 +607,10 @@ void task_delay(uint32_t ticks) {
 }
 
 bool task_delay_until(uint32_t *last_wake, uint32_t period) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc2(SYS_delay_until, (uintptr_t)last_wake, period) != 0;
+#endif
   if (current_task == NULL)
     v_panic(__FILE__, __LINE__, "current_task is NULL");
   if (current_task == idle_task || last_wake == NULL || period == 0)
