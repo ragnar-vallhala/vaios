@@ -58,6 +58,10 @@ typedef enum {
   SYS_bus_open = 30,    // Bus IPC user access (VAIOS_DEVFS + VAIOS_MODULE_BUS):
   SYS_bus_send = 31,    //   open a topic by name -> fd, then publish / take
   SYS_bus_recv = 32,    //   messages through it (payloads are copied).
+  SYS_ticks = 33,       // read the tick counter (a kernel global, so a user
+                        //   task cannot read it directly).
+  SYS_delay_until = 34, // drift-free periodic wait: absolute deadline kept in
+                        //   the caller's own *last_wake.
   SYS_MAX
 } v_syscall_t;
 

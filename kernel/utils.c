@@ -4,6 +4,7 @@
 #include "memory.h"
 #include "perf_hooks.h"
 #include "port.h"
+#include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
 #include "task.h"
 #include <stdarg.h>
 #include <stddef.h>
@@ -1031,7 +1032,16 @@ void v_kernel_tick(void) {
   PERF_ISR_SYSTICK_END(preempted);
 }
 
-uint32_t v_get_ticks(void) { return systick_count; }
+uint32_t v_get_ticks(void) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  // systick_count is kernel memory, so an unprivileged task has to ask. The
+  // privilege test (one MRS) keeps the kernel, ISRs and privileged tasks on the
+  // direct read — this is a hot function.
+  if (v_in_thread_mode() && !v_port_is_privileged())
+    return (uint32_t)v_svc0(SYS_ticks);
+#endif
+  return systick_count;
+}
 
 void *v_memset(void *s, int c, unsigned int n) {
   return memset(s, c, n);

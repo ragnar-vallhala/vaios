@@ -136,6 +136,31 @@ static void test_unpriv_pbus_finish_bad_rx_efault(void) {
   TEST_ASSERT_EQ(call(SYS_pbus_finish, 3, BAD_PTR, 8), T_EFAULT);
 }
 
+/* ---- Ticks + drift-free periodic wait: the two kernel globals a user task
+ * could not reach. SYS_ticks takes no pointer; SYS_delay_until keeps its
+ * deadline in the caller's own word, which must be validated as a write. */
+static void test_unpriv_ticks_reaches_body(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  /* The stub tick counter answers; the point is the validator does not reject a
+   * syscall that carries no pointer, and it is not the dispatch default. */
+  TEST_ASSERT(call(SYS_ticks, 0, 0, 0) != T_EFAULT);
+  TEST_ASSERT(call(SYS_ticks, 0, 0, 0) != T_EPERM);
+}
+static void test_unpriv_delay_until_bad_ptr_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_delay_until, BAD_PTR, 5, 0), T_EFAULT);
+}
+static void test_unpriv_delay_until_valid_passes(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  uint32_t *last_wake = (uint32_t *)(uintptr_t)base; /* in-block */
+  *last_wake = 0;
+  /* Validation passes and the body runs: it advances the caller's word by one
+   * period (whether it slept depends on the stub clock). */
+  TEST_ASSERT(call(SYS_delay_until, base, 5, 0) != T_EFAULT);
+  TEST_ASSERT_EQ(*last_wake, 5u);
+}
+
 /* ---- Bus IPC syscalls (plan B9): the topic name, the payload it publishes,
  * and both levels of the rx block must be the caller's own. */
 static void test_unpriv_bus_open_bad_str_efault(void) {
@@ -201,6 +226,14 @@ static void test_unpriv_ro_string_accepted(void) {
   TEST_ASSERT(call(SYS_pbus_open, RO_LO, 0, 0) != T_EFAULT);
   stub_set_user_ro(0, 0);
 }
+/* SYS_delay_until writes *last_wake back, so read-only memory is not enough —
+ * flash as the deadline word must be refused, not silently written. */
+static void test_unpriv_ro_delay_until_refused(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  stub_set_user_ro(RO_LO, RO_HI);
+  TEST_ASSERT_EQ(call(SYS_delay_until, RO_LO, 5, 0), T_EFAULT);
+  stub_set_user_ro(0, 0);
+}
 static void test_unpriv_ro_pbus_tx_ok_rx_refused(void) {
   uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
   stub_set_user_ro(RO_LO, RO_HI);
@@ -264,6 +297,9 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+    TEST_CASE(test_unpriv_ticks_reaches_body),
+    TEST_CASE(test_unpriv_delay_until_bad_ptr_efault),
+    TEST_CASE(test_unpriv_delay_until_valid_passes),
     TEST_CASE(test_unpriv_bus_open_bad_str_efault),
     TEST_CASE(test_unpriv_bus_send_bad_payload_efault),
     TEST_CASE(test_unpriv_bus_recv_bad_rx_efault),
@@ -272,6 +308,7 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_bus_zero_len_not_faulted),
     TEST_CASE(test_unpriv_ro_read_ok_write_refused),
     TEST_CASE(test_unpriv_ro_string_accepted),
+    TEST_CASE(test_unpriv_ro_delay_until_refused),
     TEST_CASE(test_unpriv_ro_pbus_tx_ok_rx_refused),
     TEST_CASE(test_priv_caller_skips_validation),
     TEST_CASE(test_priv_caller_ipc_not_denied),

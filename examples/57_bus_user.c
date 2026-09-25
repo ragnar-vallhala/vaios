@@ -27,7 +27,9 @@
  * topics — the message count is a compile-time constant and each side counts
  * its own — and v_bus_check stays in the privileged host suite. A leaked block
  * shows up here as the producer stalling, which fails the consumers' count.
- * Each task prints "[busu] <P|A|B> PASS" / "FAIL".
+ * The producer also reads the clock and runs a drift-free cadence
+ * (v_get_ticks / task_delay_until), which are kernel globals behind SYS_ticks
+ * and SYS_delay_until. Each task prints "[busu] <P|A|B> PASS" / "FAIL".
  */
 #ifndef NAVHAL
 #error "NAVHAL is required for this example"
@@ -139,6 +141,18 @@ static void producer(void *arg) {
     if ((i & 7u) == 0)
       v_delay(1);
   }
+  // The clock and the drift-free cadence, from unprivileged code: both are
+  // kernel globals reached through SYS_ticks / SYS_delay_until, so before those
+  // existed this faulted.
+  uint32_t t0 = v_get_ticks(), last = t0;
+  for (int k = 0; k < 5; k++)
+    task_delay_until(&last, 2);
+  uint32_t dt = v_get_ticks() - t0;
+  if (last != t0 + 10 || dt < 10) {
+    say("[busu] cadence last+%d dt=%d\r\n", (int)(last - t0), (int)dt);
+    bad = 1;
+  }
+
   say(bad ? "[busu] P FAIL\r\n" : "[busu] P PASS\r\n", 0, 0);
   for (;;)
     v_delay(1000);
