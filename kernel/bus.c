@@ -390,6 +390,7 @@ static int evict_oldest(v_bus_topic_t *topic) {
     if (x->cursor == topic->head)
       x->cursor = link;
   free_chain(topic, take_head(topic));
+  topic->evicted++; // a reader lost this one (it reports the gap as `missed`)
   EXIT_CRITICAL_FROM_ISR(s);
   return 1;
 }
@@ -480,6 +481,7 @@ static inline void link_msg(v_bus_topic_t *topic, uint16_t msg, uint16_t len,
   }
   h->seq = topic->next_seq++;
   h->refs = topic->nsubs;
+  topic->published++;
   if (topic->tail != V_BUS_NIL)
     hdr(bus, topic->tail)->link = msg;
   else
@@ -501,6 +503,12 @@ static inline void link_msg(v_bus_topic_t *topic, uint16_t msg, uint16_t len,
 // Host-test seam: runs between a copying read and its commit, so a test can
 // overwrite/evict the message mid-read (on target: an ISR publish preempting).
 void (*v_bus_test_mid_pop)(void);
+// The same idea for the write side: runs between a publisher's payload copy and
+// the link that makes it visible, which is exactly where a second publisher (a
+// task, or an ISR preempting one) interleaves. Nothing is serialised there on
+// purpose — the copy targets blocks this publisher already owns — so this seam
+// is how that claim gets tested rather than assumed.
+void (*v_bus_test_mid_publish)(void);
 #endif
 
 // --- Pipe paths (lock-free, one producer + one consumer) -----------------------
@@ -627,9 +635,17 @@ int v_bus_publish(v_bus_topic_t *topic, const void *payload, uint16_t len) {
   if (!topic->nsubs)
     return VA_PASS; // nobody to deliver to: keep nothing
   uint16_t msg = alloc_msg(topic, n);
-  if (msg == V_BUS_NIL)
+  if (msg == V_BUS_NIL) {
+    uint32_t sd = ENTER_CRITICAL_FROM_ISR();
+    topic->dropped++;
+    EXIT_CRITICAL_FROM_ISR(sd);
     return VA_FAIL; // dropped
+  }
   copy_payload(bus, msg, (void *)payload, len, 1); // invisible until linked
+#ifdef VAIOS_HOST_TEST
+  if (v_bus_test_mid_publish)
+    v_bus_test_mid_publish();
+#endif
   link_msg(topic, msg, len, n);
   return VA_PASS;
 }
@@ -920,6 +936,112 @@ static int topics_ok(const v_bus_t *bus) {
   }
   // Loans balance, and every block is somewhere: nothing leaked.
   return lent == borrowed && accounted == bus->block_count;
+}
+
+#if VAIOS_MODULE_VFS
+// --- Snapshotter (B7): a best-effort recorder, driven by the application's own
+// low-priority task. Nothing here runs unless someone calls pump.
+#include "vfs.h"
+
+#define SNAP_BUF 64 // one record's payload staging, on the pump's stack
+
+int v_bus_snapshot_start(v_bus_snap_t *snap, v_bus_topic_t *topic,
+                         const char *path) {
+  if (!snap || !topic || !path)
+    return V_BUS_EINVAL;
+  snap->topic = topic;
+  snap->file = -1;
+  snap->written = snap->failed = snap->missed = 0;
+  int f = vfs_open(path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC);
+  if (f < 0)
+    return f; // the filesystem's own error
+  int r = v_bus_subscribe(topic, &snap->sub);
+  if (r != VA_PASS) {
+    vfs_close(f);
+    return r;
+  }
+  snap->file = f;
+  return VA_PASS;
+}
+
+int v_bus_snapshot_pump(v_bus_snap_t *snap, uint32_t max) {
+  if (!snap || snap->file < 0 || !snap->topic)
+    return V_BUS_EINVAL;
+  int written = 0;
+  for (uint32_t i = 0; i < max; i++) {
+    uint8_t buf[SNAP_BUF];
+    uint16_t len = 0;
+    uint32_t missed = 0;
+    int r = v_bus_pop(&snap->sub, buf, sizeof buf, &len, &missed);
+    if (r == V_BUS_EMSGSIZE) { // too big for one record: skip it, note it
+      uint8_t sink[SNAP_BUF];
+      snap->failed++;
+      // drain it so the reader advances (the payload is lost, by design)
+      if (v_bus_pop(&snap->sub, sink, sizeof sink, &len, &missed) != VA_PASS)
+        break;
+      continue;
+    }
+    if (r != VA_PASS)
+      break; // nothing (more) to record
+    snap->missed += missed;
+    uint32_t hdr_rec[2] = {(uint32_t)len, missed};
+    if (vfs_write(snap->file, hdr_rec, sizeof hdr_rec) < 0 ||
+        vfs_write(snap->file, buf, len) < 0) {
+      snap->failed++; // best effort: the message is gone, recording continues
+      continue;
+    }
+    snap->written++;
+    written++;
+  }
+  return written;
+}
+
+int v_bus_snapshot_stop(v_bus_snap_t *snap) {
+  if (!snap)
+    return V_BUS_EINVAL;
+  if (snap->file >= 0) {
+    v_bus_unsubscribe(&snap->sub);
+    vfs_close(snap->file);
+    snap->file = -1;
+  }
+  return VA_PASS;
+}
+#endif // VAIOS_MODULE_VFS
+
+int v_bus_topic_stats(const v_bus_topic_t *topic, v_bus_topic_stats_t *out) {
+  if (!topic || !topic->bus || !out)
+    return V_BUS_EINVAL;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  out->published = topic->published;
+  out->dropped = topic->dropped;
+  out->evicted = topic->evicted;
+  out->blocks = topic->blocks;
+  out->subs = topic->nsubs;
+  out->reserved = (uint16_t)(topic->stash_count + topic->lent);
+  out->lent = topic->lent;
+  out->borrowed = topic->borrowed;
+  uint16_t n = 0;
+  for (uint16_t m = topic->head; m != V_BUS_NIL;
+       m = hdr((v_bus_t *)topic->bus, m)->link)
+    n++;
+  out->queued = n;
+  EXIT_CRITICAL_FROM_ISR(s);
+  return VA_PASS;
+}
+
+int v_bus_stats(const v_bus_t *bus, v_bus_stats_t *out) {
+  if (!bus || !out)
+    return V_BUS_EINVAL;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  out->block_size = bus->block_size;
+  out->block_count = bus->block_count;
+  out->free_blocks = bus->free_count;
+  uint16_t n = 0;
+  for (const v_bus_topic_t *t = bus->topics; t; t = t->next)
+    n++;
+  out->topics = n;
+  EXIT_CRITICAL_FROM_ISR(s);
+  return VA_PASS;
 }
 
 // --- User access: topics on the fd table (VAIOS_DEVFS) ------------------------

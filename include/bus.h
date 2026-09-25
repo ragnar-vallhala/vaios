@@ -121,6 +121,12 @@ struct v_bus_topic {
   uint16_t borrowed;    // blocks this topic owes lenders (repaid on free)
   uint16_t pipe_wr;     // pipe: the slot the next message goes into
   uint32_t next_seq;    // pipe: written only by the producer (lock-free)
+  // Statistics (B7). Bumped inside the critical sections that already own the
+  // state they describe, so they cost a increment and no extra locking. Read
+  // with v_bus_topic_stats; best-effort across counters by design (§9).
+  uint32_t published; // messages made visible on this topic
+  uint32_t dropped;   // publishes refused because the pool was full
+  uint32_t evicted;   // messages overwritten out from under a reader
 };
 
 // A subscription: one reader's position in a topic. Caller storage, private.
@@ -284,6 +290,68 @@ int v_bus_recv_wait(int fd, v_bus_rx_t *rx, uint32_t ticks);
 // is this plus v_bus_recv, and is what callers normally want.
 int v_bus_wait(int fd, uint32_t ticks);
 #endif
+
+// --- Snapshotter (B7) ---------------------------------------------------------
+// A best-effort recorder: it subscribes to a topic like any other consumer, so
+// it takes part in reclaim and can never pin a message forever, and copies what
+// it reads to a file through the VFS.
+//
+// There is no hidden task. The application runs it from its OWN lowest-priority
+// task — v_bus_snapshot_pump() moves up to `max` messages and returns — because
+// the priority at which recording happens is a flight decision, not the bus's.
+// Realtime consumers always come first: a pump that falls behind loses messages
+// (counted), it never delays a publisher or another reader.
+//
+// File format, one record per message: uint16 len, uint16 zero, uint32 missed,
+// then len payload bytes. `missed` is the gap the bus reported before this
+// message, so a reader can see where the recording lost data.
+#if VAIOS_MODULE_VFS
+typedef struct {
+  v_bus_topic_t *topic;
+  v_bus_sub_t sub;    // its own subscription: reclaim treats it like a reader
+  int file;           // vfs handle, negative when not recording
+  uint32_t written;   // messages written
+  uint32_t failed;    // messages the filesystem refused (best effort: kept going)
+  uint32_t missed;    // messages the bus dropped under it
+} v_bus_snap_t;
+
+// Open `path` and subscribe. VA_PASS, V_BUS_EINVAL, or the filesystem's error.
+int v_bus_snapshot_start(v_bus_snap_t *snap, v_bus_topic_t *topic,
+                         const char *path);
+// Move up to `max` messages to the file. Returns the number written (>= 0), or
+// V_BUS_EINVAL. Buffer size is the bus's block payload, so a message that does
+// not fit one block is counted as failed rather than truncated.
+int v_bus_snapshot_pump(v_bus_snap_t *snap, uint32_t max);
+// Unsubscribe and close. Always safe to call twice.
+int v_bus_snapshot_stop(v_bus_snap_t *snap);
+#endif
+
+// --- Statistics (B7) ----------------------------------------------------------
+// Explicit getters, never internals. A snapshot is per-counter best-effort: the
+// bus promises each value is a real one it held, not that the set is coherent
+// (§9 — a consistent system snapshot is an explicit non-goal).
+typedef struct {
+  uint32_t published; // messages this topic made visible
+  uint32_t dropped;   // publishes the full pool refused
+  uint32_t evicted;   // messages overwritten before every reader took them
+  uint16_t queued;    // messages waiting now
+  uint16_t blocks;    // pool blocks those messages hold
+  uint16_t subs;      // subscribers
+  uint16_t reserved;  // blocks stashed for this topic (cfg.reserve)
+  uint16_t lent;      // of those, currently lent to overwrite topics
+  uint16_t borrowed;  // blocks this topic owes other topics
+} v_bus_topic_stats_t;
+
+typedef struct {
+  uint16_t block_size;
+  uint16_t block_count;
+  uint16_t free_blocks; // in the pool right now
+  uint16_t topics;      // declared on this bus
+} v_bus_stats_t;
+
+// VA_PASS, or V_BUS_EINVAL on a bad argument.
+int v_bus_topic_stats(const v_bus_topic_t *topic, v_bus_topic_stats_t *out);
+int v_bus_stats(const v_bus_t *bus, v_bus_stats_t *out);
 
 // --- Pool state ---------------------------------------------------------------
 // Blocks in the shared pool (not counting topics' reserved stashes).
