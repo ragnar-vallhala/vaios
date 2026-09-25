@@ -10,6 +10,7 @@
  */
 #include "bus.h"
 #include "framework.h"
+#include "stubs/v_fs_stub.h" // the filesystem under the snapshotter
 #include <string.h>
 
 #define BS 16
@@ -373,6 +374,216 @@ static void test_bus_evicted_mid_pop_rereads(void) {
   TEST_ASSERT_NULL(v_bus_test_mid_pop); /* the eviction did run mid-pop */
   TEST_ASSERT_EQ(v, 1u);      /* not #0, which was freed under the copy */
   TEST_ASSERT_EQ(missed, 1u); /* #0 is reported lost */
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
+/* ---- B7: the snapshotter -----------------------------------------------------
+ * A best-effort recorder that reads like any other consumer. What matters: it
+ * takes part in reclaim (so it can never pin messages forever), it keeps going
+ * when the filesystem refuses a write, and it counts what it lost.
+ */
+static void test_bus_snapshotter(void) {
+  wreset();
+  vfs_stub_reset();
+  vfs_stub.open_ret = 4;
+  v_bus_snap_t snap;
+  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "/rec.bin"), VA_PASS);
+  TEST_ASSERT_EQ(vfs_stub.open_called, 1);
+  TEST_ASSERT_EQ(tw.nsubs, 1); /* it subscribed like a reader */
+
+  /* Nothing published yet: a pump moves nothing and says so. */
+  TEST_ASSERT_EQ(v_bus_snapshot_pump(&snap, 8), 0);
+
+  for (uint32_t i = 0; i < 3; i++)
+    TEST_ASSERT_EQ(v_bus_publish(&tw, &i, sizeof i), VA_PASS);
+  v_bus_topic_stats_t ts;
+  v_bus_topic_stats(&tw, &ts);
+  TEST_ASSERT_EQ(ts.queued, 3); /* the recorder owes all three */
+
+  vfs_stub.write_ret = 8; /* the stub accepts writes */
+  TEST_ASSERT_EQ(v_bus_snapshot_pump(&snap, 8), 3);
+  TEST_ASSERT_EQ(snap.written, 3u);
+  TEST_ASSERT_EQ(snap.failed, 0u);
+  /* Reading them released the blocks: it participates in reclaim. */
+  v_bus_topic_stats(&tw, &ts);
+  TEST_ASSERT_EQ(ts.queued, 0);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+
+  /* A filesystem that refuses keeps the recording going and counts the loss. */
+  vfs_stub.write_ret = -1;
+  for (uint32_t i = 0; i < 2; i++)
+    v_bus_publish(&tw, &i, sizeof i);
+  TEST_ASSERT_EQ(v_bus_snapshot_pump(&snap, 8), 0); /* nothing written */
+  TEST_ASSERT_EQ(snap.failed, 2u);
+  TEST_ASSERT_EQ(snap.written, 3u);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC); /* still no messages pinned */
+
+  /* Stopping unsubscribes and closes, and is safe to repeat. */
+  TEST_ASSERT_EQ(v_bus_snapshot_stop(&snap), VA_PASS);
+  TEST_ASSERT_EQ(vfs_stub.close_called, 1);
+  TEST_ASSERT_EQ(tw.nsubs, 0);
+  TEST_ASSERT_EQ(v_bus_snapshot_stop(&snap), VA_PASS);
+  TEST_ASSERT_EQ(vfs_stub.close_called, 1); /* not closed twice */
+  TEST_ASSERT_EQ(v_bus_snapshot_pump(&snap, 4), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+
+  /* A filesystem that refuses the open leaves nothing subscribed. */
+  vfs_stub.open_ret = -7;
+  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "/nope.bin"), -7);
+  TEST_ASSERT_EQ(tw.nsubs, 0);
+  TEST_ASSERT_EQ(v_bus_snapshot_start(NULL, &tw, "/x"), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, NULL), V_BUS_EINVAL);
+}
+
+/* ---- B7: statistics ----------------------------------------------------------
+ * Explicit getters, counted where the state they describe already changes. Each
+ * value must mean what it says: published counts what became visible, dropped
+ * what the full pool refused, evicted what a reader lost.
+ */
+static void test_bus_statistics(void) {
+  wreset();
+  v_bus_topic_stats_t ts;
+  v_bus_stats_t bs;
+  TEST_ASSERT_EQ(v_bus_topic_stats(&tw, &ts), VA_PASS);
+  TEST_ASSERT_EQ(ts.published, 0u);
+  TEST_ASSERT_EQ(ts.subs, 0);
+  TEST_ASSERT_EQ(v_bus_stats(&mb, &bs), VA_PASS);
+  TEST_ASSERT_EQ(bs.block_count, MC);
+  TEST_ASSERT_EQ(bs.free_blocks, MC);
+  TEST_ASSERT_EQ(bs.topics, 1);
+
+  v_bus_subscribe(&tw, &sa);
+  for (uint32_t i = 0; i < 3; i++)
+    TEST_ASSERT_EQ(v_bus_publish(&tw, &i, sizeof i), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_topic_stats(&tw, &ts), VA_PASS);
+  TEST_ASSERT_EQ(ts.published, 3u);
+  TEST_ASSERT_EQ(ts.queued, 3);
+  TEST_ASSERT_EQ(ts.blocks, 3);
+  TEST_ASSERT_EQ(ts.subs, 1);
+  TEST_ASSERT_EQ(ts.dropped, 0u);
+  TEST_ASSERT_EQ(ts.evicted, 0u);
+  TEST_ASSERT_EQ(v_bus_stats(&mb, &bs), VA_PASS);
+  TEST_ASSERT_EQ(bs.free_blocks, MC - 3);
+
+  /* Reading one frees its block and takes it off the queue. */
+  uint32_t v;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, NULL), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_topic_stats(&tw, &ts), VA_PASS);
+  TEST_ASSERT_EQ(ts.queued, 2);
+  TEST_ASSERT_EQ(ts.published, 3u); /* a total, not a level */
+
+  /* Fill the pool: this overwrite topic evicts rather than dropping. */
+  for (uint32_t i = 0; i < MC + 2u; i++)
+    v_bus_publish(&tw, &i, sizeof i);
+  TEST_ASSERT_EQ(v_bus_topic_stats(&tw, &ts), VA_PASS);
+  TEST_ASSERT(ts.evicted > 0u);
+  TEST_ASSERT_EQ(ts.dropped, 0u); /* overwrite policy never drops */
+
+  /* A DROP topic, on a pool the overwrite topic has emptied, does drop. */
+  static v_bus_topic_t dt;
+  TEST_ASSERT_EQ(v_bus_topic_declare(&mb, &dt, "drops", NULL), VA_PASS);
+  v_bus_sub_t ds;
+  v_bus_subscribe(&dt, &ds);
+  uint32_t big = 0;
+  int drops = 0;
+  for (int i = 0; i < 40; i++)
+    if (v_bus_publish(&dt, &big, sizeof big) != VA_PASS)
+      drops++;
+  TEST_ASSERT(drops > 0);
+  TEST_ASSERT_EQ(v_bus_topic_stats(&dt, &ts), VA_PASS);
+  TEST_ASSERT_EQ(ts.dropped, (uint32_t)drops);
+  TEST_ASSERT_EQ(v_bus_stats(&mb, &bs), VA_PASS);
+  TEST_ASSERT_EQ(bs.topics, 2);
+
+  /* Bad arguments. */
+  TEST_ASSERT_EQ(v_bus_topic_stats(NULL, &ts), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_topic_stats(&tw, NULL), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_stats(NULL, &bs), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_stats(&mb, NULL), V_BUS_EINVAL);
+}
+
+/* ---- B5: several producers on one topic --------------------------------------
+ * The plan proposed a three-stage mutex pipeline for this. It is not needed, and
+ * these tests are why: a publisher allocates under the allocator's critical
+ * section, copies into blocks IT ALREADY OWNS (marked used, so no other
+ * publisher can take them), and links under a critical section that also assigns
+ * seq. Nothing is held across the copy, and nothing about the copy is shared —
+ * so publishers are independent by construction, including an ISR preempting a
+ * task. What must be proven is exactly that: a second publisher landing in the
+ * window between another's copy and its link changes nothing for either.
+ */
+extern void (*v_bus_test_mid_publish)(void);
+static uint32_t mid_pub_value;
+static void publish_during_publish(void) {
+  v_bus_test_mid_publish = NULL; /* once */
+  v_bus_publish(&tw, &mid_pub_value, sizeof mid_pub_value);
+}
+
+static void test_bus_second_producer_mid_copy(void) {
+  wreset();
+  v_bus_subscribe(&tw, &sa);
+
+  /* B publishes in A's window, so B links FIRST and must get the lower seq —
+   * order is defined at link, which is what keeps `missed` honest. */
+  mid_pub_value = 200;
+  v_bus_test_mid_publish = publish_during_publish;
+  uint32_t a = 100;
+  TEST_ASSERT_EQ(v_bus_publish(&tw, &a, sizeof a), VA_PASS);
+  TEST_ASSERT_NULL(v_bus_test_mid_publish); /* B really did interleave */
+
+  uint32_t v = 0, missed = 9;
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 200u); /* B linked first */
+  TEST_ASSERT_EQ(missed, 0u);
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_PASS);
+  TEST_ASSERT_EQ(v, 100u); /* then A, uncorrupted by the interleave */
+  TEST_ASSERT_EQ(missed, 0u);
+  TEST_ASSERT_EQ(pop_m(&sa, &v, &missed), VA_FAIL);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
+}
+
+/* Two producers, each with its own counter, interleaved every message: the
+ * reader must see every value exactly once, in link order, with no duplicates,
+ * no losses and no torn payloads. Each message carries its producer id so the
+ * reader can check both streams stayed monotonic. */
+static void test_bus_two_producers_fuzz(void) {
+  wreset();
+  v_bus_subscribe(&tw, &sa);
+  uint32_t next[2] = {0, 0}, seen[2] = {0, 0};
+  int failures = 0;
+  uint32_t x = 0x1234567u;
+
+  for (int op = 0; op < 4000 && !failures; op++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    if (x & 1u) {
+      int who = (int)((x >> 2) & 1u);
+      /* value = producer id in the low bit, counter above it */
+      uint32_t val = (next[who] << 1) | (uint32_t)who;
+      if (v_bus_publish(&tw, &val, sizeof val) == VA_PASS)
+        next[who]++;
+    } else {
+      uint32_t v = 0, missed = 0;
+      if (pop_m(&sa, &v, &missed) == VA_PASS) {
+        int who = (int)(v & 1u);
+        uint32_t counter = v >> 1;
+        /* Its own stream must never go backwards or repeat. An overwrite topic
+         * may skip (reported via missed), so counter >= what we expect. */
+        failures += counter < seen[who];
+        seen[who] = counter + 1;
+      }
+    }
+    failures += v_bus_check(&mb) != VA_PASS;
+  }
+  TEST_ASSERT_EQ(failures, 0);
+  TEST_ASSERT(next[0] > 100 && next[1] > 100); /* both really produced */
+  TEST_ASSERT(seen[0] > 0 && seen[1] > 0);     /* both really arrived */
+  while (pop_m(&sa, &(uint32_t){0}, &(uint32_t){0}) == VA_PASS)
+    ;
+  TEST_ASSERT_EQ(v_bus_unsubscribe(&sa), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_free_blocks(&mb), MC);
   TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
 }
 
@@ -1056,6 +1267,10 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_overwrite_fast_reader_unaffected),
     TEST_CASE(test_bus_overwrite_no_futile_eviction),
     TEST_CASE(test_bus_evicted_mid_pop_rereads),
+    TEST_CASE(test_bus_statistics),
+    TEST_CASE(test_bus_snapshotter),
+    TEST_CASE(test_bus_second_producer_mid_copy),
+    TEST_CASE(test_bus_two_producers_fuzz),
     TEST_CASE(test_bus_fuzz_churn_overwrite),
     TEST_CASE(test_bus_zc_reserve_commit),
     TEST_CASE(test_bus_zc_peek_release),

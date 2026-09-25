@@ -434,6 +434,23 @@ ISR that is the sole publisher of `imu.raw` publishes with no mutex.
 
 ### 6.2 Multi-producer topics — three-stage publish pipeline
 
+> **As built (B5): the pipeline was not needed.** A publisher allocates inside
+> the allocator's critical section, copies into blocks it already owns (marked
+> `used`, so no other publisher can take them), and links inside a critical
+> section that also assigns `seq`. Nothing is held across the copy and nothing
+> about the copy is shared, so publishers — tasks or an ISR preempting one — are
+> independent without any per-topic mutex. The three mutexes below would add
+> ordering and PI machinery to serialise writers that never contend.
+>
+> What that claim needs is proof, not trust, so `kernel/bus.c` has a host-test
+> seam between the copy and the link: a test publishes a second message exactly
+> in that window and asserts both arrive, in link order, with `seq` and `missed`
+> intact. Mutating the code to assign `seq` before the window, or to stop marking
+> blocks owned, fails those tests. A two-producer fuzz covers the rest.
+>
+> Pipe topics stay single-producer: that is the caller's promise, by definition.
+
+
 Multiple producers to one topic use a **hand-over-hand pipeline** with three
 per-topic mutexes (`rmutex_t`, so priority inheritance + chain-walk come free —
 `ipc.c`). A publisher **acquires the next stage before releasing the
@@ -820,10 +837,10 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 | **ZC** | Zero-copy path for single-block messages: `v_bus_reserve`/`commit`/`cancel`, `v_bus_peek`/`release`; a peeked message is pinned against eviction (§11.1) | unit: pinning vs eviction under fuzz; Renode benchmark — **done** |
 | **PIPE** | Pipe topics: caller-promised SPSC, lock-free ring of reserved slots (§11.2) | unit: drop/overwrite/seqlock under fuzz; Renode benchmark — **done** |
 | **B4** | QoS as **soft reservations** (§4.5): per-topic stash (`cfg.reserve`), loans to overwrite topics, bounded reclaim by eviction | unit: guarantee asserted under fuzz; Renode: reserved drop topic 0 drops under an overwrite flood — **done** |
-| **B5** | Multi-producer 3-stage pipeline + PI (§6.2) | unit: H7/H8/H11; concurrency on the host port (real scheduler) + SITL |
-| **B6** | Notification engine: blocking recv (§6.4) | unit: park/wake/timeout + SITL blocked unprivileged reader — **blocking done**; callback worker outstanding |
-| **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | Stage-2 scenario example |
-| **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | benchmark report committed |
+| **B5** | Multi-producer topics | **done — WITHOUT the pipeline**: publishers are independent by construction (see §6.2), proven by a deterministic mid-copy interleave + a two-producer fuzz |
+| **B6** | Notification engine: blocking recv (§6.4) | **blocking done** (unit: park/wake/timeout; SITL: blocked unprivileged reader); callback worker outstanding |
+| **B7** | Snapshotter over VFS (§8) + statistics getters (§9) | **done** — stats counted where the state changes; snapshotter is a pump the app drives from its own low-priority task |
+| **B8** | Stage-3 benchmarks, jitter/latency under load (§14) | benchmark **committed** (`examples/benchmark/bench_bus.c`, incl. the under-load case); the numbers wait on hardware — see `docs/benchmark/bus-ipc.md` |
 | **B9** | Unprivileged access: topic fds + `SYS_bus_*` (§17) | host dispatch tests + Renode user-task scenario — **done** |
 
 ---

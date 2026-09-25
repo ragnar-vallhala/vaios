@@ -14,6 +14,7 @@ set(BENCH_SRCS
     bench_ipc.c
     bench_memory.c
     bench_stress.c
+    bench_bus.c
 )
 
 add_executable(benchmark ${BENCH_SRCS} ${STARTUP_FILE})

@@ -33,7 +33,11 @@
 #define BM_MEM_ALLOC_FREE 11
 #define BM_MEM_FRAGMENTATION 12
 #define BM_STRESS_ALL 13
-#define BM_COUNT 14
+#define BM_BUS_COPY 14
+#define BM_BUS_ZEROCOPY 15
+#define BM_BUS_PIPE 16
+#define BM_BUS_LOADED 17
+#define BM_COUNT 18
 
 /* -------------------------------------------------------------------------
  * Benchmark result record
@@ -75,6 +79,7 @@ void bench_tasks_run(void);
 void bench_ipc_run(void);
 void bench_memory_run(void);
 void bench_stress_run(void);
+void bench_bus_run(void); /* Bus IPC (B8), only with VAIOS_MODULE_BUS */
 void bench_print_summary(void);
 
 #endif /* BENCHMARK_H */
