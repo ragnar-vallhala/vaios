@@ -272,6 +272,11 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        args[1]=payload, args[2]=len. */
     return v_bus_send((int)args[0], (const void *)(uintptr_t)args[1],
                       (uint16_t)args[2]);
+  case SYS_bus_wait:
+    /* Park until this handle has a message (B6). args[0] = fd, args[1] = ticks.
+       Blocking, deferred-result: nothing of the caller's is held while it
+       sleeps, which is why wait and recv are separate syscalls. */
+    return v_bus_wait((int)args[0], args[1]);
   case SYS_bus_recv:
     /* Copy this handle's oldest unread message out. args[0]=fd,
        args[1]=v_bus_rx_t (buf/cap in, len/missed out). Polling: blocking pop

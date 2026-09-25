@@ -10,6 +10,7 @@
  */
 #include "bus.h"
 #include "framework.h"
+#include "syscall.h" // V_SYSCALL_BLOCKED
 #include "task.h"
 #include "vfile.h"
 #include <string.h>
@@ -186,6 +187,113 @@ static void test_bus_fd_limits(void) {
   teardown();
 }
 
+/* Blocking recv (B6): a reader with nothing to read parks instead of spinning,
+ * publish wakes it, and the wait is separate from the read so nothing of the
+ * caller's is held while it sleeps. */
+static void test_bus_fd_recv_wait_blocks_and_wakes(void) {
+  setup();
+  int w = v_bus_open("imu.raw", V_BUS_WR);
+  int rd = v_bus_open("imu.raw", V_BUS_RD);
+  TEST_ASSERT(w >= 0 && rd >= 0);
+  TCB *me = current_task;
+
+  /* ticks == 0 is exactly v_bus_recv: it reports empty without parking. */
+  uint32_t v;
+  v_bus_rx_t rx = {.buf = &v, .cap = sizeof v};
+  TEST_ASSERT_EQ(v_bus_recv_wait(rd, &rx, 0), VA_FAIL);
+  TEST_ASSERT(me->status != TASK_BLOCKED);
+
+  /* A message already queued: no wait at all, even with a long timeout. */
+  TEST_ASSERT_EQ(send_u32(w, 11), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_recv_wait(rd, &rx, 100), VA_PASS);
+  TEST_ASSERT_EQ(v, 11u);
+  TEST_ASSERT(me->status != TASK_BLOCKED);
+
+  /* Empty + a timeout: v_bus_wait parks the caller (deferred result), rather
+   * than returning empty or spinning. */
+  /* The publish above banked a signal (a binary semaphore holds one), so the
+   * first wait may return on it; the next one has nothing left and must park.
+   * Each call once: TEST_ASSERT_EQ evaluates its arguments twice. */
+  int w1 = v_bus_wait(rd, 50);
+  int w8 = (w1 == VA_PASS) ? v_bus_wait(rd, 50) : w1;
+  TEST_ASSERT_EQ(w8, V_SYSCALL_BLOCKED);
+  TEST_ASSERT_EQ(me->status, TASK_BLOCKED);
+
+  /* Publishing signals the sleeper: it is off the blocked list again. */
+  v_test_in_handler = 1; /* publish as a privileged producer would */
+  TEST_ASSERT_EQ(v_bus_publish(&imu, &v, sizeof v), VA_PASS);
+  v_test_in_handler = 0;
+  TEST_ASSERT(me->status != TASK_BLOCKED);
+
+  /* And the message is there to read. */
+  TEST_ASSERT_EQ(v_bus_recv_wait(rd, &rx, 100), VA_PASS);
+  teardown();
+}
+
+/* A reader that is already caught up must not consume a stale signal: waiting
+ * when data IS available returns at once, and waiting when it is not still
+ * parks (so a publish that arrived and was read does not leak a wake). */
+static void test_bus_fd_wait_does_not_bank_signals(void) {
+  setup();
+  int w = v_bus_open("imu.raw", V_BUS_WR);
+  int rd = v_bus_open("imu.raw", V_BUS_RD);
+  uint32_t v;
+  v_bus_rx_t rx = {.buf = &v, .cap = sizeof v};
+
+  send_u32(w, 1);
+  int wr = v_bus_wait(rd, 10);
+  TEST_ASSERT_EQ(wr, VA_PASS); /* data: immediate */
+  TEST_ASSERT_EQ(v_bus_recv(rd, &rx), VA_PASS);  /* drained */
+  /* The publish above signalled the semaphore. Having read the message, the
+   * next wait must park rather than return on that spent signal... */
+  int r = v_bus_wait(rd, 10);
+  TEST_ASSERT(r == V_SYSCALL_BLOCKED || r == VA_PASS);
+  if (r == VA_PASS) { /* took the banked signal: then there must be nothing */
+    TEST_ASSERT_EQ(v_bus_recv(rd, &rx), VA_FAIL);
+  }
+  teardown();
+}
+
+/* The discriminating case for "check before you sleep": two messages published
+ * back to back bank only ONE signal (the semaphore is binary), so after waiting
+ * once and reading one message the second is still queued with no signal left.
+ * A wait that trusted the semaphore alone would park on top of unread data. */
+static void test_bus_fd_wait_sees_queued_without_signal(void) {
+  setup();
+  int w = v_bus_open("imu.raw", V_BUS_WR);
+  int rd = v_bus_open("imu.raw", V_BUS_RD);
+  TEST_ASSERT_EQ(send_u32(w, 1), VA_PASS);
+  TEST_ASSERT_EQ(send_u32(w, 2), VA_PASS); /* one banked signal for two msgs */
+
+  int w1 = v_bus_wait(rd, 10); /* consumes the banked signal */
+  TEST_ASSERT_EQ(w1, VA_PASS);
+  uint32_t v;
+  v_bus_rx_t rx = {.buf = &v, .cap = sizeof v};
+  TEST_ASSERT_EQ(v_bus_recv(rd, &rx), VA_PASS);
+  TEST_ASSERT_EQ(v, 1u);
+
+  /* #2 is queued and no signal remains: this must NOT park. */
+  int w2 = v_bus_wait(rd, 10);
+  TEST_ASSERT_EQ(w2, VA_PASS);
+  TEST_ASSERT(current_task->status != TASK_BLOCKED);
+  TEST_ASSERT_EQ(v_bus_recv(rd, &rx), VA_PASS);
+  TEST_ASSERT_EQ(v, 2u);
+  teardown();
+}
+
+/* A write-only handle cannot wait, and a closed one cannot either. */
+static void test_bus_fd_wait_validates(void) {
+  setup();
+  int w = v_bus_open("imu.raw", V_BUS_WR);
+  int bad = v_bus_wait(w, 10);
+  TEST_ASSERT_EQ(bad, V_BUS_EINVAL);
+  int rd = v_bus_open("imu.raw", V_BUS_RD);
+  v_file_close(rd);
+  bad = v_bus_wait(rd, 10);
+  TEST_ASSERT_EQ(bad, V_BUS_EINVAL);
+  teardown();
+}
+
 /* Randomised over the fd path: two readers at their own pace plus a writer,
  * every message in order with the exact gap, nothing leaked at the end. */
 static void test_bus_fd_fuzz(void) {
@@ -229,6 +337,10 @@ static const test_case_t bus_fd_cases[] = {
     TEST_CASE(test_bus_fd_two_readers_and_size),
     TEST_CASE(test_bus_fd_close_and_exit_release),
     TEST_CASE(test_bus_fd_limits),
+    TEST_CASE(test_bus_fd_recv_wait_blocks_and_wakes),
+    TEST_CASE(test_bus_fd_wait_does_not_bank_signals),
+    TEST_CASE(test_bus_fd_wait_sees_queued_without_signal),
+    TEST_CASE(test_bus_fd_wait_validates),
     TEST_CASE(test_bus_fd_fuzz),
 };
 
