@@ -18,6 +18,7 @@
 # Usage:
 #   tools/run_hw_tests.sh                # default port /dev/ttyACM0
 #   PORT=/dev/ttyACM1 tools/run_hw_tests.sh
+#   SERIAL=0668FF33... tools/run_hw_tests.sh   # which probe, when several
 #   CAPTURE_SECS=20  tools/run_hw_tests.sh
 # =============================================================================
 set -uo pipefail
@@ -26,7 +27,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
 
-PORT="${PORT:-/dev/ttyACM0}"
+# Which board. With one probe attached everything is inferred; with several
+# (an F401 next to an F767, say) SERIAL picks one -- st-flash would otherwise
+# grab whichever it enumerates first and write this firmware to the wrong MCU.
+SERIAL="${SERIAL:-}"
+PORT="${PORT:-}"
+EXPECT_CHIPID="${EXPECT_CHIPID:-0x433}" # STM32F401xD/xE, what the build targets
 CAPTURE_SECS="${CAPTURE_SECS:-15}"
 BUILD_DIR="build_hw_tests"
 
@@ -53,10 +59,49 @@ if ! st-info --probe 2>&1 | grep -qi "stlink\|serial"; then
   exit 2
 fi
 
+# --- pick the board ----------------------------------------------------------
+# st-info --probe prints one "serial:" and one "chipid:" line per probe, in
+# order, so the two lists line up.
+probe_serials=$(st-info --probe 2>/dev/null | awk '/serial:/ {print $2}')
+probe_chipids=$(st-info --probe 2>/dev/null | awk '/chipid:/ {print $2}')
+nprobes=$(printf '%s\n' "$probe_serials" | grep -c .)
+
+if [ -z "$SERIAL" ]; then
+  if [ "$nprobes" -gt 1 ]; then
+    echo "several ST-Link probes are connected; pick one with SERIAL=<hex>:" >&2
+    paste <(printf '%s\n' "$probe_serials") <(printf '%s\n' "$probe_chipids") \
+      | sed 's/^/  SERIAL=/;s/\t/   chipid /' >&2
+    echo "  (tools/flash.sh --list shows the same list with board names)" >&2
+    exit 2
+  fi
+  SERIAL=$(printf '%s\n' "$probe_serials" | head -1)
+fi
+
+# The chipid of the chosen probe must match what the firmware is built for:
+# writing an F401 image to an F767 is what "Failed to parse flash type" means.
+chipid=$(st-info --probe 2>/dev/null \
+         | awk -v s="$SERIAL" '/serial:/ {m = ($2 == s)} m && /chipid:/ {print $2; exit}')
+if [ -z "$chipid" ]; then
+  echo "no probe with serial $SERIAL (st-info --probe lists the ones present)" >&2
+  exit 2
+fi
+if [ "$chipid" != "$EXPECT_CHIPID" ]; then
+  echo "probe $SERIAL is chipid $chipid, but this firmware targets $EXPECT_CHIPID." >&2
+  echo "Refusing to flash it. Set EXPECT_CHIPID=$chipid if that is really the" >&2
+  echo "board you want (and make sure navhal.config matches)." >&2
+  exit 2
+fi
+
+# The probe's own USB serial port, unless PORT says otherwise.
+if [ -z "$PORT" ]; then
+  link=$(ls /dev/serial/by-id/*"$SERIAL"* 2>/dev/null | head -1)
+  PORT=$([ -n "$link" ] && readlink -f "$link" || echo /dev/ttyACM0)
+fi
 if [ ! -e "$PORT" ]; then
   echo "serial port $PORT not present (set PORT=... to override)" >&2
   exit 2
 fi
+echo "board: probe $SERIAL (chipid $chipid) on $PORT"
 
 # ----- per-example runner -----------------------------------------------------
 # Output mirrors the host-test runner (tools/run_tests.sh) so the same
@@ -133,7 +178,7 @@ run_example() {
   local flash_log="/tmp/hw_${name}_flash.log"
   local flashed=0
   for attempt in 1 2; do
-    if st-flash --connect-under-reset write \
+    if st-flash --serial "$SERIAL" --connect-under-reset write \
          "$BUILD_DIR/examples/main.bin" 0x8000000 \
          > "$flash_log" 2>&1; then
       flashed=1; break
@@ -160,7 +205,7 @@ run_example() {
   ( timeout "$CAPTURE_SECS" cat "$PORT" > "$uart_log" 2>/dev/null ) &
   local cap_pid=$!
   sleep 1
-  st-flash reset >/dev/null 2>&1 || true
+  st-flash --serial "$SERIAL" reset >/dev/null 2>&1 || true
   wait "$cap_pid" || true
 
   local p_pass=0 p_fail=0
