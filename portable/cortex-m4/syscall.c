@@ -19,6 +19,7 @@
 #include "perf.h"
 #include "periph_bus.h"
 #include "structure.h" // queue fds (M4)
+#include "vfs.h"        // the VFS mount + its syscalls (M5)
 #include "port.h"
 #include "task.h"
 #include "vfile.h"
@@ -116,6 +117,26 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
       if (args[2] && !v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
         return V_EFAULT;
       break;
+#endif
+#if VAIOS_DEVFS && VAIOS_MODULE_VFS
+    case SYS_stat:
+      // path in, struct out: a user string and a write.
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      if (!v_access_ok((void *)(uintptr_t)args[1], sizeof(vfs_stat_t), 1))
+        return V_EFAULT;
+      break;
+    case SYS_mkdir:
+    case SYS_unlink:
+    case SYS_opendir:
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      break;
+    case SYS_readdir:
+      if (!v_access_ok((void *)(uintptr_t)args[1], sizeof(vfs_dirent_t), 1))
+        return V_EFAULT;
+      break;
+    /* SYS_lseek and SYS_sync carry scalars only. */
 #endif
 #if VAIOS_DEVFS
     case SYS_q_open:
@@ -232,6 +253,28 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        child is unprivileged like every created task and cannot outrank its
        parent; only the parent may later end it. */
     return v_task_spawn((const v_task_spawn_t *)(uintptr_t)args[0]);
+#if VAIOS_DEVFS && VAIOS_MODULE_VFS
+  case SYS_lseek:
+    /* args[0]=fd, args[1]=offset, args[2]=whence. */
+    return (intptr_t)v_file_lseek((int)args[0], (long)args[1], (int)args[2]);
+  case SYS_stat:
+    /* args[0]=path, args[1]=vfs_stat_t out. */
+    return v_file_stat((const char *)(uintptr_t)args[0],
+                       (vfs_stat_t *)(uintptr_t)args[1]);
+  case SYS_mkdir:
+    return v_file_mkdir((const char *)(uintptr_t)args[0]);
+  case SYS_unlink:
+    return v_file_unlink((const char *)(uintptr_t)args[0]);
+  case SYS_sync:
+    /* Flush this file's buffers. args[0]=fd. */
+    return v_file_sync((int)args[0]);
+  case SYS_opendir:
+    /* args[0]=path -> an fd closed with SYS_close like any other. */
+    return v_dir_open((const char *)(uintptr_t)args[0]);
+  case SYS_readdir:
+    /* args[0]=dir fd, args[1]=vfs_dirent_t out. */
+    return v_dir_read((int)args[0], (vfs_dirent_t *)(uintptr_t)args[1]);
+#endif
 #if VAIOS_DEVFS
   case SYS_q_open:
     /* Open a registered queue by name. args[0]=name, args[1]=V_Q_RD/V_Q_WR. */

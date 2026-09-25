@@ -26,6 +26,12 @@ typedef struct v_file_ops {
   int (*read)(void *priv, void *buf, uint32_t len);
   int (*write)(void *priv, const void *buf, uint32_t len);
   int (*close)(void *priv);
+  // Optional. A plain device hands every opener the same `priv` it registered
+  // with; a node that needs per-open state (a FILE, not a device) provides this
+  // instead and returns the state for this open. `tail` is the path after the
+  // node's name, which is how a MOUNT works: register "/mnt/" and every path
+  // under it reaches this hook with the rest of the path.
+  int (*open)(const char *tail, int flags, void **priv_out);
 } v_file_ops;
 
 // One fd-table slot. ops == NULL means the slot is free.

@@ -320,6 +320,8 @@ add_executable(vaios_syscall_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
     "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"
     "${VAIOS_ROOT}/kernel/structure.c"                # SYS_q_* bodies (M4)
+    "${VAIOS_ROOT}/kernel/vfs.c"                      # SYS_lseek/stat/... (M5)
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/v_fs_stub.c"
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/devfs.c"                    # fd table (IPC_FD/DEVFS)
@@ -345,7 +347,8 @@ target_compile_definitions(vaios_syscall_tests PRIVATE
     VAIOS_MODULE_BUS=1
     VAIOS_BUS_MAX_OPEN=4
     VAIOS_QUEUE_MAX_OPEN=4
-    VAIOS_MODULE_VFS=0
+    VAIOS_MODULE_VFS=1        # the VFS syscall validation arms (M5)
+    VAIOS_VFS_MAX_OPEN=4
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0
     STATIC_SEMAPHORE_SIZE=64)
@@ -375,6 +378,9 @@ add_executable(vaios_ipcfd_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/test_pbus_fd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_bus_fd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_queue_fd.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs_fd.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/v_fs_stub.c"   # the filesystem under the mount
+    "${VAIOS_ROOT}/kernel/vfs.c"                      # the mount + its syscalls (M5)
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/syscall_stubs.c"  # svc host hooks + perf/kmsg stubs
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
@@ -404,7 +410,8 @@ target_compile_definitions(vaios_ipcfd_tests PRIVATE
     VAIOS_MODULE_BUS=1
     VAIOS_BUS_MAX_OPEN=4
     VAIOS_QUEUE_MAX_OPEN=4
-    VAIOS_MODULE_VFS=0
+    VAIOS_MODULE_VFS=1        # the VFS mount (M5) is tested here
+    VAIOS_VFS_MAX_OPEN=4
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0
     STATIC_SEMAPHORE_SIZE=64)

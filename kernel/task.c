@@ -316,17 +316,25 @@ const char *task_get_name_by_id(uint32_t task_id) {
 // Every live task, for the ownership walks below. Callers hold no critical
 // section: each helper takes its own, because get_task_by_id does too and
 // ENTER_CRITICAL does not nest.
+// Every list walk below is bounded by the number of tasks that can exist. A
+// scheduler list is singly linked and has been self-linked by a double enqueue
+// before (see task_exit_request), and a kernel that spins forever on a corrupt
+// list is worse than one that gives up: the bound turns a hang into a miscount.
+#define TASK_WALK_MAX (task_count + 2u)
+
 static uint32_t count_children(uint32_t parent_id) {
-  uint32_t n = 0;
+  uint32_t n = 0, steps = 0;
   ENTER_CRITICAL();
   for (uint8_t p = 0; p <= MAX_PRIORITY; p++)
-    for (TCB *t = ready_lists[p]; t; t = t->next)
+    for (TCB *t = ready_lists[p]; t && steps < TASK_WALK_MAX; t = t->next, steps++)
       if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
         n++;
-  for (TCB *t = blocked_list; t; t = t->next)
+  steps = 0;
+  for (TCB *t = blocked_list; t && steps < TASK_WALK_MAX; t = t->next, steps++)
     if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
       n++;
-  for (TCB *t = delayed_list; t; t = t->next)
+  steps = 0;
+  for (TCB *t = delayed_list; t && steps < TASK_WALK_MAX; t = t->next, steps++)
     if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
       n++;
   EXIT_CRITICAL();
@@ -336,17 +344,21 @@ static uint32_t count_children(uint32_t parent_id) {
 // The id of one live task whose owner is gone (terminated or already reaped),
 // or 0. parent_id 0 means "created by privileged init" and is never an orphan.
 static uint32_t find_orphan(void) {
-  uint32_t ids[1] = {0};
+  uint32_t ids[1] = {0}, steps = 0;
   ENTER_CRITICAL();
-  TCB *lists[3] = {blocked_list, delayed_list, NULL};
+  TCB *lists[2] = {blocked_list, delayed_list};
   for (uint8_t p = 0; p <= MAX_PRIORITY && !ids[0]; p++)
-    for (TCB *t = ready_lists[p]; t && !ids[0]; t = t->next)
+    for (TCB *t = ready_lists[p]; t && !ids[0] && steps < TASK_WALK_MAX;
+         t = t->next, steps++)
       if (t->parent_id && t->status != TASK_TERMINATED)
         ids[0] = t->task_id;
-  for (int i = 0; i < 2 && !ids[0]; i++)
-    for (TCB *t = lists[i]; t && !ids[0]; t = t->next)
+  for (int i = 0; i < 2 && !ids[0]; i++) {
+    steps = 0;
+    for (TCB *t = lists[i]; t && !ids[0] && steps < TASK_WALK_MAX;
+         t = t->next, steps++)
       if (t->parent_id && t->status != TASK_TERMINATED)
         ids[0] = t->task_id;
+  }
   EXIT_CRITICAL();
   if (!ids[0])
     return 0;

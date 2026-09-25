@@ -81,6 +81,13 @@ typedef enum {
                         //   the transfer for the same reason SYS_bus_wait is:
                         //   a parked task holds no buffer of its own, and the
                         //   queue's own counters are never consumed by a waiter.
+  SYS_lseek = 44,       // the file operations with no fd equivalent (M5). The
+  SYS_stat = 45,        //   VFS mounts itself as a devfs node, so open/read/
+  SYS_mkdir = 46,       //   write/close already work through SYS_open and
+  SYS_unlink = 47,      //   friends; only these needed numbers of their own.
+  SYS_sync = 48,
+  SYS_opendir = 49,
+  SYS_readdir = 50,
   SYS_MAX
 } v_syscall_t;
 
