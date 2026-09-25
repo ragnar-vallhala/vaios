@@ -135,6 +135,9 @@ endif()
 # kernel target, so both must agree on whether the module exists: the kernel
 # target's own -D would otherwise leave portable/ reading the Kconfig default.
 add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
+# Same for the VFS: its mount + file syscalls live in the port's dispatch, so
+# portable/ must agree with the kernel target about whether the module exists.
+add_compile_definitions(VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>)
 
 message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "

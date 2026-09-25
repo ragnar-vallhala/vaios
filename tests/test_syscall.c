@@ -291,6 +291,26 @@ static void test_unpriv_ro_pbus_tx_ok_rx_refused(void) {
   stub_set_user_ro(0, 0);
 }
 
+/* ---- The VFS operations that needed syscalls of their own (M5). This binary
+ * has the VFS module off, so each validated call falls through to the dispatch
+ * default — what is under test is the validation, as everywhere else here. */
+#if VAIOS_MODULE_VFS
+static void test_unpriv_vfs_paths_and_structs_validated(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  TEST_ASSERT_EQ(call(SYS_mkdir, BAD_PTR, 0, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_unlink, BAD_PTR, 0, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_opendir, BAD_PTR, 0, 0), T_EFAULT);
+  /* stat: the path AND the struct it fills */
+  TEST_ASSERT_EQ(call(SYS_stat, BAD_PTR, base, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_stat, base, BAD_PTR, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_readdir, 3, BAD_PTR, 0), T_EFAULT);
+  /* lseek and sync carry scalars only: never a fault */
+  TEST_ASSERT(call(SYS_lseek, 3, 0, 0) != T_EFAULT);
+  TEST_ASSERT(call(SYS_sync, 3, 0, 0) != T_EFAULT);
+}
+#endif
+
 /* ---- Queues (M4): the name is a user string, and the element buffer is bounded
  * by the QUEUE's elem_size — the caller never states a length, so it cannot lie
  * about one. No queue is registered in this binary, so a bad fd falls through to
@@ -406,6 +426,9 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+#if VAIOS_MODULE_VFS
+    TEST_CASE(test_unpriv_vfs_paths_and_structs_validated),
+#endif
     TEST_CASE(test_unpriv_q_open_bad_str_efault),
     TEST_CASE(test_unpriv_q_unknown_fd_is_einval_not_efault),
     TEST_CASE(test_unpriv_q_wait_takes_no_pointer),

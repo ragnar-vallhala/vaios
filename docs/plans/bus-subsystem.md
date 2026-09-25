@@ -551,6 +551,15 @@ short-critical-section allocator underneath, task-level pipeline mutexes on top
 
 ## 8. Snapshotter
 
+> **Status note (M5).** The VFS is now reachable from an unprivileged task: it
+> mounts as a devfs node, so `open`/`read`/`write`/`close` work through the file
+> syscalls, with `lseek`/`stat`/`mkdir`/`unlink`/`sync`/`opendir`/`readdir` added
+> as their own. What is NOT covered on target: Renode's generic STM32F4 has no SD
+> card, so a real file write is a PITL-only check. The host suite covers the
+> layer against a recorded-call filesystem; the snapshotter below inherits both
+> the capability and that testing gap.
+
+
 A **background observer task** (low priority) that copies best-effort messages to
 persistent storage via the VFS (`include/vfs.h`) for black-box logging,
 post-flight debugging, and replay.

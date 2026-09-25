@@ -37,8 +37,8 @@ static int cap_close(void *priv) {
   cap_close_calls++;
   return 0;
 }
-static const v_file_ops cap_ops = {cap_read, cap_write, cap_close};
-static const v_file_ops other_ops = {0, 0, 0};
+static const v_file_ops cap_ops = {cap_read, cap_write, cap_close, NULL};
+static const v_file_ops other_ops = {0, 0, 0, 0};
 
 static TCB g_task;
 static int registered;
@@ -69,6 +69,17 @@ static void test_open_known_device(void) {
   reset();
   int fd = v_file_open("/dev/cap", 0);
   TEST_ASSERT_EQ(fd, 3); /* 0/1/2 are the pre-opened console */
+}
+
+/* A node name is matched whole: only a name ending in '/' claims the paths under
+ * it (that is how a mount works — see v_vfs_mount). Without that rule
+ * "/dev/cap" would answer for "/dev/capture" and hand out the wrong device. */
+static void test_open_longer_path_is_not_a_prefix_match(void) {
+  reset();
+  TEST_ASSERT(v_file_open("/dev/capture", 0) < 0);
+  TEST_ASSERT(v_file_open("/dev/cap/more", 0) < 0);
+  TEST_ASSERT(v_file_open("/dev/ca", 0) < 0);
+  TEST_ASSERT(v_file_open("/dev/cap", 0) >= 0); /* the node itself still opens */
 }
 
 static void test_open_unknown_returns_error(void) {
@@ -133,6 +144,7 @@ static const test_case_t devfs_cases[] = {
     TEST_CASE(test_fd_table_preopens_console),
     TEST_CASE(test_open_known_device),
     TEST_CASE(test_open_unknown_returns_error),
+    TEST_CASE(test_open_longer_path_is_not_a_prefix_match),
     TEST_CASE(test_write_reaches_device),
     TEST_CASE(test_read_from_device),
     TEST_CASE(test_close_frees_fd_and_calls_op),
