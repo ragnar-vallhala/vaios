@@ -15,6 +15,7 @@
 
 #include "port.h"
 #include "vaios_config.h"
+#include "utils.h" // v_log (report a console that refused to start)
 #include <stdint.h>
 
 #ifdef NAVHAL
@@ -40,12 +41,24 @@
 void v_port_hw_clock_init(uint8_t internal_clock_setup) {
 #ifdef NAVHAL
   if (internal_clock_setup == 1) {
-    // 84 MHz SYSCLK from HSI; PLLQ=7 keeps the 48 MHz SDIO/USB clock. APB
-    // dividers left 0: the F4 backend defaults them to /2 and clamps APB1 to
-    // its 42 MHz limit.
+    // 84 MHz SYSCLK, PLLQ=7 keeping the 48 MHz SDIO/USB clock. APB dividers left
+    // 0: the F4 backend defaults them to /2 and clamps APB1 to its 42 MHz limit.
+    //
+    // M is chosen so the VCO input is 1 MHz whichever source is used, which is
+    // what keeps N/P/Q — and therefore SYSCLK and the 48 MHz domain — identical
+    // between them. HSI is the default because it needs no board support; HSE is
+    // required for USB, because hal_usb_cdc_init refuses a PLL Q that did not
+    // come from a crystal rather than enumerate unreliably.
+#if VAIOS_CLOCK_HSE
+    const uint32_t src = HAL_CLOCK_SOURCE_HSE;
+    const uint32_t vco_div = VAIOS_CLOCK_HSE_HZ / 1000000u;
+#else
+    const uint32_t src = HAL_CLOCK_SOURCE_HSI;
+    const uint32_t vco_div = 16u; // the HSI is 16 MHz
+#endif
     hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL,
-                                  .pll = {.input_src = HAL_CLOCK_SOURCE_HSI,
-                                          .pll_m = 16,
+                                  .pll = {.input_src = (hal_clock_source_t)src,
+                                          .pll_m = (uint8_t)vco_div,
                                           .pll_n = 336,
                                           .pll_p = 4,
                                           .pll_q = 7}};
@@ -173,7 +186,13 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
   // wait for a host here, because a flight build must not depend on one.
   (void)baudrate;
   (void)dma_tx_done_cb;
-  hal_usb_cdc_init();
+  if (hal_usb_cdc_init() != HAL_OK) {
+    // No console to complain on — but with VAIOS_CONSOLE_TO_KMSG the ring keeps
+    // this, and it is readable over SWD. The usual cause is a PLL Q that did not
+    // come from a crystal: see VAIOS_CLOCK_HSE.
+    v_log(LOG_ERROR, "console: USB CDC init refused (needs a 48 MHz PLL Q from "
+                     "HSE — see VAIOS_CLOCK_HSE)");
+  }
   return;
 #endif
   hal_uart_config_t uart_cfg = {.baudrate = baudrate};

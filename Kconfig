@@ -323,6 +323,30 @@ config VAIOS_DEBUG_IN_SLEEP
       block staying clocked, so it is off by default and belongs in debug and
       hardware-test builds.
 
+config VAIOS_CLOCK_HSE
+    bool "Run the PLL from an external crystal (HSE) instead of the internal RC"
+    default n
+    help
+      v_system_init's internal clock setup drives the PLL from HSI, which is
+      accurate to about 1%. That is fine for the core and for SDIO, but NOT for
+      USB: hal_usb_cdc_init refuses to run on anything but a 48 MHz PLL Q derived
+      from a crystal, rather than enumerate unreliably. Turn this on for boards
+      that have an HSE source (a fitted crystal, or the ST-Link's 8 MHz MCO in
+      bypass), which is what VAIOS_CONSOLE_USB_CDC needs.
+
+      The PLL M divider is derived from VAIOS_CLOCK_HSE_HZ so the VCO input lands
+      at 1 MHz, matching the HSI path (16 MHz / 16) — so N/P/Q, and therefore
+      SYSCLK and the 48 MHz USB/SDIO clock, are unchanged.
+
+config VAIOS_CLOCK_HSE_HZ
+    int "HSE frequency in Hz"
+    depends on VAIOS_CLOCK_HSE
+    default 8000000
+    help
+      Must be a whole number of MHz: the PLL M divider is HSE_HZ / 1000000.
+      8 MHz on an ST Nucleo (MCO from the ST-Link), 8 or 25 MHz on most custom
+      boards.
+
 config VAIOS_CONSOLE_USB_CDC
     bool "Console on USB CDC instead of USART2 (NavHAL builds)"
     default n
