@@ -405,6 +405,16 @@ config VAIOS_TASK_MAX_CHILDREN
       alive; a child that exits gives its slot back. Bounds the fan-out of a
       spawn loop, together with VAIOS_TASK_SPAWN_STACK_MAX.
 
+config VAIOS_SDIO_4BIT
+    bool "Use the SD card's 4-bit data bus"
+    default y
+    help
+      Drive the card over DAT0..DAT3 instead of DAT0 alone. Four times the
+      bandwidth, and it needs all four data lines wired and pulled up: a board or
+      socket with only DAT0 connected initialises fine (CMD is a separate line)
+      and then fails every data transfer, which looks like a dead card. Turn this
+      off to find out — if 1-bit works, the wiring is the problem.
+
 config VAIOS_VFS_IO_SLOTS
     int "In-flight file requests a system may have (I/O worker)"
     depends on VAIOS_DEVFS

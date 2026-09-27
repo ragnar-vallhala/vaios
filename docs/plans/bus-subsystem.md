@@ -875,6 +875,11 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
 > settles the VFS question the roadmap listed as D3 — the answer is the I/O worker,
 > not the synchronous syscall — and it is the same reason the bus's blocking recv
 > and the queue transfers are split into a try and a wait.
+>
+> **With the worker (todo 67), measured on the same board: zero drift over 500
+> cycles of a 5 ms cadence while an unprivileged task wrote and re-read 3 KB of
+> SD.** Filesystem I/O costs a control loop nothing detectable once the transfers
+> are in thread mode.
 
 > **Measured (B8).** The concern behind questions 2 and 4 — that the allocator's
 > reclaim/evict loop is a critical section whose length grows with pool pressure —

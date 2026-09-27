@@ -181,6 +181,14 @@ uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
 // thin wrapper over this with name = "".
 uint32_t task_create_named(void (*entry)(void *), void *arg, uint32_t size,
                            uint32_t priority, const char *name);
+#if VAIOS_MPU_USER_SEPARATION
+// As task_create_named, but the task runs PRIVILEGED: it may touch kernel memory
+// and peripherals. For the kernel's own service tasks — the VFS I/O worker is
+// the reason this exists — never for application work. Only privileged code can
+// call it, because task_create* is not a syscall.
+uint32_t task_create_privileged(void (*entry)(void *), void *arg, uint32_t size,
+                                uint32_t priority, const char *name);
+#endif
 // Tag an existing task by id (e.g. after task_create). `name` storage must
 // outlive the task (string literal in flash). No-op if the id is unknown.
 void task_set_name(uint32_t task_id, const char *name);

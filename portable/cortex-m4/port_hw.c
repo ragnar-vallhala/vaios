@@ -268,7 +268,11 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 int v_port_hw_sdio_init(void) {
 #ifdef NAVHAL
   /* clock_div is auto-calculated from the system clock. */
-  hal_sdio_config_t sd_config = {.clock_div = 118, .bus_width = 1};
+  // NavHAL reads bus_width as a flag, not a count: 1 means switch to the 4-bit
+  // bus, 0 means stay on DAT0 alone. Four lines need all four wired; a socket
+  // with only DAT0 initialises fine and then fails every data transfer.
+  hal_sdio_config_t sd_config = {.clock_div = 118,
+                                 .bus_width = VAIOS_SDIO_4BIT ? 1 : 0};
   return (hal_sdio_init(&sd_config) == HAL_SDIO_OK) ? 0 : -1;
 #else
   return -1; /* No SDIO model under QEMU. */

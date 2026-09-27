@@ -306,6 +306,26 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   return task->task_id;
 }
 
+#if VAIOS_MPU_USER_SEPARATION
+uint32_t task_create_privileged(void (*entry)(void *), void *arg, uint32_t size,
+                                uint32_t priority, const char *name) {
+  // As task_create_named, but the task runs PRIVILEGED. Reachable only from
+  // privileged code — task_create* is not a syscall, so an unprivileged task
+  // cannot call it at all — and meant for the kernel's own service tasks, like
+  // the VFS I/O worker, which must touch kernel memory and a peripheral.
+  uint32_t id = task_create_named(entry, arg, size, priority, name);
+  if (!id)
+    return 0;
+  TCB *t = get_task_by_id(id);
+  if (!t)
+    return 0;
+  ENTER_CRITICAL();
+  t->privileged = 1;
+  EXIT_CRITICAL();
+  return id;
+}
+#endif
+
 void task_set_name(uint32_t task_id, const char *name) {
   TCB *task = get_task_by_id(task_id);
   if (task)

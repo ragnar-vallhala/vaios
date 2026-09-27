@@ -70,9 +70,10 @@ static void fill_record(uint8_t *rec, uint32_t i) {
     rec[k] = (uint8_t)(i * 7u + k);
 }
 
-// The filesystem's own task: privileged, thread mode, interrupts enabled. This
-// is where the SD transfers actually happen. Priority 1 — below the controller,
-// because recording must never outrank control.
+// The filesystem's own task. It must be PRIVILEGED: it touches the request
+// slots, the FatFs state and the SDIO peripheral. Thread mode with interrupts
+// enabled is the point — that is where a transfer can actually complete. Priority
+// 1, below the controller, because recording must never outrank control.
 static void vfsio_task(void *arg) {
   (void)arg;
   for (;;)
@@ -246,7 +247,7 @@ int main(void) {
   }
   v_log(LOG_INFO, "sd_user: start (privileged init only)");
 
-  task_create_named(vfsio_task, NULL, 2048, 1, "vfsio");
+  task_create_privileged(vfsio_task, NULL, 2048, 1, "vfsio");
   task_create_named(controller_task, NULL, 2048, 3, "controller");
   task_create_named(logger_task, NULL, 2048, 1, "logger");
   scheduler_start();
