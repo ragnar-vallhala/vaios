@@ -177,6 +177,14 @@ endmenu
 menu "Memory / Heap"
 config HEAP_SIZE
     hex "Kernel heap size (bytes)"
+    # The heap starts after .bss, so it has to fit in whatever RAM is left.
+    # Examples that carry a lot of statics (an SD example's buffers and worker
+    # slots) do not leave 88 KB on a 96 KB part —
+    # v_heap_memory_init panics instead of clearing past the end of SRAM, and
+    # this default is what keeps that from happening on a default build. The
+    # benchmark example is its own CMake target with no Kconfig choice, so it
+    # still needs CONFIG_HEAP_SIZE set by hand (docs/benchmark/bus-ipc.md).
+    default 0x8000 if EXAMPLE_SD_USER
     default 0x16000
 config HEAP_WATERMARK_ENABLE
     bool "Panic when heap usage crosses the watermark"
@@ -396,6 +404,23 @@ config VAIOS_TASK_MAX_CHILDREN
       v_task_spawn refuses past this with -EAGAIN. Counts children currently
       alive; a child that exits gives its slot back. Bounds the fan-out of a
       spawn loop, together with VAIOS_TASK_SPAWN_STACK_MAX.
+
+config VAIOS_VFS_IO_SLOTS
+    int "In-flight file requests a system may have (I/O worker)"
+    depends on VAIOS_DEVFS
+    default 2
+    help
+      Request slots for the VFS I/O worker: one per task waiting on a file
+      operation. Each holds a copied path and a VAIOS_VFS_IO_BUF bounce buffer in
+      static kernel RAM.
+config VAIOS_VFS_IO_BUF
+    int "Bytes a single file request may carry (bounce buffer)"
+    depends on VAIOS_DEVFS
+    default 512
+    help
+      Payload a read or write moves per request; the task-facing wrappers loop in
+      chunks of this size, so kernel memory stays fixed however much a task asks
+      for. One sector (512) is the natural value.
 
 config VAIOS_VFS_MAX_OPEN
     int "Files+directories a system may have open through the VFS mount"

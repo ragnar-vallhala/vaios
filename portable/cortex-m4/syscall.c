@@ -119,24 +119,26 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
       break;
 #endif
 #if VAIOS_DEVFS && VAIOS_MODULE_VFS
-    case SYS_stat:
-      // path in, struct out: a user string and a write.
-      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
+    case SYS_vfs_submit: {
+      // The descriptor is the caller's, and so are the path and payload it
+      // points at. Everything is copied into a kernel slot at submit, so nothing
+      // of the caller's is touched again while it waits for the worker.
+      const v_vfs_desc_t *d = (const v_vfs_desc_t *)(uintptr_t)args[0];
+      if (!v_access_ok(d, sizeof(*d), 0))
         return V_EFAULT;
-      if (!v_access_ok((void *)(uintptr_t)args[1], sizeof(vfs_stat_t), 1))
+      if (d->path && v_strnlen_user(d->path, V_SYSCALL_STR_MAX) < 0)
         return V_EFAULT;
-      break;
-    case SYS_mkdir:
-    case SYS_unlink:
-    case SYS_opendir:
-      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
-        return V_EFAULT;
-      break;
-    case SYS_readdir:
-      if (!v_access_ok((void *)(uintptr_t)args[1], sizeof(vfs_dirent_t), 1))
+      if (d->data && d->len && !v_access_ok(d->data, d->len, 0))
         return V_EFAULT;
       break;
-    /* SYS_lseek and SYS_sync carry scalars only. */
+    }
+    case SYS_vfs_finish:
+      // args[1] is where the result lands: a write into the caller's memory.
+      if (args[1] && args[2] &&
+          !v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
+        return V_EFAULT;
+      break;
+    /* SYS_vfs_wait carries scalars only. */
 #endif
 #if VAIOS_DEVFS
     case SYS_q_open:
@@ -254,26 +256,18 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        parent; only the parent may later end it. */
     return v_task_spawn((const v_task_spawn_t *)(uintptr_t)args[0]);
 #if VAIOS_DEVFS && VAIOS_MODULE_VFS
-  case SYS_lseek:
-    /* args[0]=fd, args[1]=offset, args[2]=whence. */
-    return (intptr_t)v_file_lseek((int)args[0], (long)args[1], (int)args[2]);
-  case SYS_stat:
-    /* args[0]=path, args[1]=vfs_stat_t out. */
-    return v_file_stat((const char *)(uintptr_t)args[0],
-                       (vfs_stat_t *)(uintptr_t)args[1]);
-  case SYS_mkdir:
-    return v_file_mkdir((const char *)(uintptr_t)args[0]);
-  case SYS_unlink:
-    return v_file_unlink((const char *)(uintptr_t)args[0]);
-  case SYS_sync:
-    /* Flush this file's buffers. args[0]=fd. */
-    return v_file_sync((int)args[0]);
-  case SYS_opendir:
-    /* args[0]=path -> an fd closed with SYS_close like any other. */
-    return v_dir_open((const char *)(uintptr_t)args[0]);
-  case SYS_readdir:
-    /* args[0]=dir fd, args[1]=vfs_dirent_t out. */
-    return v_dir_read((int)args[0], (vfs_dirent_t *)(uintptr_t)args[1]);
+  case SYS_vfs_submit:
+    /* Hand a file operation to the I/O worker. args[0] = v_vfs_desc_t, returns a
+       slot id. The transfer must NOT happen here: SVCall runs at priority 0, so
+       this handler would mask the completion interrupt it waited for. */
+    return v_vfs_submit((const v_vfs_desc_t *)(uintptr_t)args[0]);
+  case SYS_vfs_wait:
+    /* Block the caller on its slot. args[0] = slot, args[1] = ticks. */
+    return v_vfs_wait((int)args[0], args[1]);
+  case SYS_vfs_finish:
+    /* Collect the result, release the slot. args[0] = slot, args[1] = out
+       buffer, args[2] = its size. */
+    return v_vfs_finish((int)args[0], (void *)(uintptr_t)args[1], args[2]);
 #endif
 #if VAIOS_DEVFS
   case SYS_q_open:

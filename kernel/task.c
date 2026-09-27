@@ -5,6 +5,13 @@
 #include "periph_bus.h" // v_pbus_task_teardown
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL
 #include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
+#if VAIOS_DEVFS && VAIOS_MODULE_VFS
+// In kernel/vfs.c. Declared here rather than including vfs.h, which would drag
+// the whole filesystem API into the scheduler.
+void v_vfs_task_teardown(struct Task_Control_Block *t);
+#else
+#define v_vfs_task_teardown(t) ((void)(t))
+#endif
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
@@ -517,6 +524,7 @@ void v_task_exit_impl(void) {
   ENTER_CRITICAL();
   v_ipc_task_teardown(current_task); // release held mutexes / wait memberships
   v_pbus_task_teardown(current_task); // ... and bus locks
+  v_vfs_task_teardown(current_task);  // ... and files, which get closed not lost
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
@@ -620,6 +628,7 @@ void task_exit_request(uint32_t task_id) {
   // give/unlock/wake never touches this soon-freed TCB.
   v_ipc_task_teardown(task);
   v_pbus_task_teardown(task); // queued / held v_pbus_lock slots
+  v_vfs_task_teardown(task);  // in-flight file requests, and open files
 
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);

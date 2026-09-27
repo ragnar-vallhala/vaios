@@ -1,24 +1,27 @@
 /**
  * @file test_vfs_fd.c
- * @brief The VFS through the fd API (M5): the mount as a devfs node, so a task
- *        reaches a file with the syscalls it already has, plus the operations
- *        that needed numbers of their own (seek, stat, mkdir, unlink, sync,
- *        directory listing).
+ * @brief Files for a task, through the VFS I/O worker (todo 67).
  *
- * Runs in the ipcfd binary (DEVFS + SVC on), so the calls trap through
- * v_host_svc into the real v_syscall_dispatch. The filesystem underneath is the
- * recorded-call stub (tests/stubs/v_fs_stub.c), so each test programs what the
- * filesystem answers and asserts what the layer passed down and handed back.
+ * The first version of this layer ran the filesystem inline in the syscall. That
+ * deadlocks on hardware — SVCall is priority 0, so the handler masks the very
+ * SDIO completion it waits for — so the transfers moved into a worker task and a
+ * task's file call became submit / wait / finish (docs/user-space.md).
+ *
+ * Runs in the ipcfd binary (DEVFS + SVC on). The filesystem underneath is the
+ * recorded-call stub, so each test programs what it answers and asserts what the
+ * layer passed down and handed back. There are no interrupts here — which is
+ * exactly why the inline version passed these tests and failed on silicon. What
+ * these cover is the plumbing, ownership and teardown, not the timing.
  */
 #include "framework.h"
 #include "ipc.h" // VA_PASS
 #include "stubs/v_fs_stub.h"
+#include "syscall.h" // V_SYSCALL_BLOCKED
 #include "task.h"
 #include "vfile.h"
 #include "vfs.h"
 #include <string.h>
 
-extern void stub_reset_heap(void);
 extern TCB *ready_lists[];
 extern TCB *blocked_list;
 extern TCB *delayed_list;
@@ -35,12 +38,11 @@ static void dummy_task(void *arg) {
     ;
 }
 
+/* A task to be the caller, and the VFS mounted once. No stub_reset_heap here:
+ * vfs_init puts the FatFs mutex on the heap and is idempotent, so wiping the heap
+ * would leave every later lock on a dangling handle. */
 static void setup(void) {
   v_test_in_handler = 1; // privileged setup
-  // NOT stub_reset_heap(): vfs_init creates the FatFs mutex on the heap and is
-  // idempotent, so wiping the heap would leave every later vfs_lock blocking on
-  // a dangling handle. A real system never pulls the heap out from under a live
-  // mutex; this suite simply keeps its heap.
   vfs_stub_reset();
   for (int i = 0; i <= (int)MAX_PRIORITY; i++)
     ready_lists[i] = NULL;
@@ -50,7 +52,7 @@ static void setup(void) {
   task_id = task_create(dummy_task, NULL, 256, 3);
   current_task = ready_lists[3];
 
-  static int mounted; // the devfs registry is static and additive
+  static int mounted;
   if (!mounted) {
     TEST_ASSERT_EQ(vfs_init(), 0);
     TEST_ASSERT_EQ(v_vfs_mount("/mnt/"), VA_PASS);
@@ -61,11 +63,41 @@ static void setup(void) {
 
 static void teardown(void) {
   v_test_in_handler = 1;
-  task_exit_request(task_id); /* closes its fds -> closes the files */
+  task_exit_request(task_id);
 }
 
-/* A mount claims a subtree, and only a subtree: the prefix must end in '/', the
- * mount point itself is not a file, and a path outside it is still unknown. */
+/* Drive the worker the way an application's own task would: privileged, thread
+ * mode — which on target is the whole point, because interrupts are enabled. */
+/* NOTE: never call this inside TEST_ASSERT_EQ — the macro evaluates its
+ * arguments twice, and this one services a request. */
+static int pump(void) {
+  v_test_in_handler = 1;
+  int n = v_vfs_worker_step(0);
+  v_test_in_handler = 0;
+  return n;
+}
+
+/* Work left queued by a previous test's teardown (which now closes a dying
+ * task's files through the worker) is not this test's business: drain it. */
+static void drain(void) {
+  while (pump())
+    ;
+}
+
+/* Nothing is serviced until a worker runs: a file call with no worker fails
+ * loudly rather than blocking on nobody for ever. */
+static void test_vfs_needs_a_worker(void) {
+  setup();
+  static int first = 1;
+  if (first) { /* before any pump() in this binary */
+    TEST_ASSERT_EQ(v_vfs_open("/mnt/x", 0, 10), V_VFS_EAGAIN);
+    first = 0;
+  }
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 0); } /* and the worker waits for work rather than spins */
+  teardown();
+}
+
+/* A mount claims a subtree, and only a subtree. */
 static void test_vfs_mount_validates(void) {
   setup();
   v_test_in_handler = 1;
@@ -73,170 +105,194 @@ static void test_vfs_mount_validates(void) {
   TEST_ASSERT_EQ(v_vfs_mount(""), V_VFS_EINVAL);
   TEST_ASSERT_EQ(v_vfs_mount("/mnt"), V_VFS_EINVAL); // no trailing slash
   v_test_in_handler = 0;
-  TEST_ASSERT(v_file_open("/mnt/", 0) < 0);        // the mount point itself
-  TEST_ASSERT(v_file_open("/nope/file", 0) < 0);   // outside any node
-  TEST_ASSERT_EQ(vfs_stub.open_called, 0);         // never reached the fs
   teardown();
 }
 
-/* open/read/write/close need no new syscalls: a path under the mount becomes an
- * fd whose reads and writes are the filesystem's, with the path handed down as
- * the tail — the part after the mount prefix. */
-static void test_vfs_fd_round_trip(void) {
+/* open -> write -> read -> close. Each step is submitted, serviced by the worker,
+ * then collected — and crucially the filesystem is NOT touched by the syscall. */
+static void test_vfs_round_trip(void) {
   setup();
-  vfs_stub.open_ret = 7; // the filesystem's own handle
-  int fd = v_file_open("/mnt/log.csv", 0);
+  drain();
+
+  vfs_stub.open_ret = 7;
+  v_vfs_desc_t d = {.op = 1 /*OPEN*/, .path = "/mnt/log.csv", .len = 0};
+  int slot = v_vfs_submit(&d);
+  TEST_ASSERT(slot >= 0);
+  TEST_ASSERT_EQ(vfs_stub.open_called, 0); // not in the syscall
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT_EQ(vfs_stub.open_called, 1); // in the worker
+  TEST_ASSERT_EQ(strcmp(vfs_stub.open_path, "log.csv"), 0); // prefix stripped
+  int fd = v_vfs_finish(slot, 0, 0);
   TEST_ASSERT(fd >= 0);
-  TEST_ASSERT_EQ(vfs_stub.open_called, 1);
-  TEST_ASSERT_EQ(strcmp(vfs_stub.open_path, "log.csv"), 0); // tail, not the URL
 
   vfs_stub.write_ret = 4;
-  TEST_ASSERT_EQ(v_file_write(fd, "abcd", 4), 4);
-  TEST_ASSERT_EQ(vfs_stub.write_fd, 7); // dispatched to the right file
+  const char *payload = "abcd";
+  v_vfs_desc_t w = {.op = 4 /*WRITE*/, .fd = fd, .len = 4, .data = payload};
+  slot = v_vfs_submit(&w);
+  TEST_ASSERT(slot >= 0);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT_EQ(v_vfs_finish(slot, 0, 0), 4);
+  TEST_ASSERT_EQ(vfs_stub.write_fd, 7);
   TEST_ASSERT_EQ(vfs_stub.write_count, (size_t)4);
 
-  char buf[4];
   vfs_stub.read_ret = 4;
-  TEST_ASSERT_EQ(v_file_read(fd, buf, 4), 4);
+  char buf[8];
+  memset(buf, 0, sizeof buf);
+  v_vfs_desc_t r = {.op = 3 /*READ*/, .fd = fd, .len = 4};
+  slot = v_vfs_submit(&r);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT_EQ(v_vfs_finish(slot, buf, sizeof buf), 4);
   TEST_ASSERT_EQ(vfs_stub.read_fd, 7);
 
-  TEST_ASSERT_EQ(v_file_close(fd), 0);
+  v_vfs_desc_t c = {.op = 2 /*CLOSE*/, .fd = fd};
+  slot = v_vfs_submit(&c);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT_EQ(v_vfs_finish(slot, 0, 0), 0);
   TEST_ASSERT_EQ(vfs_stub.close_called, 1);
-  TEST_ASSERT_EQ(vfs_stub.close_fd, 7);
-  /* a closed fd is not usable any more */
-  TEST_ASSERT(v_file_write(fd, "x", 1) < 0);
   teardown();
 }
 
-/* A filesystem that refuses the open must not consume a mount handle, or a few
- * missing files would exhaust the pool. */
-static void test_vfs_fd_failed_open_releases_handle(void) {
+/* What crosses is bounded: a request larger than the bounce buffer is refused
+ * (the wrapper chunks instead), and a path longer than a slot is refused rather
+ * than truncated into the wrong file. */
+static void test_vfs_requests_are_bounded(void) {
   setup();
-  vfs_stub.open_ret = -5; // no such file
-  for (int i = 0; i < VAIOS_VFS_MAX_OPEN + 2; i++)
-    TEST_ASSERT(v_file_open("/mnt/missing", 0) < 0);
-  vfs_stub.open_ret = 3; // now one that exists: the pool is still whole
-  int fd = v_file_open("/mnt/there", 0);
-  TEST_ASSERT(fd >= 0);
-  TEST_ASSERT_EQ(v_file_close(fd), 0);
+  drain();
+  v_vfs_desc_t big = {.op = 3, .fd = 0, .len = VAIOS_VFS_IO_BUF + 1u};
+  TEST_ASSERT_EQ(v_vfs_submit(&big), V_VFS_EINVAL);
+
+  static char longpath[80];
+  memset(longpath, 'a', sizeof longpath - 1);
+  longpath[sizeof longpath - 1] = 0;
+  v_vfs_desc_t lp = {.op = 1, .path = longpath};
+  TEST_ASSERT_EQ(v_vfs_submit(&lp), V_VFS_EINVAL);
   teardown();
 }
 
-/* The handle pool is bounded, and exiting closes the files a task held. */
-static void test_vfs_fd_limits_and_exit_release(void) {
+/* The slot pool is bounded, and a slot belongs to whoever submitted it. */
+static void test_vfs_slots_are_owned_and_bounded(void) {
   setup();
-  vfs_stub.open_ret = 1;
-  int fds[VAIOS_VFS_MAX_OPEN];
-  for (int i = 0; i < VAIOS_VFS_MAX_OPEN; i++) {
-    fds[i] = v_file_open("/mnt/a", 0);
-    TEST_ASSERT(fds[i] >= 0);
+  drain();
+  vfs_stub.open_ret = 3;
+
+  int slots[VAIOS_VFS_IO_SLOTS];
+  for (int i = 0; i < VAIOS_VFS_IO_SLOTS; i++) {
+    v_vfs_desc_t d = {.op = 1, .path = "/mnt/a"};
+    slots[i] = v_vfs_submit(&d);
+    TEST_ASSERT(slots[i] >= 0);
   }
-  TEST_ASSERT_EQ(v_file_open("/mnt/a", 0), V_VFS_EBUSY); // pool full
-  vfs_stub.close_called = 0;
-  teardown();                                   /* exit closes them all */
-  TEST_ASSERT_EQ(vfs_stub.close_called, VAIOS_VFS_MAX_OPEN);
+  v_vfs_desc_t extra = {.op = 1, .path = "/mnt/b"};
+  TEST_ASSERT_EQ(v_vfs_submit(&extra), V_VFS_EBUSY); // pool full
 
-  setup(); /* and the pool is whole again */
-  vfs_stub.open_ret = 1;
-  int fd = v_file_open("/mnt/a", 0);
-  TEST_ASSERT(fd >= 0);
+  TCB *owner = current_task;
+  static TCB other;
+  other = *owner;
+  other.task_id = owner->task_id + 100u;
+  current_task = &other;
+  TEST_ASSERT_EQ(v_vfs_wait(slots[0], 0), V_VFS_EINVAL);   // not yours
+  TEST_ASSERT_EQ(v_vfs_finish(slots[0], 0, 0), V_VFS_EINVAL);
+  current_task = owner;
+
+  TEST_ASSERT_EQ(v_vfs_wait(-1, 0), V_VFS_EINVAL);
+  TEST_ASSERT_EQ(v_vfs_finish(VAIOS_VFS_IO_SLOTS, 0, 0), V_VFS_EINVAL);
+
+  int handles[VAIOS_VFS_IO_SLOTS];
+  for (int i = 0; i < VAIOS_VFS_IO_SLOTS; i++) {
+    { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+    handles[i] = v_vfs_finish(slots[i], 0, 0);
+    TEST_ASSERT(handles[i] >= 0);
+  }
+  int s2 = v_vfs_submit(&extra); // released again
+  TEST_ASSERT(s2 >= 0);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  int h2 = v_vfs_finish(s2, 0, 0);
+
+  /* Close what we opened: handles are a bounded pool too, and nothing pumps the
+   * closes teardown would queue after this test ends. */
+  for (int i = 0; i < VAIOS_VFS_IO_SLOTS; i++) {
+    v_vfs_desc_t c = {.op = 2, .fd = handles[i]};
+    int cs = v_vfs_submit(&c);
+    { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+    v_vfs_finish(cs, 0, 0);
+  }
+  if (h2 >= 0) {
+    v_vfs_desc_t c = {.op = 2, .fd = h2};
+    int cs = v_vfs_submit(&c);
+    { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+    v_vfs_finish(cs, 0, 0);
+  }
   teardown();
 }
 
-/* The operations with no fd equivalent. Each is checked for what it passed down
- * (the tail, the right file handle) and what it returned. */
-static void test_vfs_fd_extra_ops(void) {
+/* A task that dies in flight must not leave the worker publishing into a slot
+ * nobody owns; a task that dies with a file open must have it CLOSED, so the
+ * data is flushed rather than lost. */
+static void test_vfs_teardown_abandons_and_closes(void) {
   setup();
-  vfs_stub.open_ret = 9;
-  int fd = v_file_open("/mnt/data.bin", 0);
-  TEST_ASSERT(fd >= 0);
+  drain();
 
-  vfs_stub.lseek_ret = 128;
-  TEST_ASSERT_EQ(v_file_lseek(fd, 128, 0), 128);
-  TEST_ASSERT_EQ(vfs_stub.lseek_fd, 9);
-  TEST_ASSERT_EQ(vfs_stub.lseek_offset, 128);
-
-  vfs_stub.sync_ret = 0;
-  TEST_ASSERT_EQ(v_file_sync(fd), 0);
-  TEST_ASSERT_EQ(vfs_stub.sync_fd, 9);
-
-  vfs_stub.mkdir_ret = 0;
-  TEST_ASSERT_EQ(v_file_mkdir("/mnt/logs"), 0);
-  TEST_ASSERT_EQ(strcmp(vfs_stub.mkdir_path, "logs"), 0); // prefix stripped
-  /* a path already relative to the mount works too */
-  TEST_ASSERT_EQ(v_file_mkdir("logs2"), 0);
-  TEST_ASSERT_EQ(strcmp(vfs_stub.mkdir_path, "logs2"), 0);
-
-  vfs_stub.unlink_ret = 0;
-  TEST_ASSERT_EQ(v_file_unlink("/mnt/old.csv"), 0);
-  TEST_ASSERT_EQ(strcmp(vfs_stub.unlink_path, "old.csv"), 0);
-
-  vfs_stub.stat_ret = 0;
-  vfs_stub.stat_out.size = 4096;
-  vfs_stat_t st;
-  memset(&st, 0, sizeof st);
-  TEST_ASSERT_EQ(v_file_stat("/mnt/data.bin", &st), 0);
-  TEST_ASSERT_EQ(strcmp(vfs_stub.stat_path, "data.bin"), 0);
-  TEST_ASSERT_EQ(st.size, 4096u);
-
-  /* Bad arguments are refused before the filesystem is bothered. */
-  TEST_ASSERT_EQ(v_file_stat("/mnt/x", NULL), V_VFS_EINVAL);
-  TEST_ASSERT_EQ(v_file_lseek(fd + 40, 0, 0), V_VFS_EINVAL); // not a file fd
-  TEST_ASSERT_EQ(v_file_sync(fd + 40), V_VFS_EINVAL);
-  v_file_close(fd);
-  teardown();
-}
-
-/* Directory listing: opendir is an fd like any other, closed with close, and a
- * directory handle is not a file — reading it as one is refused rather than
- * dispatched to vfs_read. */
-static void test_vfs_dir_listing(void) {
-  setup();
-  vfs_stub.opendir_ret = 2;
-  int dir = v_dir_open("/mnt/logs");
-  TEST_ASSERT(dir >= 0);
-  TEST_ASSERT_EQ(strcmp(vfs_stub.opendir_path, "logs"), 0);
-
-  vfs_stub.readdir_ret = 1;
-  memcpy(vfs_stub.readdir_out.name, "a.csv", 6);
-  vfs_dirent_t ent;
-  memset(&ent, 0, sizeof ent);
-  TEST_ASSERT_EQ(v_dir_read(dir, &ent), 1);
-  TEST_ASSERT_EQ(vfs_stub.readdir_dir, 2);
-  TEST_ASSERT_EQ(strcmp(ent.name, "a.csv"), 0);
-
-  /* Not a file: reading or seeking it is refused, not forwarded. */
-  char buf[4];
-  vfs_stub.read_called = 0;
-  TEST_ASSERT(v_file_read(dir, buf, 4) < 0);
-  TEST_ASSERT_EQ(vfs_stub.read_called, 0);
-  TEST_ASSERT_EQ(v_file_lseek(dir, 0, 0), V_VFS_EINVAL);
-
-  /* And a file is not a directory. */
   vfs_stub.open_ret = 5;
-  int fd = v_file_open("/mnt/f", 0);
-  TEST_ASSERT(fd >= 0);
-  TEST_ASSERT_EQ(v_dir_read(fd, &ent), V_VFS_EINVAL);
-  TEST_ASSERT_EQ(v_dir_read(dir, NULL), V_VFS_EINVAL);
+  v_vfs_desc_t d = {.op = 1, .path = "/mnt/dies"};
+  int slot = v_vfs_submit(&d);
+  TEST_ASSERT(slot >= 0);
+  v_test_in_handler = 1;
+  v_vfs_task_teardown(current_task);
+  v_test_in_handler = 0;
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }    // runs it, drops the result, frees the slot
+  int again = v_vfs_submit(&d); // so the slot is available again
+  TEST_ASSERT(again >= 0);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT(v_vfs_finish(again, 0, 0) >= 0);
 
-  TEST_ASSERT_EQ(v_file_close(dir), 0);
-  TEST_ASSERT_EQ(vfs_stub.closedir_called, 1);
-  TEST_ASSERT_EQ(vfs_stub.closedir_dir, 2);
-  v_file_close(fd);
+  vfs_stub.open_ret = 6;
+  v_vfs_desc_t o = {.op = 1, .path = "/mnt/open"};
+  int s = v_vfs_submit(&o);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  int fd = v_vfs_finish(s, 0, 0);
+  TEST_ASSERT(fd >= 0);
+
+  vfs_stub.close_called = 0;
+  v_test_in_handler = 1;
+  v_vfs_task_teardown(current_task);
+  v_test_in_handler = 0;
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); } // services the close teardown queued
+  TEST_ASSERT_EQ(vfs_stub.close_called, 1);
+  teardown();
+}
+
+/* Waiting parks the caller through the scheduler — the deferred-result path, not
+ * a spin — and the worker finishing it wakes them. */
+static void test_vfs_wait_blocks_the_caller(void) {
+  setup();
+  drain();
+  vfs_stub.open_ret = 2;
+  v_vfs_desc_t d = {.op = 1, .path = "/mnt/slow"};
+  int slot = v_vfs_submit(&d);
+  TEST_ASSERT(slot >= 0);
+
+  TCB *me = current_task;
+  int r = v_vfs_wait(slot, 50); /* once: TEST_ASSERT_EQ evaluates twice */
+  TEST_ASSERT_EQ(r, V_SYSCALL_BLOCKED);
+  TEST_ASSERT_EQ(me->status, TASK_BLOCKED);
+
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT(me->status != TASK_BLOCKED);
+  TEST_ASSERT(v_vfs_finish(slot, 0, 0) >= 0);
   teardown();
 }
 
 static const test_case_t vfs_fd_cases[] = {
+    TEST_CASE(test_vfs_needs_a_worker),
     TEST_CASE(test_vfs_mount_validates),
-    TEST_CASE(test_vfs_fd_round_trip),
-    TEST_CASE(test_vfs_fd_failed_open_releases_handle),
-    TEST_CASE(test_vfs_fd_limits_and_exit_release),
-    TEST_CASE(test_vfs_fd_extra_ops),
-    TEST_CASE(test_vfs_dir_listing),
+    TEST_CASE(test_vfs_round_trip),
+    TEST_CASE(test_vfs_requests_are_bounded),
+    TEST_CASE(test_vfs_slots_are_owned_and_bounded),
+    TEST_CASE(test_vfs_teardown_abandons_and_closes),
+    TEST_CASE(test_vfs_wait_blocks_the_caller),
 };
 
 const test_suite_t vfs_fd_suite = {
-    .name = "VFS on the fd table (M5)",
+    .name = "Files through the VFS I/O worker (todo 67)",
     .cases = vfs_fd_cases,
     .count = TEST_COUNT(vfs_fd_cases),
 };

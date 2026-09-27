@@ -50,7 +50,7 @@ Diagnostics hide this rule in plain sight. `GET_CURRENT_TASK_ID()` dereferences
 | IPC | `v_sem_open`/`take`/`give`/`poll`, `v_mtx_open`/`lock`/`unlock`, `v_wait` |
 | Bus IPC | `v_bus_open`, `v_bus_send`, `v_bus_recv`, `v_bus_recv_wait`, `v_bus_wait` |
 | Queues | `v_queue_open`, `v_queue_send`, `v_queue_recv`, `v_queue_try_*`, `v_queue_wait` |
-| Files | `v_file_open("/mnt/…")` and friends, plus `v_file_lseek`, `v_file_stat`, `v_file_mkdir`, `v_file_unlink`, `v_file_sync`, `v_dir_open`, `v_dir_read` |
+| Files | `v_vfs_open`, `v_vfs_read`, `v_vfs_write`, `v_vfs_close`, `v_vfs_seek`, `v_vfs_flush`, `v_vfs_info`, `v_vfs_makedir`, `v_vfs_remove`, `v_vfs_diropen`, `v_vfs_dirnext` — all worker-backed (see below) |
 | Peripherals | `v_pbus_open`, `v_pbus_xfer` (and the submit/wait/finish split) |
 | Heap | `malloc`/`free`/`calloc`/`realloc` — only with `VAIOS_TASK_HEAP` on |
 | Pure helpers | `v_memcpy`, `v_memset`, `v_str*`, `print_fmt_buf`, all `spsc_*` |
@@ -167,12 +167,33 @@ SYS_pbus_finish   collect it
 A syscall may block the calling task (the scheduler then runs someone else), and
 it may do bounded CPU work. It may not sit in a loop waiting for hardware.
 
-**Consequence for files today:** the VFS mount performs its I/O inline in the
-syscall, so file access from an unprivileged task is not usable on hardware yet —
-it needs an I/O worker task that owns the transfers, with the syscall queueing a
-request and blocking the caller. The host tests pass because the filesystem under
-them is a recorded-call stub with no interrupts, which is exactly the kind of
-thing only hardware can tell you.
+**This is why files have a worker.** A task's file call is `v_vfs_open` /
+`read` / `write` / … , and each is submit + wait + finish underneath: the
+arguments (and any write payload) are copied into a kernel slot, the caller
+blocks on that slot through the scheduler, and a task you run yourself does the
+transfer in thread mode with interrupts enabled.
+
+```c
+/* init, privileged */
+v_vfs_mount("/mnt/");
+task_create_named(vfsio_task, NULL, 2048, 1, "vfsio");  /* for (;;) v_vfs_worker_step(100); */
+
+/* task, unprivileged */
+int fd = v_vfs_open("/mnt/0:log.dat", VFS_O_WRONLY | VFS_O_CREAT, 500);
+v_vfs_write(fd, rec, sizeof rec, 500);
+v_vfs_close(fd, 500);
+```
+
+The worker's priority is yours to choose, because "when does logging happen
+relative to control" is a flight decision. Until a worker has run once, file
+calls fail with `-11` rather than blocking on nobody. Reads and writes are
+chunked through a fixed bounce buffer, so kernel memory does not grow with what a
+task asks for, and a task that dies with a file open has it CLOSED by the worker —
+flushed, not leaked.
+
+The devfs mount (`v_file_open("/mnt/…")`) still exists, but only for
+**privileged** callers in thread mode, such as the bus snapshotter, where inline
+I/O is safe.
 
 ## The reference application
 

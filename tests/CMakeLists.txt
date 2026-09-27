@@ -349,6 +349,8 @@ target_compile_definitions(vaios_syscall_tests PRIVATE
     VAIOS_QUEUE_MAX_OPEN=4
     VAIOS_MODULE_VFS=1        # the VFS syscall validation arms (M5)
     VAIOS_VFS_MAX_OPEN=4
+    VAIOS_VFS_IO_SLOTS=2
+    VAIOS_VFS_IO_BUF=512
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0
     STATIC_SEMAPHORE_SIZE=64)
@@ -412,6 +414,8 @@ target_compile_definitions(vaios_ipcfd_tests PRIVATE
     VAIOS_QUEUE_MAX_OPEN=4
     VAIOS_MODULE_VFS=1        # the VFS mount (M5) is tested here
     VAIOS_VFS_MAX_OPEN=4
+    VAIOS_VFS_IO_SLOTS=2
+    VAIOS_VFS_IO_BUF=512
     HEAP_WATERMARK_ENABLE=0
     TASK_STACK_WATERMARK_ENABLE=0
     STATIC_SEMAPHORE_SIZE=64)
