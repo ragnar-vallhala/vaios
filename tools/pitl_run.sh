@@ -55,6 +55,39 @@ if [ -z "$SERIAL" ]; then
   fi
 fi
 
+# stlink 1.8.0 cannot match --serial against a clone probe whose USB serial
+# descriptor holds raw bytes instead of ASCII hex: it reports "Couldn't find any
+# ST-Link devices", which reads like nothing is attached. STLINK_DEVICE=<bus>:<addr>
+# does work — but the address changes every time the board re-enumerates, which a
+# flash-and-reset cycle does. So resolve the serial to a fresh address from sysfs
+# before every st-* call. Passive: nothing is reset to find out.
+resolve_probe() {
+  [ -n "${STLINK_DEVICE_FIXED:-}" ] && { export STLINK_DEVICE="$STLINK_DEVICE_FIXED"; return 0; }
+  [ -n "$SERIAL" ] || return 0
+  local addr
+  addr=$(python3 - "$SERIAL" <<'PYEOF'
+import glob, sys
+want = sys.argv[1].strip().upper()
+for d in glob.glob('/sys/bus/usb/devices/*/'):
+    try:
+        if open(d + 'idVendor').read().strip() != '0483':
+            continue
+        # sysfs decodes the descriptor as UTF-8; latin-1 gets the raw bytes back
+        raw = open(d + 'serial', 'rb').read().decode('utf-8').strip().encode('latin-1')
+        if raw.hex().upper() == want:
+            print("%s:%s" % (open(d + 'busnum').read().strip(),
+                             open(d + 'devnum').read().strip()))
+            break
+    except (OSError, UnicodeError):
+        continue
+PYEOF
+)
+  [ -n "$addr" ] || { echo "probe $SERIAL is not attached" >&2; return 1; }
+  export STLINK_DEVICE="$addr"
+}
+[ -n "${STLINK_DEVICE:-}" ] && STLINK_DEVICE_FIXED="$STLINK_DEVICE"
+resolve_probe || exit 2
+
 echo "=== flashing $(basename "$BUILD_DIR") -> probe $SERIAL, reading ${PORT:-SWD log ring} ==="
 arm-none-eabi-objcopy -O binary "$ELF" "$ELF.bin" || exit 1
 
@@ -64,7 +97,8 @@ arm-none-eabi-objcopy -O binary "$ELF" "$ELF.bin" || exit 1
 # the running core instead. Try both before asking for a finger on the button.
 flashed=0
 for mode in --connect-under-reset --hot-plug --connect-under-reset ""; do
-  if st-flash --serial "$SERIAL" $mode write "$ELF.bin" 0x8000000 \
+  resolve_probe || exit 1
+  if st-flash $mode write "$ELF.bin" 0x8000000 \
        >/tmp/pitl_flash.log 2>&1; then
     flashed=1
     [ -n "$mode" ] && echo "    (attached with ${mode})"
@@ -82,13 +116,14 @@ fi
 if [ "$KMSG" -eq 1 ]; then
   command -v st-util >/dev/null && command -v gdb-multiarch >/dev/null || {
     echo "--kmsg needs st-util and gdb-multiarch" >&2; exit 2; }
-  st-flash --serial "$SERIAL" reset >/dev/null 2>&1 || true
+  { resolve_probe && st-flash reset >/dev/null 2>&1; } || true
   echo "running for ${CAPTURE_SECS}s, then reading the log ring over SWD ..."
   sleep "$CAPTURE_SECS"
 
   # --no-reset is essential: st-util resets the target on connection by default,
   # which clears the very RAM ring we came to read.
-  st-util --serial "$SERIAL" --no-reset -p 4242 >/tmp/pitl_stutil.log 2>&1 &
+  resolve_probe || exit 1
+  st-util --no-reset -p 4242 >/tmp/pitl_stutil.log 2>&1 &
   stutil=$!
   sleep 2
   # Halt, then read the ring symbolically: head/tail are absolute counters, so
@@ -169,7 +204,7 @@ log="$(mktemp)"
 ( timeout "$CAPTURE_SECS" cat "$PORT" > "$log" 2>/dev/null ) &
 cap=$!
 sleep 1
-st-flash --serial "$SERIAL" reset >/dev/null 2>&1 || true
+{ resolve_probe && st-flash reset >/dev/null 2>&1; } || true
 wait "$cap" || true
 
 echo "---- captured UART ($CAPTURE_SECS s) ----"

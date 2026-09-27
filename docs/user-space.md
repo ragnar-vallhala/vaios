@@ -134,6 +134,46 @@ yours: a buffer outside your block, or flash where the kernel would write. It is
 a refusal, not a fault — the task keeps running, which is the difference between
 a validated syscall and a crash.
 
+## A syscall must never wait for a peripheral
+
+This one is structural, and it is worth understanding before adding any syscall
+that touches hardware.
+
+`SVCall` runs at priority **0** on this port — the highest there is. While a
+syscall body executes, *every* interrupt is masked: SysTick (priority 14), and
+every peripheral IRQ (NavHAL defaults to 8). So a syscall that waits for an
+interrupt-driven completion waits forever:
+
+- the completion IRQ cannot be taken, so the flag it would clear never clears;
+- `wfi` never wakes, because the interrupt that would wake it is masked;
+- and any timeout measured in milliseconds never expires either, because the
+  millisecond counter is driven by the masked SysTick.
+
+Observed on hardware with an SD transfer: `SHPR2=0`, `ICSR` VECTACTIVE = 11
+(inside SVCall), `BASEPRI=0`, `sd_busy=1`, and the tick frozen at 18 — the whole
+system stopped, including a higher-priority task that wanted nothing from the
+filesystem.
+
+**The pattern that works** is the one the peripheral bus and the bus/queue
+blocking paths already use: split the operation so the *waiting* happens in
+thread mode, under the scheduler, not in the handler.
+
+```
+SYS_pbus_submit   start the transfer, return immediately
+SYS_pbus_wait     block the CALLER through the scheduler (deferred result)
+SYS_pbus_finish   collect it
+```
+
+A syscall may block the calling task (the scheduler then runs someone else), and
+it may do bounded CPU work. It may not sit in a loop waiting for hardware.
+
+**Consequence for files today:** the VFS mount performs its I/O inline in the
+syscall, so file access from an unprivileged task is not usable on hardware yet —
+it needs an I/O worker task that owns the transfers, with the syscall queueing a
+request and blocking the caller. The host tests pass because the filesystem under
+them is a recorded-call stub with no interrupts, which is exactly the kind of
+thing only hardware can tell you.
+
 ## The reference application
 
 `examples/58_flight_user.c`, run by `tools/renode_flight_user.sh`, is the worked

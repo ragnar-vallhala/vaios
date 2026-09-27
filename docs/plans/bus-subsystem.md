@@ -867,6 +867,15 @@ Each phase is independently testable and lands behind `VAIOS_MODULE_BUS`.
    copy in the Copy stage — straightforward but must stay outside the allocator
    critical section (§7).
 
+> **Hardware finding (PITL): a syscall cannot wait on a peripheral.** SVCall runs
+> at priority 0, so a syscall body masks SysTick and every peripheral IRQ. An SD
+> transfer waited for inside a file syscall therefore deadlocks: the completion
+> IRQ cannot fire, `wfi` never wakes, and the millisecond timeout never advances.
+> Confirmed on an F401 (`SHPR2=0`, VECTACTIVE=11, `sd_busy=1`, tick frozen). This
+> settles the VFS question the roadmap listed as D3 — the answer is the I/O worker,
+> not the synchronous syscall — and it is the same reason the bus's blocking recv
+> and the queue transfers are split into a try and a wait.
+
 > **Measured (B8).** The concern behind questions 2 and 4 — that the allocator's
 > reclaim/evict loop is a critical section whose length grows with pool pressure —
 > is now quantified: saturating the pool costs +167 cycles mean (~2 µs) and +10%
