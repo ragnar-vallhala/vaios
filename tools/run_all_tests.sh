@@ -112,7 +112,8 @@ run_sitl() {
 
   echo "building build_pil (NAVHAL, UNIT_TESTS) ..."
   if ! cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build_pil" \
-         -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=UNIT_TESTS >/tmp/all_sitl_cfg.log 2>&1 \
+         -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_CONSOLE_DMA=OFF \
+         -DVAIOS_EXAMPLE=UNIT_TESTS >/tmp/all_sitl_cfg.log 2>&1 \
      || ! cmake --build "$ROOT_DIR/build_pil" >/tmp/all_sitl_bld.log 2>&1; then
     # Surface the actual error (configure or compile) so a CI failure is
     # self-diagnosing instead of an opaque "build failed".

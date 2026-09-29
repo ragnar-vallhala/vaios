@@ -35,6 +35,7 @@ export srctree="${srctree:-$ROOT_DIR/extern/NavHAL}"
 
 echo "=== building on-target coverage image (VAIOS_GCOV=ON) ==="
 if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON \
+       -DVAIOS_CONSOLE_DMA=OFF \
        -DVAIOS_EXAMPLE=UNIT_TESTS -DVAIOS_GCOV=ON >/tmp/covtgt_cfg.log 2>&1 \
    || ! cmake --build "$BUILD_DIR" -j"$(nproc)" >/tmp/covtgt_bld.log 2>&1; then
   echo "FAIL: build error"
