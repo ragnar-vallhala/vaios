@@ -23,6 +23,7 @@ void v_host_on_tick(void);
 void v_port_hw_clock_init(uint8_t internal_clock_setup) {
   (void)internal_clock_setup;
 }
+void v_port_hw_debug_init(void) {} // no debug block to configure here
 void v_port_hw_fpu_enable(void) {}
 
 // --- SysTick == a SIGALRM interval timer. ------------------------------------
@@ -84,6 +85,7 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 
 // --- SDIO: none. -------------------------------------------------------------
 int v_port_hw_sdio_init(void) { return -1; }
+int v_port_hw_sdio_card_present(void) { return 0; }
 int v_port_hw_sdio_card_init(void) { return -1; }
 
 // --- Cycle counter == a monotonic clock (microseconds, 32-bit wrap). ---------

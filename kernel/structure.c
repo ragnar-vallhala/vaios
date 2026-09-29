@@ -412,6 +412,8 @@ bool mpmc_push_timeout(mpmc_queue_t *q, const void *item, uint32_t timeout) {
   v_mutex_unlock(q->lock);
 
   v_semaphore_give(q->not_empty);
+  if (q->fd_wake_rd) // a task sleeping in v_queue_recv, if any
+    v_semaphore_give(q->fd_wake_rd);
   return true;
 }
 
@@ -431,6 +433,8 @@ bool mpmc_pop_timeout(mpmc_queue_t *q, void *item, uint32_t timeout) {
   v_mutex_unlock(q->lock);
 
   v_semaphore_give(q->not_full);
+  if (q->fd_wake_wr) // a task sleeping in v_queue_send, if any
+    v_semaphore_give(q->fd_wake_wr);
   return true;
 }
 
@@ -498,3 +502,244 @@ void mpmc_reset(mpmc_queue_t *q) {
 
   v_mutex_unlock(q->lock);
 }
+
+// ---------------------------------------------------------------------------
+// Queues on the fd table (M4). Privileged init registers a queue by name; a
+// task opens that name and gets an fd. The queue's own storage, its mutex and
+// its semaphores stay kernel-side, and only whole elements cross the boundary.
+// ---------------------------------------------------------------------------
+#if VAIOS_DEVFS
+#include "syscall.h"
+#include "vfile.h"
+
+#define Q_REG_MAX 8
+
+typedef struct {
+  const char *name; // flash literal, kept by pointer (never copied)
+  StaticSemaphore_t wake_rd, wake_wr; // storage for the queue's fd wake hints
+  mpmc_queue_t *mpmc;
+  spsc_fifo_t *spsc; // exactly one of the two is set
+  uint8_t reader;    // SPSC only: its one reader / writer is taken
+  uint8_t writer;
+} q_entry_t;
+
+static q_entry_t q_reg[Q_REG_MAX];
+
+typedef struct {
+  q_entry_t *entry;
+  uint8_t used;
+  uint8_t flags;
+} q_handle_t;
+
+static q_handle_t q_handles[VAIOS_QUEUE_MAX_OPEN];
+
+static int q_name_eq(const char *a, const char *b) {
+  while (*a && *a == *b) {
+    a++;
+    b++;
+  }
+  return *a == *b;
+}
+
+static q_entry_t *q_find(const char *name) {
+  for (int i = 0; i < Q_REG_MAX; i++)
+    if (q_reg[i].name && q_name_eq(q_reg[i].name, name))
+      return &q_reg[i];
+  return 0;
+}
+
+static int q_register(const char *name, mpmc_queue_t *m, spsc_fifo_t *f) {
+  if (!name || !*name || (!m && !f))
+    return V_Q_EINVAL;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  if (q_find(name)) { // a name means one queue, for the whole system
+    EXIT_CRITICAL_FROM_ISR(s);
+    return V_Q_EINVAL;
+  }
+  for (int i = 0; i < Q_REG_MAX; i++) {
+    if (!q_reg[i].name) {
+      q_reg[i].name = name;
+      q_reg[i].mpmc = m;
+      q_reg[i].spsc = f;
+      q_reg[i].reader = q_reg[i].writer = 0;
+      EXIT_CRITICAL_FROM_ISR(s);
+      if (m) { // arm the wake hints: static storage, so no heap, no cleanup
+        m->fd_wake_rd = v_semaphore_create_binary_static(&q_reg[i].wake_rd);
+        m->fd_wake_wr = v_semaphore_create_binary_static(&q_reg[i].wake_wr);
+      }
+      return VA_PASS;
+    }
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
+  return V_Q_EINVAL; // table full
+}
+
+int v_queue_register(const char *name, mpmc_queue_t *q) {
+  return q_register(name, q, 0);
+}
+int v_queue_register_spsc(const char *name, spsc_fifo_t *f) {
+  return q_register(name, 0, f);
+}
+
+static int q_fd_close(void *priv) {
+  q_handle_t *h = (q_handle_t *)priv;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  if (h->entry && h->entry->spsc) { // give the SPSC side back
+    if (h->flags & V_Q_RD)
+      h->entry->reader = 0;
+    if (h->flags & V_Q_WR)
+      h->entry->writer = 0;
+  }
+  h->used = 0;
+  h->entry = 0;
+  EXIT_CRITICAL_FROM_ISR(s);
+  return 0;
+}
+
+static const v_file_ops q_fd_ops = {
+    .read = NULL, .write = NULL, .close = q_fd_close};
+
+int v_queue_open(const char *name, int flags) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_q_open, (uintptr_t)name, (uint32_t)flags);
+#endif
+  if (!name || !(flags & (V_Q_RD | V_Q_WR)))
+    return V_Q_EINVAL;
+  q_entry_t *e = q_find(name);
+  if (!e)
+    return V_Q_EINVAL;
+
+  q_handle_t *h = 0;
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  // An SPSC queue is lock-free only while there is one of each side, and that
+  // is the caller's promise to keep — so the kernel holds them to it.
+  if (e->spsc && (((flags & V_Q_RD) && e->reader) ||
+                  ((flags & V_Q_WR) && e->writer))) {
+    EXIT_CRITICAL_FROM_ISR(s);
+    return V_Q_EBUSY;
+  }
+  for (int i = 0; i < VAIOS_QUEUE_MAX_OPEN && !h; i++)
+    if (!q_handles[i].used)
+      h = &q_handles[i];
+  if (h) {
+    h->used = 1;
+    h->entry = e;
+    h->flags = (uint8_t)flags;
+    if (e->spsc) {
+      if (flags & V_Q_RD)
+        e->reader = 1;
+      if (flags & V_Q_WR)
+        e->writer = 1;
+    }
+  }
+  EXIT_CRITICAL_FROM_ISR(s);
+  if (!h)
+    return V_Q_EBUSY;
+
+  int fd = v_fd_alloc(&q_fd_ops, h);
+  if (fd < 0) {
+    q_fd_close(h);
+    return V_Q_EBUSY; // no free descriptor in this task
+  }
+  return fd;
+}
+
+int v_queue_elem_size(int fd) {
+  q_handle_t *h = (q_handle_t *)v_fd_obj(fd, &q_fd_ops);
+  if (!h || !h->entry)
+    return V_Q_EINVAL;
+  size_t n = h->entry->mpmc ? h->entry->mpmc->elem_size
+                            : h->entry->spsc->elem_size;
+  return n && n <= 0x7FFF ? (int)n : V_Q_EINVAL;
+}
+
+// One attempt, no waiting. A syscall body cannot block AND copy: blocking marks
+// the task parked and returns V_SYSCALL_BLOCKED, and the kernel never runs again
+// on that caller's behalf — the wake only writes a result into its stacked r0.
+// So the retry loop CANNOT live in here. If it did, a transfer whose wait blocked
+// would return the wait's success while having copied nothing, and the caller
+// would read whatever its buffer held before (a stale duplicate, which is exactly
+// how this was found on target). The loop therefore lives in the caller, below,
+// out of trapping calls.
+static int q_try(q_handle_t *h, void *item, int write) {
+  if (h->entry->mpmc) {
+    mpmc_queue_t *q = h->entry->mpmc;
+    return (write ? mpmc_try_push(q, item) : mpmc_try_pop(q, item)) ? VA_PASS
+                                                                    : VA_FAIL;
+  }
+  spsc_fifo_t *f = h->entry->spsc;
+  size_t n = write ? spsc_write(f, item, 1) : spsc_read(f, item, 1);
+  return n == 1 ? VA_PASS : VA_FAIL;
+}
+
+int v_queue_wait(int fd, uint32_t ticks, int for_write) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc3(SYS_q_wait, (uint32_t)fd, ticks, (uint32_t)for_write);
+#endif
+  q_handle_t *h = (q_handle_t *)v_fd_obj(fd, &q_fd_ops);
+  if (!h || !h->entry)
+    return V_Q_EINVAL;
+  if (!(h->flags & (for_write ? V_Q_WR : V_Q_RD)))
+    return V_Q_EINVAL;
+  mpmc_queue_t *q = h->entry->mpmc;
+  if (!q)
+    return V_Q_EINVAL; // SPSC: a lock-free ring has nothing to sleep on
+  // Ready already? Then do not sleep on a hint that may have been spent.
+  if (for_write ? !mpmc_is_full(q) : !mpmc_is_empty(q))
+    return VA_PASS;
+  SemaphoreHandle_t wake = for_write ? q->fd_wake_wr : q->fd_wake_rd;
+  if (!wake)
+    return V_Q_EINVAL; // not registered for task access
+  return v_semaphore_take(wake, ticks);
+}
+
+int v_queue_try_send(int fd, const void *item) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_q_send, (uint32_t)fd, (uintptr_t)item);
+#endif
+  q_handle_t *h = (q_handle_t *)v_fd_obj(fd, &q_fd_ops);
+  if (!h || !item || !(h->flags & V_Q_WR))
+    return V_Q_EINVAL;
+  return q_try(h, (void *)item, 1);
+}
+
+int v_queue_try_recv(int fd, void *item) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_q_recv, (uint32_t)fd, (uintptr_t)item);
+#endif
+  q_handle_t *h = (q_handle_t *)v_fd_obj(fd, &q_fd_ops);
+  if (!h || !item || !(h->flags & V_Q_RD))
+    return V_Q_EINVAL;
+  return q_try(h, item, 0);
+}
+
+// Try, then wait, then try again until the deadline — all from the CALLER's side,
+// so every step is its own syscall and a wake always returns to a retry. The hint
+// may be spurious or already spent and another task may take the slot first, so
+// what bounds this is the deadline, not the signal.
+static int q_transfer(int fd, void *item, uint32_t ticks, int write) {
+  uint32_t start = v_get_ticks();
+  for (;;) {
+    int r = write ? v_queue_try_send(fd, item) : v_queue_try_recv(fd, item);
+    if (r != VA_FAIL)
+      return r; // moved it, or a real error (EINVAL)
+    uint32_t spent = v_get_ticks() - start;
+    if (spent >= ticks)
+      return VA_FAIL; // full/empty (ticks == 0 lands here: a plain try)
+    if (v_queue_wait(fd, ticks - spent, write) != VA_PASS)
+      return VA_FAIL; // timed out, or nothing to wait on (SPSC)
+  }
+}
+
+int v_queue_send(int fd, const void *item, uint32_t ticks) {
+  return q_transfer(fd, (void *)item, ticks, 1);
+}
+
+int v_queue_recv(int fd, void *item, uint32_t ticks) {
+  return q_transfer(fd, item, ticks, 0);
+}
+#endif // VAIOS_DEVFS

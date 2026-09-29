@@ -27,6 +27,14 @@ void set_pendsv_interrupt_priority(
   SCB_SHPR3 = (SCB_SHPR3 & ~(0xFF << 16)) | (prio << 16);
 }
 
+void set_svcall_interrupt_priority(
+    uint32_t
+        priority) { // Normalize to top 4 bits (0-15 effective priority levels)
+  uint32_t prio = (priority & PRIORITY_MASK) << (8 - __NVIC_PRIO_BITS);
+
+  SCB_SHPR2 = (SCB_SHPR2 & ~(0xFFU << 24)) | (prio << 24);
+}
+
 static inline int semihosting_call(int reason, void *arg) {
   int value;
   __asm__ volatile("mov r0, %1\n" // reason code

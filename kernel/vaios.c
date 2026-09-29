@@ -22,6 +22,7 @@ void v_init(vaios_init_config_t *cfg) {
   /* Hardware bring-up, all behind the port facade. The backend (STM32 HAL /
    * QEMU semihosting / host stub) is chosen inside port_hw.c. */
   v_port_hw_clock_init(cfg->internal_clock_setup);
+  v_port_hw_debug_init(); /* before anything can sleep */
   v_port_hw_fpu_enable();
   v_port_hw_systick_init(TICK_PERIOD_US);
   v_port_hw_sched_irq_init();
@@ -59,6 +60,12 @@ void v_system_init(vaios_init_config_t *cfg) {
   if (cfg->internal_sd_card_setup) {
     if (v_port_hw_sdio_init() != 0) {
       v_log(LOG_ERROR, "SDIO Peripheral Init Failed!");
+      while (1)
+        ;
+    }
+
+    if (!v_port_hw_sdio_card_present()) {
+      v_log(LOG_ERROR, "SD slot is empty (card-detect reads no card).");
       while (1)
         ;
     }

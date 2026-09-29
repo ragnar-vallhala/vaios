@@ -134,7 +134,7 @@ Every change lands through a PR against `main`; please don't push directly to it
 * C11 throughout; the kernel and port build at `-O2`.
 * Public API: `v_<subsystem>_<verb>(...)` (e.g. `v_mutex_lock`, `v_malloc`,
   `v_task_create`). Keep new public symbols in `include/`.
-* **Route all hardware access through the port layer** (`portable/cortex-m4/`) —
+* **Route all hardware access through the port layer** (`portable/armv7e-m/`) —
   the kernel must not touch registers or NavHAL directly. Architecture-specific
   ASM and atomics live in `portable/<arch>/`.
 * No new global mutable state without justification in the commit body.
@@ -152,7 +152,7 @@ Every change lands through a PR against `main`; please don't push directly to it
 ## Adding a new port (new MCU / architecture)
 
 Ports live under `portable/<arch>/` and expose a fixed facade to the kernel —
-see `portable/cortex-m4/` (`port.c`, `port.h`, `atomic.h`, plus the PendSV /
+see `portable/armv7e-m/` (`port.c`, `port.h`, `atomic.h`, plus the PendSV /
 SVCall / BASEPRI plumbing) and the `portable/avr/` stub. A new port adds a
 `portable/<arch>/` directory implementing that facade and wires it into
 `portable/CMakeLists.txt`; the kernel itself stays architecture-agnostic.

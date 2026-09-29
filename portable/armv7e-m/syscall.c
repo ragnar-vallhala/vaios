@@ -16,7 +16,10 @@
 #include "ipc.h"
 #include "bus.h"
 #include "memory.h"
+#include "perf.h"
 #include "periph_bus.h"
+#include "structure.h" // queue fds (M4)
+#include "vfs.h"        // the VFS mount + its syscalls (M5)
 #include "port.h"
 #include "task.h"
 #include "vfile.h"
@@ -115,6 +118,82 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
 #endif
+#if VAIOS_DEVFS && VAIOS_MODULE_VFS
+    case SYS_vfs_submit: {
+      // The descriptor is the caller's, and so are the path and payload it
+      // points at. Everything is copied into a kernel slot at submit, so nothing
+      // of the caller's is touched again while it waits for the worker.
+      const v_vfs_desc_t *d = (const v_vfs_desc_t *)(uintptr_t)args[0];
+      if (!v_access_ok(d, sizeof(*d), 0))
+        return V_EFAULT;
+      if (d->path && v_strnlen_user(d->path, V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      if (d->data && d->len && !v_access_ok(d->data, d->len, 0))
+        return V_EFAULT;
+      break;
+    }
+    case SYS_vfs_finish:
+      // args[1] is where the result lands: a write into the caller's memory.
+      if (args[1] && args[2] &&
+          !v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
+        return V_EFAULT;
+      break;
+    /* SYS_vfs_wait carries scalars only. */
+#endif
+#if VAIOS_DEVFS
+    case SYS_q_open:
+      if (v_strnlen_user((const char *)(uintptr_t)args[0], V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      break;
+    case SYS_q_send:
+    case SYS_q_recv: {
+      // One whole element crosses, and its size is the QUEUE's — the caller
+      // never states a length, so it cannot lie about one. A bad fd is left for
+      // the body to report as EINVAL rather than being confused with EFAULT.
+      int n = v_queue_elem_size((int)args[0]);
+      if (n > 0 &&
+          !v_access_ok((void *)(uintptr_t)args[1], (uint32_t)n,
+                       num == SYS_q_recv))
+        return V_EFAULT;
+      break;
+    }
+#endif
+    case SYS_task_spawn: {
+      // The descriptor is read out of the caller's own memory...
+      const v_task_spawn_t *cfg = (const v_task_spawn_t *)(uintptr_t)args[0];
+      if (!v_access_ok(cfg, sizeof(*cfg), 0))
+        return V_EFAULT;
+      // ...the entry point must be CODE. v_access_ok covers data regions only;
+      // the flash window (read + execute, no write) is the one a task may enter,
+      // and SRAM is execute-never, so a RAM entry is refused here with a clear
+      // errno instead of faulting on the child's first instruction.
+      uintptr_t end;
+      if (!v_port_user_region((uintptr_t)(void *)cfg->entry, 0, &end))
+        return V_EFAULT;
+      // ...and the name, when given, is a user string like any other.
+      if (cfg->name &&
+          v_strnlen_user(cfg->name, V_SYSCALL_STR_MAX) < 0)
+        return V_EFAULT;
+      // cfg->arg is deliberately NOT validated: it is opaque to the kernel and
+      // the child cannot read the parent's block anyway.
+      break;
+    }
+    case SYS_task_info:
+      if (!v_access_ok((void *)(uintptr_t)args[0], sizeof(v_task_info_t), 1))
+        return V_EFAULT;
+      break;
+#if VAIOS_MODULE_PERF
+    case SYS_perf_snapshot:
+      // Either pointer may be NULL (the caller picks which reading it wants);
+      // whichever is given is written by the kernel.
+      if (args[0] &&
+          !v_access_ok((void *)(uintptr_t)args[0], sizeof(v_perf_snapshot_t), 1))
+        return V_EFAULT;
+      if (args[1] &&
+          !v_access_ok((void *)(uintptr_t)args[1], sizeof(v_perf_task_t), 1))
+        return V_EFAULT;
+      break;
+#endif
     case SYS_delay_until:
       // *last_wake is read and written in place: the caller's own word.
       if (!v_access_ok((void *)(uintptr_t)args[0], sizeof(uint32_t), 1))
@@ -128,6 +207,12 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
       break;
     case SYS_bus_send:
       if (args[2] && !v_access_ok((const void *)(uintptr_t)args[1], args[2], 0))
+        return V_EFAULT;
+      break;
+    case SYS_bus_stats:
+      // args[1] is the struct the kernel fills in the caller's memory.
+      if (!v_access_ok((void *)(uintptr_t)args[1],
+                       sizeof(v_bus_topic_stats_t), 1))
         return V_EFAULT;
       break;
     case SYS_bus_recv: {
@@ -171,6 +256,63 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        runs the body. args[0] = ticks. */
     task_delay(args[0]);
     return 0;
+  case SYS_task_spawn:
+    /* Create a child task, owned by the caller. args[0] = v_task_spawn_t. The
+       child is unprivileged like every created task and cannot outrank its
+       parent; only the parent may later end it. */
+    return v_task_spawn((const v_task_spawn_t *)(uintptr_t)args[0]);
+#if VAIOS_DEVFS && VAIOS_MODULE_VFS
+  case SYS_vfs_submit:
+    /* Hand a file operation to the I/O worker. args[0] = v_vfs_desc_t, returns a
+       slot id. The transfer must NOT happen here: SVCall runs at priority 0, so
+       this handler would mask the completion interrupt it waited for. */
+    return v_vfs_submit((const v_vfs_desc_t *)(uintptr_t)args[0]);
+  case SYS_vfs_wait:
+    /* Block the caller on its slot. args[0] = slot, args[1] = ticks. */
+    return v_vfs_wait((int)args[0], args[1]);
+  case SYS_vfs_finish:
+    /* Collect the result, release the slot. args[0] = slot, args[1] = out
+       buffer, args[2] = its size. */
+    return v_vfs_finish((int)args[0], (void *)(uintptr_t)args[1], args[2]);
+#endif
+#if VAIOS_DEVFS
+  case SYS_q_open:
+    /* Open a registered queue by name. args[0]=name, args[1]=V_Q_RD/V_Q_WR. */
+    return v_queue_open((const char *)(uintptr_t)args[0], (int)args[1]);
+  case SYS_q_wait:
+    /* Park until a queue handle can move an element. args[0]=fd, args[1]=ticks,
+       args[2]=1 for send. Blocking, deferred-result; the queue's own counters
+       are never consumed by a waiter, only its wake hint. */
+    return v_queue_wait((int)args[0], args[1], (int)args[2]);
+  case SYS_q_send:
+    /* ONE attempt in. args[0]=fd, args[1]=item. Waiting is SYS_q_wait, called
+       from the caller's own loop: a body that blocked here would report the
+       wait's success having copied nothing. */
+    return v_queue_try_send((int)args[0], (const void *)(uintptr_t)args[1]);
+  case SYS_q_recv:
+    /* ONE attempt out. args[0]=fd, args[1]=buffer. */
+    return v_queue_try_recv((int)args[0], (void *)(uintptr_t)args[1]);
+#endif
+  case SYS_task_kill:
+    /* End a task the caller spawned. args[0] = child id. Ownership is the whole
+       check: not privilege, not priority — only the task that created it. */
+    return v_task_kill((uint32_t)args[0]);
+  case SYS_task_info:
+    /* The caller's own id / priority / name / stack size, copied out of the
+       TCB. args[0] = v_task_info_t to fill. */
+    return v_task_info((v_task_info_t *)(uintptr_t)args[0]);
+#if VAIOS_MODULE_PERF
+  case SYS_perf_snapshot:
+    /* Read-only counters. args[0] = system snapshot (or NULL), args[1] = this
+       task's own counters (or NULL). The DWT stays privileged: a trap costs
+       more cycles than a fine-grained measurement is worth, so this is the
+       honest granularity. */
+    if (args[0])
+      v_perf_snapshot((v_perf_snapshot_t *)(uintptr_t)args[0]);
+    if (args[1])
+      v_perf_self_stats((v_perf_task_t *)(uintptr_t)args[1]);
+    return 0;
+#endif
   case SYS_ticks:
     /* The tick counter lives in kernel memory; this is the only way a user
        task can read it. */
@@ -239,6 +381,15 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        args[1]=payload, args[2]=len. */
     return v_bus_send((int)args[0], (const void *)(uintptr_t)args[1],
                       (uint16_t)args[2]);
+  case SYS_bus_stats:
+    /* This handle's topic counters (B7). args[0]=fd, args[1]=out. */
+    return v_bus_fd_stats((int)args[0],
+                          (v_bus_topic_stats_t *)(uintptr_t)args[1]);
+  case SYS_bus_wait:
+    /* Park until this handle has a message (B6). args[0] = fd, args[1] = ticks.
+       Blocking, deferred-result: nothing of the caller's is held while it
+       sleeps, which is why wait and recv are separate syscalls. */
+    return v_bus_wait((int)args[0], args[1]);
   case SYS_bus_recv:
     /* Copy this handle's oldest unread message out. args[0]=fd,
        args[1]=v_bus_rx_t (buf/cap in, len/missed out). Polling: blocking pop

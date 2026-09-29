@@ -1,5 +1,5 @@
 /* Host backing for the vaios_syscall_tests binary — puts v_syscall_dispatch
- * (portable/cortex-m4/syscall.c) under host test with the real pointer
+ * (portable/armv7e-m/syscall.c) under host test with the real pointer
  * validators (kernel/task.c v_access_ok / v_strnlen_user).
  *
  * Two seams the ARM build implements in asm, provided here for the host:
@@ -81,6 +81,23 @@ void v_perf_on_heap_alloc(uint32_t size, int split) {
 }
 void v_perf_on_heap_free(int coalesces) { (void)coalesces; }
 void v_perf_on_heap_oom(void) {}
+
+/* Perf getters behind SYS_perf_snapshot. kernel/perf.c cannot be linked here —
+ * it defines the same v_perf_on_* hooks this file stubs — and this binary tests
+ * the DISPATCH, not the counters: these record that the arm ran and that the
+ * pointers it was handed were the validated ones. */
+#include "perf.h"
+uint32_t stub_perf_sys_calls, stub_perf_self_calls;
+void v_perf_snapshot(v_perf_snapshot_t *out) {
+  stub_perf_sys_calls++;
+  if (out)
+    out->uptime_ticks = 0xABCDu; /* a marker the test can see */
+}
+void v_perf_self_stats(v_perf_task_t *out) {
+  stub_perf_self_calls++;
+  if (out)
+    out->switches_in = 0x5A5Au;
+}
 
 /* /dev/kmsg backing read — devfs.c needs it; unused by these tests. */
 int v_kmsg_read(char *out, uint32_t len) {

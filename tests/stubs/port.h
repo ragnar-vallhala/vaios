@@ -1,6 +1,6 @@
 /**
  * @file port.h
- * @brief Host-native stub replacing portable/cortex-m4/port.h
+ * @brief Host-native stub replacing portable/armv7e-m/port.h
  *
  * Replaces ARM-specific inline assembly macros with no-ops so that kernel
  * C code can be compiled and tested on the host machine.
@@ -29,7 +29,7 @@
   do {                                                                         \
   } while (0)
 
-/* NVIC priority model, host-emulated to match portable/cortex-m4/port.h — the
+/* NVIC priority model, host-emulated to match portable/armv7e-m/port.h — the
  * FromISR priority predicate (vaios_isr_priority_is_safe) is exercised by
  * test_ipc.c. __NVIC_PRIO_BITS is hardcoded here, not taken from Kconfig: the
  * host arch has no VAIOS_ARCH_HAS_IRQ_PRIORITY, so NVIC_PRIO_BITS isn't emitted. */
@@ -43,7 +43,7 @@ static inline int v_port_prio_is_more_urgent(uint32_t a, uint32_t b) {
   return a < b;
 }
 
-/* Minimum task stack, mirroring portable/cortex-m4/port.h so the scheduler's
+/* Minimum task stack, mirroring portable/armv7e-m/port.h so the scheduler's
  * size validation behaves identically under host test as on target. */
 #define VAIOS_ARCH_MIN_STACK 128u
 
@@ -70,15 +70,21 @@ int v_port_hw_in_isr(void);
 /* Port hardware facade — same prototypes as the real port.h. Host
  * implementations are no-op/stub equivalents in tests/stubs/port_hw_stub.c. */
 void v_port_hw_clock_init(uint8_t internal_clock_setup);
+void v_port_hw_debug_init(void); // keep SWD alive in sleep; no-op off-target
 void v_port_hw_fpu_enable(void);
 void v_port_hw_systick_init(uint32_t period_us);
 void v_port_hw_sched_irq_init(void);
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
+/* No DMA console here — write_dma completes before it returns, so the buffered
+ * logger releases its own read lock. See portable/armv7e-m/port.h. */
+#define VAIOS_PORT_CONSOLE_DMA 0
+
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
 int v_port_hw_sdio_init(void);
+int v_port_hw_sdio_card_present(void);
 int v_port_hw_sdio_card_init(void);
 void v_port_hw_cycle_counter_init(void);
 uint32_t v_port_hw_cycle_counter_read(void);

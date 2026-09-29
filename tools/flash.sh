@@ -5,14 +5,14 @@
 # Probe the connected debug probe(s), resolve the target board, build a vaios
 # example firmware, flash it, and reset the core so the image actually starts.
 #
-# Modelled on nav's upload pipeline (../nav): detection is data-driven (a small
-# chipid->board table below, mirroring nav's data/boards.json), flashing is
-# objcopy -> <flasher> write -> reset, and the reset is explicit because
-# st-flash leaves the core halted on boards whose NRST isn't wired to the probe.
+# Flashing goes through OpenOCD (tools/lib/probe.sh), which programs the ELF
+# directly — load addresses come from the image, so there is no board table and
+# no separate objcopy or reset step.
 #
 # Selecting one board when several are connected:
-#   --serial <hex>   pick an STM32 ST-Link by its probe serial (st-flash --serial).
-#                    Run --list to see every probe's serial.
+#   --usb-loc <b-p>  pick a probe by the USB port it is plugged into, e.g. 3-2.
+#                    Run --list to see what is attached. A serial is NOT usable
+#                    here: the bench's ST-Links are clones sharing one serial.
 #   --port <path>    pick a board by serial port (e.g. /dev/ttyACM1). Used for the
 #                    serial monitor now, and reserved for AVR/Arduino (avrdude -P).
 #
@@ -25,20 +25,19 @@
 # Options:
 #   -l, --list          probe hardware (ST-Link probes + serial ports), print, exit
 #       --list-examples  list the buildable example names and exit
-#   -s, --serial <hex>  target ST-Link with this serial (when several are connected)
+#   -u, --usb-loc <b-p> target the probe at this USB location (default 3-2)
 #   -p, --port <path>   serial port to monitor / (future) AVR flash target
 #   -c, --clean         wipe the build dir before configuring (fresh build)
 #   -b, --build-only    build the firmware but do not flash
 #   -n, --no-reset      do not reset the core after flashing
 #   -m, --monitor       open a serial monitor after flashing
 #       --baud <n>      monitor baud rate (default: 115200)
-#   -a, --addr <hex>    override the flash base address (default: from board table)
 #   -h, --help          show this help
 #
 # Examples:
 #   tools/flash.sh fifo_test                       # build + flash + reset
 #   tools/flash.sh --list                          # probe what's connected
-#   tools/flash.sh -s 0668FF33 stack_overflow      # pick one of several ST-Links
+#   tools/flash.sh -u 3-2 stack_overflow           # pick one of several probes
 #   tools/flash.sh -m -p /dev/ttyACM1 --baud 115200 uart
 # =============================================================================
 set -euo pipefail
@@ -47,6 +46,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
 BUILD_DIR="${ROOT}/build"
+# shellcheck source=lib/probe.sh
+. "${SCRIPT_DIR}/lib/probe.sh"
 
 # --- Pretty output (fall back to plain text when not a TTY) ------------------
 if [[ -t 1 ]]; then
@@ -61,20 +62,6 @@ ok()    { printf '%s ✓ %s%s\n' "$C_GRN" "$*" "$C_RST"; }
 warn()  { printf '%s ! %s%s\n' "$C_YEL" "$*" "$C_RST" >&2; }
 die()   { printf '%s ✗ %s%s\n' "$C_RED" "$*" "$C_RST" >&2; exit 1; }
 
-# --- Board registry: chipid -> "name|flash_base" -----------------------------
-# STM32 parts all boot from 0x08000000; the table exists so we can name the
-# detected part and refuse an unknown probe rather than blindly flashing. Add a
-# row to support a new chip (mirrors adding a board to nav's boards.json).
-declare -A BOARD_BY_CHIPID=(
-  [0x433]="STM32F401xD/xE|0x08000000"
-  [0x431]="STM32F411xC/xE|0x08000000"
-  [0x413]="STM32F405/407/415/417|0x08000000"
-  [0x419]="STM32F42x/43x|0x08000000"
-  [0x421]="STM32F446|0x08000000"
-  [0x423]="STM32F401xB/xC|0x08000000"
-)
-DEFAULT_FLASH_ADDR="0x08000000"
-
 # --- Serial port enumeration (mirrors nav's find_serial_ports) ---------------
 find_serial_ports() {
   local p
@@ -83,16 +70,18 @@ find_serial_ports() {
   done | sort
 }
 
-# --- ST-Link probe -----------------------------------------------------------
-# Emits one line per connected probe: "serial|chipid|dev-type". A new "serial:"
-# line marks the start of each probe block in st-info --probe output.
-probe_stlink() {
-  st-info --probe 2>/dev/null | awk '
-    /serial:/   { if (have) print s"|"c"|"d; s=$2; c=""; d=""; have=1 }
-    /chipid:/   { c=$2 }
-    /dev-type:/ { d=$2 }
-    END         { if (have) print s"|"c"|"d }
-  '
+# --- Probe enumeration (passive) ---------------------------------------------
+# Reads sysfs rather than talking to the probes: `st-info --probe` and an
+# OpenOCD init both RESET every board they touch, and this runs on --list.
+# Emits one line per attached ST-Link: "<bus>-<port>|<product>".
+probe_locations() {
+  local d loc
+  for d in /sys/bus/usb/devices/*/; do
+    [ "$(cat "$d/idVendor" 2>/dev/null)" = "0483" ] || continue
+    loc="$(basename "$d")"
+    case "$loc" in *:*) continue ;; esac   # skip interface nodes
+    printf '%s|%s\n' "$loc" "$(cat "$d/product" 2>/dev/null || echo 'ST-Link')"
+  done
 }
 
 # --- Buildable example names, parsed from examples/CMakeLists.txt -------------
@@ -103,42 +92,38 @@ list_examples() {
     | sed -E 's/.*"([A-Z0-9_]+)"/\1/' | sort
 }
 
-board_name_for() {  # chipid -> friendly name or "unknown"
-  local e="${BOARD_BY_CHIPID[$1]:-}"; [[ -n "$e" ]] && printf '%s' "${e%%|*}" || printf 'unknown'
-}
-
 # --- Arg parsing -------------------------------------------------------------
 EXAMPLE=""
 DO_CLEAN=0; BUILD_ONLY=0; NO_RESET=0; DO_MONITOR=0; LIST_ONLY=0
-BAUD="115200"; ADDR_OVERRIDE=""; SERIAL=""; PORT_OVERRIDE=""
+BAUD="115200"; PORT_OVERRIDE=""
 
-usage() { sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,41p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)          usage; exit 0 ;;
     -l|--list)          LIST_ONLY=1; shift ;;
     --list-examples)    list_examples; exit 0 ;;
-    -s|--serial)        SERIAL="${2:?--serial needs a value}"; shift 2 ;;
+    -u|--usb-loc)       USB_LOC="${2:?--usb-loc needs a value}"; shift 2 ;;
     -p|--port)          PORT_OVERRIDE="${2:?--port needs a value}"; shift 2 ;;
     -c|--clean)         DO_CLEAN=1; shift ;;
     -b|--build-only)    BUILD_ONLY=1; shift ;;
     -n|--no-reset)      NO_RESET=1; shift ;;
     -m|--monitor)       DO_MONITOR=1; shift ;;
     --baud)             BAUD="${2:?--baud needs a value}"; shift 2 ;;
-    -a|--addr)          ADDR_OVERRIDE="${2:?--addr needs a value}"; shift 2 ;;
     -*)                 die "Unknown option: $1  (see --help)" ;;
     *)                  [[ -z "$EXAMPLE" ]] || die "Only one example may be given (got '$EXAMPLE' and '$1')"; EXAMPLE="$1"; shift ;;
   esac
 done
 
 # --- Required tools ----------------------------------------------------------
-for t in st-info st-flash arm-none-eabi-objcopy cmake; do
+for t in cmake; do
   command -v "$t" >/dev/null 2>&1 || die "required tool not found on PATH: $t"
 done
+probe_require_tools || die "required tool not found on PATH: openocd"
 
 # --- Detect hardware ---------------------------------------------------------
-mapfile -t PROBES < <(probe_stlink)
+mapfile -t PROBES < <(probe_locations)
 mapfile -t PORTS  < <(find_serial_ports)
 
 if [[ "$LIST_ONLY" == "1" ]]; then
@@ -147,13 +132,11 @@ if [[ "$LIST_ONLY" == "1" ]]; then
     info "ST-Link: none found"
   else
     info "ST-Link probes: ${#PROBES[@]}"
-    local_i=0
     for rec in "${PROBES[@]}"; do
-      IFS='|' read -r s c d <<<"$rec"
-      info "  [$local_i] serial ${s}  chipid ${c:-?} ($(board_name_for "${c}") / ${d:-unknown})"
-      local_i=$((local_i+1))
+      IFS='|' read -r loc prod <<<"$rec"
+      info "  usb ${loc}  ${prod}$([[ "$loc" == "$USB_LOC" ]] && echo '   <- default')"
     done
-    [[ ${#PROBES[@]} -gt 1 ]] && info "select one with:  --serial <serial>"
+    info "select one with:  --usb-loc <bus>-<port>"
   fi
   if [[ ${#PORTS[@]} -eq 0 ]]; then info "Serial:  no ttyACM*/ttyUSB* ports"; else
     info "Serial ports: ${PORTS[*]}"; fi
@@ -172,29 +155,13 @@ fi
 # handle like -s 0668FF33 works). With no --serial: exactly one probe is used,
 # zero or many is an error asking the caller to pick. Skipped for --build-only,
 # which needs no hardware.
-SEL_SERIAL=""; SEL_CHIPID=""; SEL_DEVTYPE=""
 if [[ "$BUILD_ONLY" == "0" ]]; then
   [[ ${#PROBES[@]} -gt 0 ]] || die "no ST-Link found — connect the board (or use --build-only)."
-  SEL_REC=""
-  if [[ -n "$SERIAL" ]]; then
-    matches=()
-    for rec in "${PROBES[@]}"; do
-      s="${rec%%|*}"
-      [[ "$s" == "$SERIAL" || "$s" == "$SERIAL"* ]] && matches+=("$rec")
-    done
-    case ${#matches[@]} in
-      0) die "no connected ST-Link matches serial '$SERIAL'. Run --list to see serials." ;;
-      1) SEL_REC="${matches[0]}" ;;
-      *) die "serial '$SERIAL' is ambiguous (${#matches[@]} probes match). Give more digits." ;;
-    esac
-  elif [[ ${#PROBES[@]} -eq 1 ]]; then
-    SEL_REC="${PROBES[0]}"
-  else
-    warn "multiple ST-Link probes connected — pick one with --serial <serial>:"
-    for rec in "${PROBES[@]}"; do IFS='|' read -r s c d <<<"$rec"; info "  ${s}  ($(board_name_for "$c") / ${d:-?})"; done
-    exit 1
-  fi
-  IFS='|' read -r SEL_SERIAL SEL_CHIPID SEL_DEVTYPE <<<"$SEL_REC"
+  probe_present || {
+    warn "no ST-Link at USB location ${USB_LOC}; attached:"
+    for rec in "${PROBES[@]}"; do IFS='|' read -r loc prod <<<"$rec"; info "  ${loc}  ${prod}"; done
+    die "pick one with --usb-loc <bus>-<port>."
+  }
 fi
 
 # --- NavHAL Kconfig needs $srctree pointing at the submodule ------------------
@@ -218,37 +185,29 @@ step "Building"
 cmake --build "$BUILD_DIR" -j"$(nproc)"
 
 ELF="${BUILD_DIR}/examples/main"
-BIN="${BUILD_DIR}/examples/main.bin"
 [[ -f "$ELF" ]] || die "build produced no firmware at ${ELF} (did the example link?)"
-arm-none-eabi-objcopy -O binary "$ELF" "$BIN"
-ok "Built $(basename "$BIN") ($(stat -c%s "$BIN") bytes)"
+ok "Built $(basename "$ELF") ($(stat -c%s "$ELF") bytes)"
+
+# Follow the family this build was configured for, rather than the F4 default.
+probe_target_from_build "$BUILD_DIR"
 
 if [[ "$BUILD_ONLY" == "1" ]]; then
   ok "Build-only requested — not flashing."
   exit 0
 fi
 
-# --- Resolve flash address ---------------------------------------------------
-FLASH_ADDR="$DEFAULT_FLASH_ADDR"
-if [[ -n "$ADDR_OVERRIDE" ]]; then
-  FLASH_ADDR="$ADDR_OVERRIDE"
-elif [[ -n "${BOARD_BY_CHIPID[$SEL_CHIPID]:-}" ]]; then
-  entry="${BOARD_BY_CHIPID[$SEL_CHIPID]}"; FLASH_ADDR="${entry##*|}"
-fi
+# --- Flash ------------------------------------------------------------------
+# OpenOCD programs the ELF and starts it: `verify` reads the image back, and
+# `reset` leaves the core running, so there is no separate reset step.
+step "Flashing ${EXAMPLE_UC} -> probe at ${USB_LOC}"
+probe_flash "$ELF" /tmp/flash_sh.log || {
+  tail -8 /tmp/flash_sh.log >&2
+  die "flash failed — hold RESET, re-run, release when writing starts."
+}
+ok "Flashed and running."
 
-# --- Flash -------------------------------------------------------------------
-step "Flashing ${EXAMPLE_UC} -> ${SEL_DEVTYPE:-target} (serial ${SEL_SERIAL}) @ ${FLASH_ADDR}"
-st-flash --serial "$SEL_SERIAL" --connect-under-reset write "$BIN" "$FLASH_ADDR"
-ok "Flashed."
-
-# --- Reset (st-flash halts the core after write; start the new image) --------
-if [[ "$NO_RESET" == "0" ]]; then
-  step "Resetting target"
-  if st-flash --serial "$SEL_SERIAL" reset >/dev/null 2>&1; then
-    ok "Target reset — running new firmware."
-  else
-    warn "reset failed — press the board's RESET button to start the image."
-  fi
+if [[ "$NO_RESET" == "1" ]]; then
+  warn "--no-reset: OpenOCD always starts the image after programming."
 fi
 
 # --- Optional serial monitor -------------------------------------------------

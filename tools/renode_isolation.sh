@@ -22,7 +22,7 @@ done
 export srctree="$ROOT_DIR/extern/NavHAL"
 
 echo "=== building mpu_user_demo (NAVHAL) ==="
-if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON \
+if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_CONSOLE_DMA=OFF \
        -DVAIOS_EXAMPLE=MPU_USER_DEMO >/tmp/sitl_iso_cfg.log 2>&1 \
    || ! cmake --build "$BUILD_DIR" -j >/tmp/sitl_iso_bld.log 2>&1; then
   echo "FAIL: build (see /tmp/sitl_iso_bld.log)"; tail -15 /tmp/sitl_iso_bld.log

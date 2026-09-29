@@ -15,7 +15,7 @@
 /* NOTE: the NVIC priority model (__NVIC_PRIO_BITS, MAX_SYSCALL_INTERRUPT_PRIORITY)
  * used to live here. It is ARMv7-M-specific — an 8-bit, high-bit-justified
  * priority register with lower-is-more-urgent ordering — so it moved into the
- * port (portable/cortex-m4/port.h, mirrored by tests/stubs/port.h). This header
+ * port (portable/armv7e-m/port.h, mirrored by tests/stubs/port.h). This header
  * stays arch-neutral. */
 
 /* Heap allocator selector. VAIOS_HEAP_SEGLIST / VAIOS_HEAP_TLSF are fixed index

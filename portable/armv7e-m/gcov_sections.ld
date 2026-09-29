@@ -1,7 +1,7 @@
 /* =============================================================================
  * tools/gcov_sections.ld — linker fragment for -DVAIOS_GCOV=ON builds.
  *
- * The on-target gcov dumper (portable/cortex-m4/gcov_semihost.c) needs to run
+ * The on-target gcov dumper (portable/armv7e-m/gcov_dump.c) needs to run
  * the compiler-emitted per-TU coverage constructors to discover every gcov_info,
  * but the vaios/NavHAL startup never runs .init_array. This fragment bounds
  * .init_array with __init_array_start/end and keeps it in FLASH right after

@@ -18,7 +18,7 @@
 #include "vaios_config.h" // VAIOS_MAX_SYSCALL_PRIO_LEVEL
 #include <stdint.h>
 
-// --- NVIC priority model, host-emulated to match portable/cortex-m4/port.h so
+// --- NVIC priority model, host-emulated to match portable/armv7e-m/port.h so
 // the FromISR priority predicate and any BASEPRI-level reasoning behave the same
 // under host as on target. Hardcoded (the host arch has no NVIC_PRIO_BITS). ----
 #define __NVIC_PRIO_BITS 4
@@ -62,7 +62,7 @@ void v_port_disable_interrupts(void); // block SIGALRM permanently (shutdown pat
 void v_port_halt(void);               // never returns
 void v_port_trigger_pendsv(void);     // request a context switch (deferred)
 int v_port_ptr_is_ram(const void *p); // no known map on host -> always 1
-// Syscall-validation extra region (see portable/cortex-m4/port.h): the
+// Syscall-validation extra region (see portable/armv7e-m/port.h): the
 // executable's text/rodata for reads, and the running task's own ucontext
 // stack (allocated outside mem_block) for reads and writes.
 int v_port_user_region(uintptr_t a, int write, uintptr_t *end);
@@ -80,8 +80,9 @@ int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]);
 #endif
 void v_port_mpu_apply(const uint32_t enc[2], uint32_t count);
 
-// --- Port hardware facade (see portable/cortex-m4/port.h for the contract) ---
+// --- Port hardware facade (see portable/armv7e-m/port.h for the contract) ---
 void v_port_hw_clock_init(uint8_t internal_clock_setup);
+void v_port_hw_debug_init(void); // keep SWD alive in sleep; no-op off-target
 void v_port_hw_fpu_enable(void);
 void v_port_hw_systick_init(uint32_t period_us);
 void v_port_hw_sched_irq_init(void);
@@ -89,11 +90,16 @@ void v_port_hw_cpu_idle(void);
 int v_port_hw_in_isr(void);
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
+/* No DMA console here — write_dma completes before it returns, so the buffered
+ * logger releases its own read lock. See portable/armv7e-m/port.h. */
+#define VAIOS_PORT_CONSOLE_DMA 0
+
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
 int v_port_hw_sdio_init(void);
+int v_port_hw_sdio_card_present(void);
 int v_port_hw_sdio_card_init(void);
 void v_port_hw_cycle_counter_init(void);
 uint32_t v_port_hw_cycle_counter_read(void);

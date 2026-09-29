@@ -14,7 +14,7 @@
 //
 // NVIC_PRIO_BITS comes from Kconfig on a real ARM build (VAIOS_ARCH_HAS_IRQ_
 // PRIORITY is set, so the symbol is emitted). The fallback covers the host test
-// build, which compiles this header via portable/cortex-m4/syscall.c — a
+// build, which compiles this header via portable/armv7e-m/syscall.c — a
 // same-directory "port.h" include that outranks the tests/stubs shadow — where
 // the arch config symbol is absent.
 #ifndef NVIC_PRIO_BITS
@@ -200,7 +200,41 @@ int v_port_hw_in_isr(void);
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
 
 // Console: log/terminal UART on hardware, semihosting under QEMU.
+// Keep the debug interface alive across WFI/stop (VAIOS_DEBUG_IN_SLEEP), so a
+// debugger can still read memory once the idle task starts sleeping. No-op when
+// the option is off, which is the default: it leaves the debug block clocked.
+void v_port_hw_debug_init(void);
+
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
+/* Does the console's write_dma actually start an asynchronous transfer, or
+ * does it complete before it returns? The buffered logger needs to know which,
+ * because on the asynchronous path its read lock is released by the completion
+ * callback and on the synchronous one it must release the lock itself.
+ *
+ * This replaces `defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)`. Those
+ * were NavHAL's pre-Kconfig feature flags -- its own api_standardization.md
+ * lists them as "ad-hoc; disconnected from Kconfig CONFIG_*" -- and
+ * _UART_BACKEND_DMA is now defined nowhere at all, so that condition was
+ * always false and the DMA console path had never once compiled in. The
+ * logger fell through to the blocking write, which is why nothing looked
+ * wrong. NAVHAL_HAS_UART_DMA is the flag NavHAL actually generates.
+ *
+ * The CDC route is excluded: hal_usb_cdc_write copies into the peripheral FIFO
+ * and returns, so there is no completion callback to wait for.
+ *
+ * -DVAIOS_CONSOLE_DMA=OFF forces this to 0. That exists for Renode: its generic
+ * STM32F4 platform wires a DMA request line for spi2 only, so a UART TX DMA
+ * transfer is never triggered there and the console goes silent. The SITL
+ * runners pass it; on hardware the DMA path is the one that runs. */
+#ifndef VAIOS_PORT_CONSOLE_DMA
+#if defined(NAVHAL) && NAVHAL_HAS_UART_DMA &&                                  \
+    !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC && (BUFFERED_LOGGING == 1)
+#define VAIOS_PORT_CONSOLE_DMA 1
+#else
+#define VAIOS_PORT_CONSOLE_DMA 0
+#endif
+#endif
+
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);
@@ -208,6 +242,10 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
 
 // SD/MMC over SDIO (VFS backend). Return 0 on success, non-zero on failure.
 int v_port_hw_sdio_init(void);
+// Whether a card is in the slot, from the board's card-detect line. 0 when the
+// port has no SDIO or no card-detect. Lets an empty slot be reported as such
+// instead of as a failed card.
+int v_port_hw_sdio_card_present(void);
 int v_port_hw_sdio_card_init(void);
 
 // Cycle counter (DWT CYCCNT) backing the perf module.

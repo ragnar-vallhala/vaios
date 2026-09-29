@@ -22,6 +22,8 @@
  */
 
 .syntax unified
+/* Standalone builds only (QEMU/Renode). A NAVHAL build links NavHAL's own
+   per-family startup instead, so this core name never reaches an M7 image. */
 .cpu cortex-m4
 .thumb
 

@@ -8,10 +8,16 @@ type = "library"
 
 # Board used when building vaios standalone. When a firmware project depends on
 # vaios, it is rebuilt for that project's board (must be NavHAL-supported).
+#
+# This must agree with navhal.config, which is what the CMake build actually
+# reads: NavHAL's Kconfig resolves the board there, and vaios takes the linker
+# script, the core and the console from that answer. `arch` is the ISA, which is
+# also the port directory name (portable/armv7e-m) — the core within it,
+# cortex-m4 or cortex-m7, comes from the board.
 [target]
-arch = "cortex-m4"
+arch = "armv7e-m"
 vendor = "stm32"
-board = "nucleo_f401re"
+board = "navixsmf401re"
 
 [build]
 backend = "cmake"

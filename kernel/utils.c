@@ -91,7 +91,9 @@ float v_atof(const char *s) {
 // The kernel printk path (v_print / direct_dma_print) mirrors its console
 // output into this ring; a task drains it by read()ing /dev/kmsg. Single
 // logical reader (drain-on-read); oldest bytes are overwritten when full.
+#ifndef KMSG_RING_SIZE
 #define KMSG_RING_SIZE 1024
+#endif
 static char kmsg_ring[KMSG_RING_SIZE];
 static volatile uint32_t kmsg_head, kmsg_tail;
 
@@ -852,7 +854,8 @@ void v_log(Log_Type type, const char *msg, ...) {
   while (1) {
     ENTER_CRITICAL();
     // Conservatively check if we have enough room (Prefix + MAX_MSG + Suffix)
-    if (log_buffer_storage_writing_head + prefix_len + LOG_MSG_MAX_LEN + 3 <=
+    // prefix + message + '~' + CRLF + NUL
+    if (log_buffer_storage_writing_head + prefix_len + LOG_MSG_MAX_LEN + 4 <=
         LOG_BUFFER_STORAGE_SIZE) {
       break;
     }
@@ -916,6 +919,12 @@ void v_log(Log_Type type, const char *msg, ...) {
                       LOG_MSG_MAX_LEN, msg, args);
   log_buffer_storage_writing_head += msg_len;
 
+  // vaprint_fmt_buf stops one short of the buffer and says nothing, so a cut
+  // message reads as a whole one — "size 0x8000" arrives as "size 0x8", which
+  // is not obviously wrong, just wrong. Mark it.
+  if (msg_len == LOG_MSG_MAX_LEN - 1)
+    log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '~';
+
   // 3. Add suffix
   log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\r';
   log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\n';
@@ -923,6 +932,14 @@ void v_log(Log_Type type, const char *msg, ...) {
 
   EXIT_CRITICAL();
   va_end(args);
+
+  // Nothing flushes this buffer until something calls v_log_flush, and the only
+  // callers run under the scheduler. So before scheduler_start — clock, SD,
+  // filesystem and MPU bring-up, and every `log an error then while(1)` path in
+  // there — a log would be written into RAM and never seen: a board that looks
+  // dead with no message. Flush inline while nothing else can.
+  if (!scheduler_running)
+    v_log_flush();
 #else // unbuffered — the only other value of the BUFFERED_LOGGING bool
   const char *typeName;
   const char *typeColor;
@@ -993,7 +1010,7 @@ void v_log_flush(void) {
     atomic_set(&log_buffer_storage_read_lock, 1);
     EXIT_CRITICAL();
 
-#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
+#if VAIOS_PORT_CONSOLE_DMA
     direct_dma_print((const uint8_t *)log_buffer_storage_current_reading,
                      log_buffer_size_to_read);
     // Note: read_lock is released by dma_tx_complete_callback
@@ -1015,7 +1032,7 @@ void v_log_flush(void) {
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
-// SysTick body. The ARM vector handler (portable/cortex-m4/port_hw.c) and its
+// SysTick body. The ARM vector handler (portable/armv7e-m/port_hw.c) and its
 // NavHAL timebase poke wrap this; the kernel keeps only the arch-neutral work.
 void v_kernel_tick(void) {
   PERF_ISR_SYSTICK_BEGIN();

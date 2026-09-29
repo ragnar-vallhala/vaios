@@ -11,12 +11,18 @@ set(CMAKE_CXX_FLAGS_INIT "" CACHE STRING "" FORCE)
 # (Not derived from Kconfig: the toolchain must be known before project(), but
 # Kconfig generation runs after it, so the arch is chosen by this cache var —
 # override with -DVAIOS_PORT=<port>.)
-set(VAIOS_PORT "cortex-m4" CACHE STRING "Target port (selects portable/<port>/)")
+# The port is named for the ISA, not for a core: Cortex-M4 and Cortex-M7 are
+# both ARMv7E-M and share every line of portable/armv7e-m/ — same context-switch
+# asm, same MPU, same SysTick/PendSV/SVC. Only -mcpu and the FPU unit differ,
+# and those come from NavHAL's resolved config further down. This is also how
+# NavHAL names its own arch tree (src/arch/armv7e-m, cmake/arch/armv7e-m.cmake),
+# so an M7 board needs no new port here.
+set(VAIOS_PORT "armv7e-m" CACHE STRING "Target port (selects portable/<port>/)")
 set(_vaios_port_arch "${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT}/arch.cmake")
 if(NOT EXISTS "${_vaios_port_arch}")
   message(FATAL_ERROR
     "Unknown vaios port '${VAIOS_PORT}': ${_vaios_port_arch} not found. "
-    "Add portable/${VAIOS_PORT}/arch.cmake, or -DVAIOS_PORT=cortex-m4.")
+    "Add portable/${VAIOS_PORT}/arch.cmake, or -DVAIOS_PORT=armv7e-m.")
 endif()
 include("${_vaios_port_arch}")
 
@@ -59,18 +65,20 @@ add_custom_target(vaios_copy_compile_commands ALL
   BYPRODUCTS "${CMAKE_CURRENT_SOURCE_DIR}/compile_commands.json"
   COMMENT "Mirroring compile_commands.json to repo root")
 
-# Defaults. CMAKE_SYSTEM_PROCESSOR is now a derived mirror of VAIOS_PORT (the
-# real selection knob above), not an independent input — FORCE keeps the two in
-# sync even if a stale cache set the processor directly.
+# Standalone defaults, for a build with no NavHAL to ask. On a NAVHAL build all
+# three are replaced further down by the values NavHAL's Kconfig resolved, before
+# any compiler or linker flag is built from them — see "Which target is this?".
+# Nothing here should be read as the answer for a NAVHAL build; it is only what
+# a QEMU/Renode build (NAVHAL=OFF) falls back to.
 set(CMAKE_SYSTEM_PROCESSOR
-    "${VAIOS_PORT}"
-    CACHE STRING "Target processor (mirrors VAIOS_PORT)" FORCE)
+    "cortex-m4"
+    CACHE STRING "Target processor (NAVHAL builds: from NavHAL's config)" FORCE)
 set(BOARD
     nucleo_f401re
-    CACHE STRING "Target board")
+    CACHE STRING "Target board (NAVHAL builds: from NavHAL's config)")
 set(VENDOR
     stm32
-    CACHE STRING "Vendor")
+    CACHE STRING "Vendor (NAVHAL builds: from NavHAL's config)")
 
 # Flasher configuration
 if(NOT DEFINED FLASHER)
@@ -117,6 +125,7 @@ endif()
 # while every other example keeps VFS out of flash.
 if(VAIOS_EXAMPLE STREQUAL "VFS_PERF" OR
    VAIOS_EXAMPLE STREQUAL "VFS_CONCURRENT" OR
+   VAIOS_EXAMPLE STREQUAL "SD_USER" OR
    VAIOS_EXAMPLE STREQUAL "SD_WRITE_TEST")
   if(NOT VAIOS_MODULE_VFS)
     message(STATUS "VAIOS_EXAMPLE=${VAIOS_EXAMPLE} uses the VFS API -- forcing VAIOS_MODULE_VFS ON.")
@@ -126,7 +135,8 @@ endif()
 
 # Same for the Bus IPC example: kernel/bus.c is off by default while the
 # subsystem is in progress.
-if((VAIOS_EXAMPLE STREQUAL "BUS_IPC" OR VAIOS_EXAMPLE STREQUAL "BUS_USER") AND NOT VAIOS_MODULE_BUS)
+if((VAIOS_EXAMPLE STREQUAL "BUS_IPC" OR VAIOS_EXAMPLE STREQUAL "BUS_USER" OR
+    VAIOS_EXAMPLE STREQUAL "FLIGHT_USER") AND NOT VAIOS_MODULE_BUS)
   message(STATUS "VAIOS_EXAMPLE=${VAIOS_EXAMPLE} uses the Bus IPC API -- forcing VAIOS_MODULE_BUS ON.")
   set(VAIOS_MODULE_BUS ON CACHE BOOL "Build the Bus IPC subsystem (in progress)" FORCE)
 endif()
@@ -135,6 +145,9 @@ endif()
 # kernel target, so both must agree on whether the module exists: the kernel
 # target's own -D would otherwise leave portable/ reading the Kconfig default.
 add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
+# Same for the VFS: its mount + file syscalls live in the port's dispatch, so
+# portable/ must agree with the kernel target about whether the module exists.
+add_compile_definitions(VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>)
 
 message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
@@ -287,22 +300,128 @@ if(NAVHAL)
     endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# Which target is this? Ask NavHAL rather than restating it.
+#
+# NavHAL's Kconfig already resolves board -> family -> processor -> ISA, and its
+# generator writes that answer to config.cmake as CMAKE_SYSTEM_PROCESSOR,
+# ARCH_ISA, BOARD and TOOLCHAIN_PREFIX. vaios used to guess instead: BOARD
+# defaulted to nucleo_f401re and CMAKE_SYSTEM_PROCESSOR mirrored VAIOS_PORT,
+# both fixed before add_subdirectory(extern/NavHAL) had run. Two things fell out
+# of that. The linker script is built from BOARD at that point, so every
+# firmware linked against the NUCLEO's script whatever board the config named —
+# harmless only because the two F401RE boards happen to share a memory map. And
+# a config selecting an M7 still compiled vaios -mcpu=cortex-m4 while NavHAL
+# compiled itself -mcpu=cortex-m7, in one image, with nothing to say so.
+#
+# So stage NavHAL's .config and run NavHAL's own generator here, before any flag
+# is built, and take its answers. The run inside add_subdirectory below repeats
+# it into the same paths — idempotent, and one extra python call is cheaper than
+# a second description of the hardware living in this file.
+#
+# Skipped when a superproject already added NavHAL (TARGET hal): it staged its
+# own .config and its config.cmake is already in the cache. Overwriting it here
+# would retarget somebody else's build.
+# ---------------------------------------------------------------------------
+if(NAVHAL AND NOT TARGET hal)
+  set(_nav_staged "")
+  if(EXISTS "${_vaios_dotconfig}")
+    file(READ "${_vaios_dotconfig}" _vc)
+    string(APPEND _nav_staged "${_vc}\n")
+  endif()
+  if(EXISTS "${_nav_cfg}")
+    file(READ "${_nav_cfg}" _nc)
+    string(APPEND _nav_staged "${_nc}\n")
+  endif()
+  file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config" "${_nav_staged}")
+
+  execute_process(
+    COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/tools/kconfig.py"
+            --kconfig "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/Kconfig"
+            --config "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config"
+            --cmake-out "${CMAKE_BINARY_DIR}/config.cmake"
+    RESULT_VARIABLE _nav_target_rc
+    OUTPUT_QUIET)
+  if(NOT _nav_target_rc EQUAL 0)
+    message(FATAL_ERROR
+      "NavHAL target resolution failed (rc=${_nav_target_rc}). "
+      "The staged extern/NavHAL/.config does not describe a buildable target.")
+  endif()
+  include("${CMAKE_BINARY_DIR}/config.cmake")
+  message(STATUS "VAIOS: target from NavHAL -> board ${BOARD}, "
+                 "processor ${CMAKE_SYSTEM_PROCESSOR}, ISA ${ARCH_ISA}")
+
+  # The port directory was chosen before project(), from VAIOS_PORT; NavHAL has
+  # only now said which ISA the config means. If they differ, vaios would build
+  # one instruction set and link it against another — say so here rather than
+  # let it surface as a strange link error or, worse, not surface at all.
+  if(NOT PORT_IS_HOSTED AND NOT ARCH_ISA STREQUAL VAIOS_PORT)
+    message(FATAL_ERROR
+      "Port/ISA mismatch: VAIOS_PORT='${VAIOS_PORT}' but NavHAL's config "
+      "resolves to ISA '${ARCH_ISA}' (board ${BOARD}, ${CMAKE_SYSTEM_PROCESSOR}). "
+      "Pass -DVAIOS_PORT=${ARCH_ISA}, or point -DNAVHAL_CONFIG_FILE at a config "
+      "for this port.")
+  endif()
+endif()
+
+# The FPU unit name is a CPU fact: -mfpu=fpv4-sp-d16 on an M4, fpv5-d16 on an
+# M7. NavHAL's cmake/arch/<ISA>.cmake already branches on exactly that, keyed on
+# the processor its Kconfig resolved, so call that fragment instead of writing
+# the same branch again here — it is the reason an M7 build needs no new flag
+# table in vaios. Included inside a function because the fragment also sets
+# ARCH_LINK_FLAGS and the NAVHAL_TEST_* group against variables that only exist
+# in NavHAL's own scope (SRC_BOARD); the function body keeps those from leaking
+# out, and only FPU_FLAGS comes back.
+function(_vaios_fpu_flags_from_navhal out)
+    set(USE_FPU ${VAIOS_FPU})
+    include("${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/cmake/arch/${ARCH_ISA}.cmake")
+    set(${out} "${FPU_FLAGS}" PARENT_SCOPE)
+endfunction()
+
 # The float ABI is an ARM concept. On the host there is no -mfloat-abi; the
 # native gcc uses the host's FPU directly.
 if(PORT_IS_HOSTED)
     set(FPU_FLAGS "")
-elseif(VAIOS_FPU)
-    set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
-    add_compile_definitions(_FPU_ENABLED __FPU_PRESENT=1)
-    message(STATUS "VAIOS: FPU Support Enabled")
 else()
-    set(FPU_FLAGS "-mfloat-abi=soft")
-    message(STATUS "VAIOS: FPU Support Disabled")
+    if(NAVHAL AND ARCH_ISA)
+        _vaios_fpu_flags_from_navhal(FPU_FLAGS)
+    elseif(VAIOS_FPU)
+        # Standalone (QEMU/Renode, no NavHAL): this port's own core, since there
+        # is no NavHAL config to ask. Cortex-M4 is the only one that path builds.
+        set(FPU_FLAGS "-mfloat-abi=hard -mfpu=fpv4-sp-d16")
+    else()
+        set(FPU_FLAGS "-mfloat-abi=soft")
+    endif()
+    if(VAIOS_FPU)
+        add_compile_definitions(_FPU_ENABLED __FPU_PRESENT=1)
+        message(STATUS "VAIOS: FPU Support Enabled (${FPU_FLAGS})")
+    else()
+        message(STATUS "VAIOS: FPU Support Disabled (${FPU_FLAGS})")
+    endif()
 endif()
 
-# Arch flags (-mcpu/-mthumb) come from the port's arch.cmake; FPU_FLAGS is
-# config-derived (above) and appended here, since the float ABI is not an arch
-# fact on this project.
+# -mcpu/-mthumb come from the port's arch.cmake, which is included before
+# project() and so cannot know which core the config picked. On a NAVHAL build
+# the processor NavHAL resolved is the answer, and it is known by now — take it,
+# so an F767 config produces -mcpu=cortex-m7 for vaios's own translation units
+# too. Without this vaios compiled M4 code into an image whose HAL was M7.
+if(NAVHAL AND NOT PORT_IS_HOSTED AND CMAKE_SYSTEM_PROCESSOR)
+    set(PORT_ARCH_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb")
+endif()
+
+# The buffered console's DMA path. ON everywhere real; the SITL runners turn it
+# off because Renode's generic STM32F4 platform wires a DMA request line for
+# spi2 only, so a UART TX DMA transfer is never triggered there and the console
+# goes silent. Off, the logger falls back to the blocking write -- the same path
+# it used before the DMA gate was fixed, so SITL still tests the kernel, just
+# not that transport.
+option(VAIOS_CONSOLE_DMA "Use UART DMA for the buffered console" ON)
+if(NOT VAIOS_CONSOLE_DMA)
+  add_compile_definitions(VAIOS_PORT_CONSOLE_DMA=0)
+  message(STATUS "VAIOS: buffered console on the blocking write (DMA off)")
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_ASM_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS}")
 set(CMAKE_C_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS} -Wall -O2 -g -std=c11")
@@ -315,7 +434,7 @@ else()
   set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs")
 endif()
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${CMAKE_SYSTEM_PROCESSOR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT})
 
 # Arch is now a Kconfig choice (VAIOS_ARCH_CORTEX_M4, emitted into
 # vaios_autoconf.h); the kernel reads capability symbols, not a CORTEX_M4
@@ -351,16 +470,8 @@ if(NAVHAL)
     # MPU, ...). navhal.config remains the source of truth for the HAL driver
     # set; the unified menuconfig still shows both trees. The file is gitignored,
     # so NavHAL stays an unmodified submodule; rewriting it re-triggers configure.
-    set(_nav_staged "")
-    if(EXISTS "${_vaios_dotconfig}")
-      file(READ "${_vaios_dotconfig}" _vc)
-      string(APPEND _nav_staged "${_vc}\n")
-    endif()
-    if(EXISTS "${_nav_cfg}")
-      file(READ "${_nav_cfg}" _nc)
-      string(APPEND _nav_staged "${_nc}\n")
-    endif()
-    file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config" "${_nav_staged}")
+    # extern/NavHAL/.config was staged above, before the toolchain flags were
+    # built, because the processor and board it resolves to decide them.
     add_subdirectory(extern/NavHAL)
     # NavHAL hardcodes -O0 in its own CMAKE_C_FLAGS. Rather than editing the
     # submodule, override per target from here — gcc honours the last -O flag,
@@ -378,7 +489,7 @@ if(NAVHAL)
   # stub. Capability-gated NavHAL headers wrap their whole body in
   # `#if NAVHAL_CONFIG_DRV_*` (common/hal_sdio.h today, hal_eth.h next), so
   # without the flag ambient in vaios sources those APIs compile out and their
-  # symbols vanish from consumers like portable/cortex-m4/port_hw.c. The header
+  # symbols vanish from consumers like portable/armv7e-m/port_hw.c. The header
   # is generated at configure time (before any TU compiles) and its dir is
   # already on the include path. Applies to portable/kernel/examples added below.
   # SHELL: keeps the two-token option intact — CMake otherwise de-duplicates the
@@ -423,10 +534,10 @@ add_compile_options("SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/vaios_co
 # cannot reach (context switch, MPU, SVC dispatch, fault handlers, semihosting).
 # NavHAL was added above and keeps its own uninstrumented flags. Plain
 # --coverage (NOT -fprofile-info-section) so the embedded .gcda path survives for
-# __gcov_info_to_gcda; portable/cortex-m4/gcov_sections.ld (prepended -> parsed
+# __gcov_info_to_gcda; portable/armv7e-m/gcov_sections.ld (prepended -> parsed
 # first) bounds .init_array; --coverage at link pulls the correct multilib
 # libgcov. The linker fragment sits with its companion dumper
-# (portable/cortex-m4/gcov_dump.c); drive it via tools/coverage_target.sh.
+# (portable/armv7e-m/gcov_dump.c); drive it via tools/coverage_target.sh.
 # Default OFF: normal builds are byte-for-byte unaffected.
 # ---------------------------------------------------------------------------
 option(VAIOS_GCOV "Instrument vaios for on-target gcov coverage (.gcda streamed over UART)" OFF)

@@ -27,6 +27,15 @@ machine LoadPlatformDescription @platforms/cpus/stm32f4.repl
 # faulting on a non-existent peripheral. It counts once firmware sets CYCCNTENA.
 machine LoadPlatformDescriptionFromString "dwt: Miscellaneous.DWT @ sysbus 0xE0001000 { frequency: 84000000 }"
 
+# Third divergence from the real part, and the reason every SITL runner passes
+# -DVAIOS_CONSOLE_DMA=OFF: the generic repl wires a DMA request line for spi2
+# alone (`DMARecieve->dma1@3`) and none for the USARTs. dma1/dma2 exist and
+# their stream IRQs are wired, but nothing ever asks them to move a byte for
+# USART2, so a firmware whose console writes go through hal_uart_write_dma
+# transmits nothing at all here — every on-target assertion then fails as
+# "missing", which reads like a dead image rather than a silent console.
+# Built with the flag, the logger falls back to the blocking write.
+
 # The generic repl clocks TIM2/TIM3 at 10 MHz; on the real part at the default
 # 84 MHz setup they run at 84 MHz (APB1 x2), so firmware PSC/ARR values would
 # otherwise run 8.4x slow.

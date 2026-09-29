@@ -1,7 +1,11 @@
 # Building, Flashing, and Running VaiOS
 
-VaiOS targets the ARM Cortex-M4 (reference board: STM32F401RE / Nucleo-F401RE)
-but most of the kernel also builds and runs natively on a host PC for testing.
+VaiOS targets ARMv7E-M — Cortex-M4 and Cortex-M7 share one port. The bench board
+is the NAVIXSM-F401RE, named in `navhal.config`; any NavHAL-supported board can
+be selected instead with
+`-DNAVHAL_CONFIG_FILE=extern/NavHAL/cmake/defconfigs/<board>.defconfig`, and the
+core, linker script, startup and console all follow from it. Most of the kernel
+also builds and runs natively on a host PC for testing.
 This document covers every build surface:
 
 | Surface | What it is | Toolchain | Build dir | Section |

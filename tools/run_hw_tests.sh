@@ -6,19 +6,19 @@
 #
 # For each curated example the script:
 #   1. Configures and builds the firmware with -DVAIOS_EXAMPLE=<name>.
-#   2. Flashes the resulting .bin to the board via st-flash.
+#   2. Flashes the resulting ELF to the board via OpenOCD.
 #   3. Captures UART output from the on-board ST-Link VCP for a fixed window.
 #   4. Greps the captured log for required PASS / completion lines.
 #
 # Exit code: number of examples that failed (0 = all green).
 #
-# Requirements: arm-none-eabi-gcc, arm-none-eabi-objcopy, cmake, st-flash,
-#               st-info, a connected Nucleo on /dev/ttyACM0.
+# Requirements: arm-none-eabi-gcc, cmake, openocd, a connected board whose
+#               console lands on /dev/ttyACM0.
 #
 # Usage:
 #   tools/run_hw_tests.sh                # default port /dev/ttyACM0
 #   PORT=/dev/ttyACM1 tools/run_hw_tests.sh
-#   SERIAL=0668FF33... tools/run_hw_tests.sh   # which probe, when several
+#   USB_LOC=3-2 tools/run_hw_tests.sh          # which probe, by USB port
 #   CAPTURE_SECS=20  tools/run_hw_tests.sh
 # =============================================================================
 set -uo pipefail
@@ -26,11 +26,11 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
+# shellcheck source=lib/probe.sh
+. "$SCRIPT_DIR/lib/probe.sh"
 
-# Which board. With one probe attached everything is inferred; with several
-# (an F401 next to an F767, say) SERIAL picks one -- st-flash would otherwise
-# grab whichever it enumerates first and write this firmware to the wrong MCU.
-SERIAL="${SERIAL:-}"
+# Which board. USB_LOC names the probe by the port it is plugged into; see
+# tools/lib/probe.sh for why a serial cannot be trusted to do that here.
 PORT="${PORT:-}"
 EXPECT_CHIPID="${EXPECT_CHIPID:-0x433}" # STM32F401xD/xE, what the build targets
 CAPTURE_SECS="${CAPTURE_SECS:-15}"
@@ -47,46 +47,32 @@ c_green() { printf '\033[1;32m%s\033[0m' "$1"; }
 c_blue()  { printf '\033[1;34m%s\033[0m' "$1"; }
 
 # ----- pre-flight checks ------------------------------------------------------
-for bin in arm-none-eabi-gcc arm-none-eabi-objcopy cmake st-flash st-info; do
+for bin in arm-none-eabi-gcc cmake; do
   if ! command -v "$bin" >/dev/null; then
     echo "missing required tool: $bin" >&2
     exit 2
   fi
 done
 
-if ! st-info --probe 2>&1 | grep -qi "stlink\|serial"; then
-  echo "no ST-Link board detected (st-info --probe found nothing)" >&2
+probe_require_tools || exit 2
+if ! probe_present; then
+  echo "no ST-Link at USB location $USB_LOC (set USB_LOC=<bus>-<port>)" >&2
   exit 2
 fi
 
-# --- pick the board ----------------------------------------------------------
-# st-info --probe prints one "serial:" and one "chipid:" line per probe, in
-# order, so the two lists line up.
-probe_serials=$(st-info --probe 2>/dev/null | awk '/serial:/ {print $2}')
-probe_chipids=$(st-info --probe 2>/dev/null | awk '/chipid:/ {print $2}')
-nprobes=$(printf '%s\n' "$probe_serials" | grep -c .)
-
-if [ -z "$SERIAL" ]; then
-  if [ "$nprobes" -gt 1 ]; then
-    echo "several ST-Link probes are connected; pick one with SERIAL=<hex>:" >&2
-    paste <(printf '%s\n' "$probe_serials") <(printf '%s\n' "$probe_chipids") \
-      | sed 's/^/  SERIAL=/;s/\t/   chipid /' >&2
-    echo "  (tools/flash.sh --list shows the same list with board names)" >&2
-    exit 2
-  fi
-  SERIAL=$(printf '%s\n' "$probe_serials" | head -1)
-fi
-
-# The chipid of the chosen probe must match what the firmware is built for:
-# writing an F401 image to an F767 is what "Failed to parse flash type" means.
-chipid=$(st-info --probe 2>/dev/null \
-         | awk -v s="$SERIAL" '/serial:/ {m = ($2 == s)} m && /chipid:/ {print $2; exit}')
+# --- check the board is the one this firmware is built for -------------------
+# Writing an F401 image to an F767 is what "Failed to parse flash type" means.
+# The target script has to match the family first: probe_chipid through the
+# wrong one reads nothing at all, which would report as "no device id" rather
+# than as the mismatch it is.
+probe_target_from_build "$BUILD_DIR"
+chipid=$(probe_chipid)
 if [ -z "$chipid" ]; then
-  echo "no probe with serial $SERIAL (st-info --probe lists the ones present)" >&2
+  echo "could not read a device id from the probe at $USB_LOC" >&2
   exit 2
 fi
 if [ "$chipid" != "$EXPECT_CHIPID" ]; then
-  echo "probe $SERIAL is chipid $chipid, but this firmware targets $EXPECT_CHIPID." >&2
+  echo "the board at $USB_LOC is chipid $chipid, but this firmware targets $EXPECT_CHIPID." >&2
   echo "Refusing to flash it. Set EXPECT_CHIPID=$chipid if that is really the" >&2
   echo "board you want (and make sure navhal.config matches)." >&2
   exit 2
@@ -94,14 +80,14 @@ fi
 
 # The probe's own USB serial port, unless PORT says otherwise.
 if [ -z "$PORT" ]; then
-  link=$(ls /dev/serial/by-id/*"$SERIAL"* 2>/dev/null | head -1)
+  link=$(ls /dev/serial/by-id/* 2>/dev/null | head -1)
   PORT=$([ -n "$link" ] && readlink -f "$link" || echo /dev/ttyACM0)
 fi
 if [ ! -e "$PORT" ]; then
   echo "serial port $PORT not present (set PORT=... to override)" >&2
   exit 2
 fi
-echo "board: probe $SERIAL (chipid $chipid) on $PORT"
+echo "board: probe at $USB_LOC (chipid $chipid) on $PORT"
 
 # ----- per-example runner -----------------------------------------------------
 # Output mirrors the host-test runner (tools/run_tests.sh) so the same
@@ -166,21 +152,14 @@ run_example() {
     return
   fi
 
-  arm-none-eabi-objcopy -O binary \
-      "$BUILD_DIR/examples/main" \
-      "$BUILD_DIR/examples/main.bin"
-
-  # st-flash occasionally fails the first SWD handshake when the previously-
-  # flashed firmware has put the MCU into WFI / reconfigured the debug pins.
-  # Retry once before giving up; on persistent failure dump the st-flash log
-  # so the user can see the actual reason (AIRCR write failure, SWD enter
-  # failure, NRST not connected, etc.) instead of an opaque "FLASH FAILED".
+  # The first SWD handshake can fail when the previously-flashed firmware has
+  # put the MCU into WFI / reconfigured the debug pins. Retry once before giving
+  # up; on persistent failure dump the log so the user can see the actual reason
+  # instead of an opaque "FLASH FAILED".
   local flash_log="/tmp/hw_${name}_flash.log"
   local flashed=0
   for attempt in 1 2; do
-    if st-flash --serial "$SERIAL" --connect-under-reset write \
-         "$BUILD_DIR/examples/main.bin" 0x8000000 \
-         > "$flash_log" 2>&1; then
+    if probe_flash "$BUILD_DIR/examples/main" "$flash_log"; then
       flashed=1; break
     fi
     sleep 1
@@ -191,7 +170,7 @@ run_example() {
     echo "    ── last 5 lines ──"
     tail -n 5 "$flash_log" | sed 's/^/    /'
     echo "    Recovery: hold the Nucleo's BLACK reset button, re-run the"
-    echo "              script, release reset when st-flash starts writing."
+    echo "              script, release reset when writing starts."
     echo "              Or simply unplug/replug the board's USB cable."
     emit_suite_footer "$name" 0 1
     FAILS=$((FAILS+1)); FAIL_NAMES+=("$name(flash)")
@@ -205,7 +184,7 @@ run_example() {
   ( timeout "$CAPTURE_SECS" cat "$PORT" > "$uart_log" 2>/dev/null ) &
   local cap_pid=$!
   sleep 1
-  st-flash --serial "$SERIAL" reset >/dev/null 2>&1 || true
+  probe_reset || true
   wait "$cap_pid" || true
 
   local p_pass=0 p_fail=0

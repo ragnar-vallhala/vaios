@@ -5,7 +5,7 @@
 # logs, and render an A/B comparison plot.
 #
 # QEMU (netduinoplus2, semihosting) is used rather than Renode: it is far
-# faster, and with the SYS_ELAPSED-backed cycle counter (portable/cortex-m4)
+# faster, and with the SYS_ELAPSED-backed cycle counter (portable/armv7e-m)
 # v_perf_cycles() yields real virtual-clock timing. The deterministic
 # search-cost metric (free-list probes) is platform-independent regardless.
 #

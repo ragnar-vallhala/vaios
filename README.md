@@ -7,8 +7,10 @@
 
 A small preemptive real-time operating system for ARM Cortex-M4, targeted at
 the hard-real-time workloads of a 1 kHz flight controller. Built on top of
-[NavHAL](https://github.com/ragnar-vallhala/NavHAL) for the STM32F4 hardware
-abstraction layer; reference board is the Nucleo-F401RE.
+[NavHAL](https://github.com/ragnar-vallhala/NavHAL) for the hardware abstraction
+layer. The bench board is the NAVIXSM-F401RE (Cortex-M4); the port is ARMv7E-M,
+so a Cortex-M7 board such as the Nucleo-F767ZI builds from the same sources —
+pick one with `-DNAVHAL_CONFIG_FILE=extern/NavHAL/cmake/defconfigs/<board>.defconfig`.
 
 ## Features
 
@@ -53,8 +55,8 @@ mkdir build && cd build
 cmake -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=FIFO_TEST ..
 cmake --build .
 
-arm-none-eabi-objcopy -O binary examples/main examples/main.bin
-st-flash --connect-under-reset write examples/main.bin 0x8000000
+openocd -f interface/stlink.cfg -c 'adapter usb location 3-2' \
+        -f target/stm32f4x.cfg -c 'program examples/main verify reset exit'
 ```
 
 UART output (USART2, 115200 8N1) appears on the Nucleo's ST-Link VCP at
@@ -103,7 +105,7 @@ Three layers of tests, each runnable from one script.
 | Layer | Command | What it does |
 | ----- | ------- | ------------ |
 | Host unit tests | `bash tools/run_tests.sh` | Builds and runs the host-native suites under `tests/` with `gcc` (no toolchain, no board). Two binaries: `vaios_tests` (memory, task, scheduler, IPC, structure, VFS, vaios, terminal) and `vaios_utils_tests` (the formatter, isolated to avoid symbol collisions). |
-| Hardware regression | `bash tools/run_hw_tests.sh` | Builds and flashes a curated set of examples (`FIFO_TEST`, `PRIORITY_INVERSION`, `IPC_TEST`) to a connected Nucleo, captures UART, and greps for required PASS / completion lines. Requires the ARM toolchain, `st-flash`, and `/dev/ttyACM0` (override with `PORT=...`). |
+| Hardware regression | `bash tools/run_hw_tests.sh` | Builds and flashes a curated set of examples (`FIFO_TEST`, `PRIORITY_INVERSION`, `IPC_TEST`) to a connected Nucleo, captures UART, and greps for required PASS / completion lines. Requires the ARM toolchain, `openocd`, and `/dev/ttyACM0` (override with `PORT=...`). Picks the probe by USB port, `USB_LOC=3-2` by default — the ST-Links here share a serial. |
 | CI | `.github/workflows/ci.yml` | Runs the host suite on every push and PR (Ubuntu runner). NavHAL is not required — the host build stubs the relevant headers. |
 
 Exit codes are non-zero on any failure, so all three are CI-friendly.
@@ -146,7 +148,7 @@ docker run --rm -it -v "$PWD:/project" vaios:dev
 ```
 include/             Public API headers
 kernel/              Scheduler, IPC, memory, logging, terminal, VFS
-portable/cortex-m4/  ARM Cortex-M4 port (port.c/h, PendSV, SVCall, BASEPRI)
+portable/armv7e-m/  ARM Cortex-M4 port (port.c/h, PendSV, SVCall, BASEPRI)
 extern/NavHAL/       HAL submodule (clocks, GPIO, UART, DMA, SDIO, DWT)
 examples/            Standalone example applications
 tests/               Host-native unit tests (gcc, x86)

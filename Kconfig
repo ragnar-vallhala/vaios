@@ -78,7 +78,7 @@ config VAIOS_ARCH_STACK_DESCENDING
 # Port-specific symbols (e.g. NVIC_PRIO_BITS) live with the port. Each port's
 # symbols are gated on the capability its arch selects, so only the active port's
 # are visible.
-rsource "portable/cortex-m4/Kconfig"
+rsource "portable/armv7e-m/Kconfig"
 rsource "portable/host/Kconfig"
 
 # Generic knobs, named for the concept rather than the ARM peripheral that
@@ -177,6 +177,14 @@ endmenu
 menu "Memory / Heap"
 config HEAP_SIZE
     hex "Kernel heap size (bytes)"
+    # The heap starts after .bss, so it has to fit in whatever RAM is left.
+    # Examples that carry a lot of statics (an SD example's buffers and worker
+    # slots) do not leave 88 KB on a 96 KB part —
+    # v_heap_memory_init panics instead of clearing past the end of SRAM, and
+    # this default is what keeps that from happening on a default build. The
+    # benchmark example is its own CMake target with no Kconfig choice, so it
+    # still needs CONFIG_HEAP_SIZE set by hand (docs/benchmark/bus-ipc.md).
+    default 0x8000 if EXAMPLE_SD_USER
     default 0x16000
 config HEAP_WATERMARK_ENABLE
     bool "Panic when heap usage crosses the watermark"
@@ -312,6 +320,63 @@ config VAIOS_MAX_FDS
     int "File descriptors per task"
     depends on VAIOS_DEVFS
     default 8
+config VAIOS_DEBUG_IN_SLEEP
+    bool "Keep the debug interface alive while the core sleeps"
+    default n
+    help
+      Set DBGMCU_CR's DBG_SLEEP/DBG_STOP/DBG_STANDBY so SWD keeps bus access
+      once the idle task starts sleeping. Without it a debugger loses the target
+      the moment the system goes idle (the probe reads a chip ID of 0), which
+      makes reading anything out of a RUNNING system impossible. Costs the debug
+      block staying clocked, so it is off by default and belongs in debug and
+      hardware-test builds.
+
+config VAIOS_CLOCK_HSE
+    bool "Run the PLL from an external crystal (HSE) instead of the internal RC"
+    default n
+    help
+      v_system_init's internal clock setup drives the PLL from HSI, which is
+      accurate to about 1%. That is fine for the core and for SDIO, but NOT for
+      USB: hal_usb_cdc_init refuses to run on anything but a 48 MHz PLL Q derived
+      from a crystal, rather than enumerate unreliably. Turn this on for boards
+      that have an HSE source (a fitted crystal, or the ST-Link's 8 MHz MCO in
+      bypass), which is what NavHAL's CDC console route needs.
+
+      The PLL M divider is derived from VAIOS_CLOCK_HSE_HZ so the VCO input lands
+      at 1 MHz, matching the HSI path (16 MHz / 16) — so N/P/Q, and therefore
+      SYSCLK and the 48 MHz USB/SDIO clock, are unchanged.
+
+config VAIOS_CLOCK_HSE_HZ
+    int "HSE frequency in Hz"
+    depends on VAIOS_CLOCK_HSE
+    default 8000000
+    help
+      Must be a whole number of MHz: the PLL M divider is HSE_HZ / 1000000.
+      8 MHz on an ST Nucleo (MCO from the ST-Link), 8 or 25 MHz on most custom
+      boards.
+
+# Where the console goes is NOT a vaios setting. NavHAL owns that choice
+# (CONSOLE_ROUTE_UART / CONSOLE_ROUTE_CDC under "Console"), because the console
+# is a board property and NavHAL is where boards are described. vaios used to
+# carry VAIOS_CONSOLE_USB_CDC alongside it: two switches for one decision, both
+# in this same menuconfig, with nothing making them agree — set NavHAL's to CDC
+# and vaios still wrote to the UART. port_hw.c now reads NavHAL's flag.
+#
+# vaios keeps its own dispatch rather than calling hal_console_*, because the
+# buffered logger needs the DMA write that hal_console does not offer. Two
+# implementations of one decision is fine; two decisions was the bug.
+
+config VAIOS_CONSOLE_TO_KMSG
+    bool "Mirror console writes into the /dev/kmsg ring"
+    depends on VAIOS_DEVFS
+    default n
+    help
+      Console writes normally go straight to the UART. With this on they are
+      also appended to the kernel log ring, which makes them readable through
+      /dev/kmsg and — the reason it exists — recoverable from RAM over SWD when
+      the board's debug probe has no serial port, or after a fault has taken the
+      console with it. Costs one memcpy per write chunk.
+
 config VAIOS_IPC_FD
     bool "fd-typed IPC (named semaphores on the fd table)"
     depends on VAIOS_DEVFS
@@ -323,10 +388,86 @@ config VAIOS_IPC_FD
       close(fd) drops the reference (object destroyed at refcount 0). This
       removes the raw kernel pointer from user handles and gives per-task
       capability isolation. The pointer-based v_semaphore_* API still exists.
+config VAIOS_TASK_SPAWN_STACK_MAX
+    int "Largest stack a task may request when spawning (bytes)"
+    default 4096
+    help
+      Upper bound on v_task_spawn's stack_size. A task spawns from the global
+      heap, so without a cap one task can exhaust the heap and take the system
+      with it. Privileged init is not bound by this (task_create takes any size).
+config VAIOS_TASK_MAX_CHILDREN
+    int "Live children one task may have at once"
+    default 4
+    help
+      v_task_spawn refuses past this with -EAGAIN. Counts children currently
+      alive; a child that exits gives its slot back. Bounds the fan-out of a
+      spawn loop, together with VAIOS_TASK_SPAWN_STACK_MAX.
+
+config VAIOS_SDIO_4BIT
+    bool "Use the SD card's 4-bit data bus"
+    default y
+    help
+      Drive the card over DAT0..DAT3 instead of DAT0 alone. Four times the
+      bandwidth, and it needs all four data lines wired and pulled up: a board with
+      one of DAT1..DAT3 unwired, or an open solder joint on it, initialises fine
+      (CMD is a separate line) and then fails every data transfer, which looks like
+      a dead card. Turn this off to find out — if 1-bit works, the wiring is the
+      problem. A pull-up test is not enough to clear the wiring: a series resistor
+      can hold the MCU side of an open joint high. Check that each line goes LOW
+      during a transfer.
+
+config VAIOS_VFS_IO_SLOTS
+    int "In-flight file requests a system may have (I/O worker)"
+    depends on VAIOS_DEVFS
+    default 2
+    help
+      Request slots for the VFS I/O worker: one per task waiting on a file
+      operation. Each holds a copied path and a VAIOS_VFS_IO_BUF bounce buffer in
+      static kernel RAM.
+config VAIOS_VFS_IO_BUF
+    int "Bytes a single file request may carry (bounce buffer)"
+    depends on VAIOS_DEVFS
+    default 512
+    help
+      Payload a read or write moves per request; the task-facing wrappers loop in
+      chunks of this size, so kernel memory stays fixed however much a task asks
+      for. One sector (512) is the natural value.
+
+config VAIOS_VFS_MAX_OPEN
+    int "Files+directories a system may have open through the VFS mount"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_file_open("/mnt/...") handles across all tasks, in static kernel
+      RAM. Each holds one vfs_fd_t or vfs_dir_t.
+
+config VAIOS_QUEUE_MAX_OPEN
+    int "Queue handles a system may have open (v_queue_open)"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_queue_open() handles across all tasks, in static kernel RAM. Like
+      VAIOS_BUS_MAX_OPEN, this bounds the fd layer, not the queues themselves.
+
+config VAIOS_BUS_MAX_CALLBACKS
+    int "Bus IPC callback subscriptions (system-wide)"
+    depends on VAIOS_MODULE_BUS
+    default 4
+    help
+      Callback subscriptions registered with v_bus_subscribe_cb, in static
+      kernel RAM. Each holds one subscription; the payload buffer is the
+      caller's, so this costs no heap.
+
+      Unrelated to VAIOS_BUS_MAX_OPEN: that bounds the fd layer that
+      unprivileged tasks use. Callbacks are privileged only — the worker would
+      otherwise call user code from kernel context — so they do not go through
+      an fd at all. A task that wants callback semantics blocks in a thread of
+      its own (v_bus_recv_wait).
+
 config VAIOS_BUS_MAX_OPEN
     int "Bus IPC user handles (system-wide)"
     depends on VAIOS_DEVFS
-    default 8 if EXAMPLE_BUS_USER
+    default 8 if EXAMPLE_BUS_USER || EXAMPLE_FLIGHT_USER
     default 4
     help
       Open v_bus_open() handles across all tasks. Each carries a
@@ -378,7 +519,18 @@ config LOG_BUFFER_SIZE
     default 32
 config LOG_MSG_MAX_LEN
     int "Max log message length (bytes)"
-    default 64
+    default 96
+    help
+      The formatted message, NOT counting the "[INFO 42] " prefix (up to 47
+      bytes) or the CRLF. A longer message is cut and marked with a trailing
+      '~' — see v_log. 64 was too small for ordinary banners: the heap line
+      lost the last three digits of its size and read as a plausible wrong
+      number, which is worse than an obviously cut one.
+
+      This is not a RAM cost — it is reserved headroom inside
+      LOG_BUFFER_STORAGE_SIZE, so raising it only means fewer messages batch
+      into one flush. Keep 47 + this + 4 under LOG_BUFFER_STORAGE_SIZE or a
+      single message can never fit and v_log will spin.
 config LOG_BUFFER_STORAGE_SIZE
     int "Log buffer backing storage (bytes)"
     default 256

@@ -3,7 +3,7 @@
 
 /*
  * On-target gcov (.gcda) dump entry point. Implemented in
- * portable/cortex-m4/gcov_dump.c, and only when the image is built with
+ * portable/armv7e-m/gcov_dump.c, and only when the image is built with
  * -DVAIOS_GCOV=ON (--coverage instrumentation + tools/gcov_sections.ld).
  *
  * Renode 1.16.1 does not implement ARM semihosting, and the NAVHAL enforcement

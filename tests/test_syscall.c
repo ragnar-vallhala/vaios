@@ -1,6 +1,6 @@
 /**
  * @file test_syscall.c
- * @brief SVC syscall-dispatch validation tests — portable/cortex-m4/syscall.c.
+ * @brief SVC syscall-dispatch validation tests — portable/armv7e-m/syscall.c.
  *
  * The main vaios_tests binary does not link syscall.c, so v_syscall_dispatch —
  * where the Stage-5 security decisions live (the unprivileged pointer-validation
@@ -20,6 +20,9 @@
  */
 #include "framework.h"
 #include "bus.h"
+#include "perf.h"
+#include "structure.h"
+#include "vfs.h"
 #include "periph_bus.h"
 #include "syscall.h"
 #include <stdint.h>
@@ -136,6 +139,48 @@ static void test_unpriv_pbus_finish_bad_rx_efault(void) {
   TEST_ASSERT_EQ(call(SYS_pbus_finish, 3, BAD_PTR, 8), T_EFAULT);
 }
 
+/* ---- Self-info and perf: both copy kernel-side state into the caller's own
+ * struct, so both are pure write-validation cases. */
+extern uint32_t stub_perf_sys_calls, stub_perf_self_calls; /* syscall_stubs.c */
+
+static void test_unpriv_task_info_bad_ptr_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_task_info, BAD_PTR, 0, 0), T_EFAULT);
+}
+static void test_unpriv_task_info_valid_passes(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  TEST_ASSERT(call(SYS_task_info, base, 0, 0) != T_EFAULT);
+}
+static void test_unpriv_perf_bad_ptrs_efault(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, BAD_PTR, 0, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, 0, BAD_PTR, 0), T_EFAULT);
+  /* A good system pointer does not excuse a bad self pointer. */
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, base, BAD_PTR, 0), T_EFAULT);
+}
+/* Both pointers are optional: the caller picks which reading it wants, and
+ * asking for neither must not be rejected as if a pointer were missing. */
+static void test_unpriv_perf_optional_pointers(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_perf_snapshot_t *sys = (v_perf_snapshot_t *)(uintptr_t)base;
+  v_perf_task_t *self = (v_perf_task_t *)(uintptr_t)(base + sizeof(*sys));
+  sys->uptime_ticks = 0;
+  self->switches_in = 0;
+
+  uint32_t n_sys = stub_perf_sys_calls, n_self = stub_perf_self_calls;
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, 0, 0, 0), 0); /* neither: legal no-op */
+  TEST_ASSERT_EQ(stub_perf_sys_calls, n_sys);
+  TEST_ASSERT_EQ(stub_perf_self_calls, n_self);
+
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, base, 0, 0), 0); /* system only */
+  TEST_ASSERT_EQ(sys->uptime_ticks, 0xABCDu);
+  TEST_ASSERT_EQ(stub_perf_self_calls, n_self); /* self not touched */
+
+  TEST_ASSERT_EQ(call(SYS_perf_snapshot, 0, (uintptr_t)self, 0), 0); /* self only */
+  TEST_ASSERT_EQ(self->switches_in, 0x5A5Au);
+}
+
 /* ---- Ticks + drift-free periodic wait: the two kernel globals a user task
  * could not reach. SYS_ticks takes no pointer; SYS_delay_until keeps its
  * deadline in the caller's own word, which must be validated as a write. */
@@ -184,6 +229,12 @@ static void test_unpriv_bus_recv_bad_rx_buf_efault(void) {
   *rx = (v_bus_rx_t){.buf = (void *)BAD_PTR, .cap = 4};
   TEST_ASSERT_EQ(call(SYS_bus_recv, 3, base, 0), T_EFAULT);
 }
+/* Read-only, but it still writes a struct into the caller's memory, so the
+ * destination is checked like any other out-pointer. */
+static void test_unpriv_bus_stats_bad_out_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_bus_stats, 3, BAD_PTR, 0), T_EFAULT);
+}
 static void test_unpriv_bus_valid_passes(void) {
   uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
   v_bus_rx_t *rx = (v_bus_rx_t *)(uintptr_t)base;
@@ -191,6 +242,8 @@ static void test_unpriv_bus_valid_passes(void) {
   /* Validation passes; the body then rejects fd 3 (no bus handle here). */
   TEST_ASSERT_EQ(call(SYS_bus_recv, 3, base, 0), V_BUS_EINVAL);
   TEST_ASSERT_EQ(call(SYS_bus_send, 3, base + 64, 4), V_BUS_EINVAL);
+  /* Same shape: validation passes, the body rejects fd 3. */
+  TEST_ASSERT_EQ(call(SYS_bus_stats, 3, base, 0), V_BUS_EINVAL);
   /* No bus is initialised in this binary, so a valid name finds no topic. */
   TEST_ASSERT_EQ(call(SYS_bus_open, base, V_BUS_RD, 0), V_BUS_EINVAL);
 }
@@ -247,6 +300,103 @@ static void test_unpriv_ro_pbus_tx_ok_rx_refused(void) {
   stub_set_user_ro(0, 0);
 }
 
+/* ---- Files through the I/O worker (todo 67). One submit/wait/finish triple
+ * covers every operation, because a syscall must never wait on a peripheral
+ * itself. What the dispatch owes us: the descriptor, the path it points at, and
+ * the payload it points at are all the caller's, and finish's output buffer is
+ * writable. */
+#if VAIOS_MODULE_VFS
+static void test_unpriv_vfs_submit_validates(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  TEST_ASSERT_EQ(call(SYS_vfs_submit, BAD_PTR, 0, 0), T_EFAULT); /* descriptor */
+
+  v_vfs_desc_t *d = (v_vfs_desc_t *)(uintptr_t)base;
+  /* a path outside the caller's memory */
+  *d = (v_vfs_desc_t){.op = 1, .path = (const char *)BAD_PTR};
+  TEST_ASSERT_EQ(call(SYS_vfs_submit, base, 0, 0), T_EFAULT);
+  /* a write payload outside the caller's memory */
+  *d = (v_vfs_desc_t){.op = 4, .data = (const void *)BAD_PTR, .len = 16};
+  TEST_ASSERT_EQ(call(SYS_vfs_submit, base, 0, 0), T_EFAULT);
+  /* neither pointer given: nothing to fault on, so it reaches the body */
+  *d = (v_vfs_desc_t){.op = 3, .fd = 0, .len = 8};
+  TEST_ASSERT(call(SYS_vfs_submit, base, 0, 0) != T_EFAULT);
+}
+static void test_unpriv_vfs_finish_validates(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_vfs_finish, 0, BAD_PTR, 64), T_EFAULT);
+  /* no output wanted: not a fault */
+  TEST_ASSERT(call(SYS_vfs_finish, 0, 0, 0) != T_EFAULT);
+  /* and wait carries scalars only */
+  TEST_ASSERT(call(SYS_vfs_wait, 0, 10, 0) != T_EFAULT);
+}
+#endif
+
+/* ---- Queues (M4): the name is a user string, and the element buffer is bounded
+ * by the QUEUE's elem_size — the caller never states a length, so it cannot lie
+ * about one. No queue is registered in this binary, so a bad fd falls through to
+ * the body's EINVAL rather than being confused with EFAULT. */
+static void test_unpriv_q_open_bad_str_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_q_open, BAD_PTR, 1 /*V_Q_RD*/, 0), T_EFAULT);
+}
+static void test_unpriv_q_unknown_fd_is_einval_not_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  /* fd 3 is not a queue handle: elem_size is unknown, so there is nothing to
+   * bound-check and the body reports EINVAL. A bad pointer must not be reported
+   * as a queue error, nor a bad fd as a fault. */
+  int r = call(SYS_q_recv, 3, BAD_PTR, 0);
+  TEST_ASSERT(r != T_EFAULT);
+  TEST_ASSERT_EQ(r, V_Q_EINVAL);
+}
+static void test_unpriv_q_wait_takes_no_pointer(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  /* Scalars only: it must never be refused as a fault. */
+  TEST_ASSERT(call(SYS_q_wait, 3, 10, 0) != T_EFAULT);
+}
+
+/* ---- Spawning (M3): the descriptor is the caller's, the ENTRY POINT must be
+ * code. v_access_ok covers data regions; a RAM entry would mean asking the
+ * kernel to start a task on a buffer the caller wrote, so it is refused here. */
+static void test_unpriv_spawn_bad_desc_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_task_spawn, BAD_PTR, 0, 0), T_EFAULT);
+}
+static void test_unpriv_spawn_ram_entry_refused(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT(base != 0);
+  v_task_spawn_t *cfg = (v_task_spawn_t *)(uintptr_t)base;
+  *cfg = (v_task_spawn_t){.entry = (void (*)(void *))(uintptr_t)(base + 64),
+                          .stack_size = 256, .priority = 1};
+  /* entry points into the caller's own block: data, not code. */
+  TEST_ASSERT_EQ(call(SYS_task_spawn, base, 0, 0), T_EFAULT);
+}
+/* With a read-only (flash-like) window armed, an entry inside it passes
+ * validation; the same entry is refused the moment that window is gone. */
+static void test_unpriv_spawn_flash_entry_accepted(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_task_spawn_t *cfg = (v_task_spawn_t *)(uintptr_t)base;
+  *cfg = (v_task_spawn_t){.entry = (void (*)(void *))RO_LO,
+                          .stack_size = 256, .priority = 1};
+  TEST_ASSERT_EQ(call(SYS_task_spawn, base, 0, 0), T_EFAULT); /* window off */
+  stub_set_user_ro(RO_LO, RO_HI);
+  TEST_ASSERT(call(SYS_task_spawn, base, 0, 0) != T_EFAULT); /* validated */
+  stub_set_user_ro(0, 0);
+}
+/* A name is a user string like any other, and NULL is legal (unnamed child). */
+static void test_unpriv_spawn_name_validated(void) {
+  uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
+  v_task_spawn_t *cfg = (v_task_spawn_t *)(uintptr_t)base;
+  stub_set_user_ro(RO_LO, RO_HI);
+  *cfg = (v_task_spawn_t){.entry = (void (*)(void *))RO_LO,
+                          .stack_size = 256, .priority = 1,
+                          .name = (const char *)BAD_PTR};
+  TEST_ASSERT_EQ(call(SYS_task_spawn, base, 0, 0), T_EFAULT);
+  cfg->name = NULL;
+  TEST_ASSERT(call(SYS_task_spawn, base, 0, 0) != T_EFAULT);
+  stub_set_user_ro(0, 0);
+}
+
 /* ---- A privileged caller bypasses the validation switch entirely. --------- */
 static void test_priv_caller_skips_validation(void) {
   (void)syscall_set_caller(BLOCK_SZ, /*unpriv=*/0);
@@ -297,6 +447,21 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_pbus_submit_bad_rx_efault),
     TEST_CASE(test_unpriv_pbus_submit_valid_passes),
     TEST_CASE(test_unpriv_pbus_finish_bad_rx_efault),
+#if VAIOS_MODULE_VFS
+    TEST_CASE(test_unpriv_vfs_submit_validates),
+    TEST_CASE(test_unpriv_vfs_finish_validates),
+#endif
+    TEST_CASE(test_unpriv_q_open_bad_str_efault),
+    TEST_CASE(test_unpriv_q_unknown_fd_is_einval_not_efault),
+    TEST_CASE(test_unpriv_q_wait_takes_no_pointer),
+    TEST_CASE(test_unpriv_spawn_bad_desc_efault),
+    TEST_CASE(test_unpriv_spawn_ram_entry_refused),
+    TEST_CASE(test_unpriv_spawn_flash_entry_accepted),
+    TEST_CASE(test_unpriv_spawn_name_validated),
+    TEST_CASE(test_unpriv_task_info_bad_ptr_efault),
+    TEST_CASE(test_unpriv_task_info_valid_passes),
+    TEST_CASE(test_unpriv_perf_bad_ptrs_efault),
+    TEST_CASE(test_unpriv_perf_optional_pointers),
     TEST_CASE(test_unpriv_ticks_reaches_body),
     TEST_CASE(test_unpriv_delay_until_bad_ptr_efault),
     TEST_CASE(test_unpriv_delay_until_valid_passes),
@@ -304,6 +469,7 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_bus_send_bad_payload_efault),
     TEST_CASE(test_unpriv_bus_recv_bad_rx_efault),
     TEST_CASE(test_unpriv_bus_recv_bad_rx_buf_efault),
+    TEST_CASE(test_unpriv_bus_stats_bad_out_efault),
     TEST_CASE(test_unpriv_bus_valid_passes),
     TEST_CASE(test_unpriv_bus_zero_len_not_faulted),
     TEST_CASE(test_unpriv_ro_read_ok_write_refused),

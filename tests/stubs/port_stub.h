@@ -1,6 +1,6 @@
 /**
  * @file port_stub.h
- * @brief Host-native stub replacing portable/cortex-m4/port.h
+ * @brief Host-native stub replacing portable/armv7e-m/port.h
  *
  * Replaces ARM-specific inline assembly macros with no-ops so that kernel
  * C code can be compiled and tested on the host machine.

@@ -105,3 +105,6 @@ jobs:
 
       - name: Bus IPC unprivileged access (fd syscalls) in Renode
         run: bash tools/renode_bus_user.sh
+
+      - name: Unprivileged flight app (release gate) in Renode
+        run: bash tools/renode_flight_user.sh

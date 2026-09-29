@@ -9,7 +9,7 @@ name: codeql
 # two builds run as a matrix:
 #   host          — gcc, NavHAL stubbed: kernel/ core (memory, ipc, task, ...).
 #   arm-firmware  — arm-none-eabi, NAVHAL=ON, the fullest Stage-5 closure
-#                   (MPU_USER_DEMO): adds portable/cortex-m4/*.c — syscall.c's
+#                   (MPU_USER_DEMO): adds portable/armv7e-m/*.c — syscall.c's
 #                   dispatch + pointer validation and port*.c — which the host
 #                   build stubs out. Distinct `category` per target so both
 #                   result sets coexist in the Security tab.

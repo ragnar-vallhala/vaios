@@ -2,7 +2,7 @@
  * @file port_hw_stub.c
  * @brief Host-native stubs for the port hardware facade (v_port_hw_*).
  *
- * The real implementations live in portable/cortex-m4/port_hw.c and drive
+ * The real implementations live in portable/armv7e-m/port_hw.c and drive
  * NavHAL / QEMU. On the host test build there is no hardware, so every
  * wrapper is a no-op — except the cycle counter, which returns a strictly
  * increasing value so the perf module's monotonicity and per-task accounting
@@ -17,6 +17,7 @@
 void v_port_hw_clock_init(uint8_t internal_clock_setup) {
   (void)internal_clock_setup;
 }
+void v_port_hw_debug_init(void) {} // no debug block to configure here
 void v_port_hw_fpu_enable(void) {}
 void v_port_hw_systick_init(uint32_t period_us) { (void)period_us; }
 void v_port_hw_sched_irq_init(void) {}
@@ -49,6 +50,7 @@ char v_port_hw_console_read_char(void) { return 0; }
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) { (void)rx_cb; }
 
 int v_port_hw_sdio_init(void) { return -1; }
+int v_port_hw_sdio_card_present(void) { return 0; }
 int v_port_hw_sdio_card_init(void) { return -1; }
 
 void v_port_hw_cycle_counter_init(void) {}

@@ -62,6 +62,34 @@ typedef enum {
                         //   task cannot read it directly).
   SYS_delay_until = 34, // drift-free periodic wait: absolute deadline kept in
                         //   the caller's own *last_wake.
+  SYS_task_info = 35,   // a task's own id / priority / name / stack size: all
+                        //   in the TCB, which is kernel memory.
+  SYS_perf_snapshot = 36, // perf counters out (args[0] system, args[1] self);
+                        //   the DWT and the counters are privileged-only.
+  SYS_bus_wait = 37,    // park until a topic handle has a message (B6). Split
+                        //   from SYS_bus_recv so a blocked reader leaves no
+                        //   pointer of its own in kernel state.
+  SYS_task_spawn = 38,  // a task creating a task (M3): descriptor in the
+                        //   caller's own memory, child unprivileged and never
+                        //   outranking its parent.
+  SYS_task_kill = 39,   // end a task you spawned. Nobody may end a task they
+                        //   did not create; a task ends itself with SYS_exit.
+  SYS_q_open = 40,      // queues on the fd table (M4): open a registered queue
+  SYS_q_send = 41,      //   by name, then send / receive one element, whose
+  SYS_q_recv = 42,      //   size comes from the queue, not from the caller.
+  SYS_q_wait = 43,      // park until a queue handle can send/receive. Split from
+                        //   the transfer for the same reason SYS_bus_wait is:
+                        //   a parked task holds no buffer of its own, and the
+                        //   queue's own counters are never consumed by a waiter.
+  SYS_vfs_submit = 44,  // files for a task, through the I/O worker (todo 67).
+  SYS_vfs_wait = 45,    //   One generic submit/wait/finish triple covers every
+  SYS_vfs_finish = 46,  //   operation, because a syscall must never wait on a
+                        //   peripheral itself: SVCall runs at priority 0 and
+                        //   would mask the very completion it waits for. Same
+                        //   split, same reason, as SYS_pbus_submit/wait/finish.
+  SYS_bus_stats = 47,   // this handle's topic counters (B7). Read-only and
+                        //   bounded, so no submit/wait/finish split: it copies
+                        //   a small struct under one critical section.
   SYS_MAX
 } v_syscall_t;
 

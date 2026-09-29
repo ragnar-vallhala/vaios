@@ -15,10 +15,15 @@
 
 #include "port.h"
 #include "vaios_config.h"
+#include "utils.h" // v_log (report a console that refused to start)
 #include <stdint.h>
 
 #ifdef NAVHAL
 #include "navhal.h"
+// Generated from the board's Kconfig: BOARD_CONSOLE_UART and friends. The
+// console is a board property, so it is read from here rather than named in
+// this file — see v_port_hw_console_init.
+#include "board.h"
 #else
 #include "semihosting.h"
 
@@ -40,12 +45,24 @@
 void v_port_hw_clock_init(uint8_t internal_clock_setup) {
 #ifdef NAVHAL
   if (internal_clock_setup == 1) {
-    // 84 MHz SYSCLK from HSI; PLLQ=7 keeps the 48 MHz SDIO/USB clock. APB
-    // dividers left 0: the F4 backend defaults them to /2 and clamps APB1 to
-    // its 42 MHz limit.
+    // 84 MHz SYSCLK, PLLQ=7 keeping the 48 MHz SDIO/USB clock. APB dividers left
+    // 0: the F4 backend defaults them to /2 and clamps APB1 to its 42 MHz limit.
+    //
+    // M is chosen so the VCO input is 1 MHz whichever source is used, which is
+    // what keeps N/P/Q — and therefore SYSCLK and the 48 MHz domain — identical
+    // between them. HSI is the default because it needs no board support; HSE is
+    // required for USB, because hal_usb_cdc_init refuses a PLL Q that did not
+    // come from a crystal rather than enumerate unreliably.
+#if VAIOS_CLOCK_HSE
+    const uint32_t src = HAL_CLOCK_SOURCE_HSE;
+    const uint32_t vco_div = VAIOS_CLOCK_HSE_HZ / 1000000u;
+#else
+    const uint32_t src = HAL_CLOCK_SOURCE_HSI;
+    const uint32_t vco_div = 16u; // the HSI is 16 MHz
+#endif
     hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL,
-                                  .pll = {.input_src = HAL_CLOCK_SOURCE_HSI,
-                                          .pll_m = 16,
+                                  .pll = {.input_src = (hal_clock_source_t)src,
+                                          .pll_m = (uint8_t)vco_div,
                                           .pll_n = 336,
                                           .pll_p = 4,
                                           .pll_q = 7}};
@@ -53,6 +70,19 @@ void v_port_hw_clock_init(uint8_t internal_clock_setup) {
   }
 #else
   (void)internal_clock_setup; /* QEMU boots with a usable clock already. */
+#endif
+}
+
+void v_port_hw_debug_init(void) {
+#if VAIOS_DEBUG_IN_SLEEP
+  // DBGMCU_CR: keep the debug interface clocked through WFI/WFE (DBG_SLEEP) and
+  // the stop/standby modes. Without this, the first time the idle task sleeps
+  // the debug AP loses bus access — the probe then reads a chip ID of 0 and any
+  // attempt to inspect RAM fails, which is exactly what happens when reading a
+  // log ring over SWD from a running system.
+  // Cortex-M4 debug block, ARMv7-M: 0xE0042004, bits 0..2.
+  volatile uint32_t *dbgmcu_cr = (volatile uint32_t *)0xE0042004u;
+  *dbgmcu_cr |= 0x7u; // DBG_SLEEP | DBG_STOP | DBG_STANDBY
 #endif
 }
 
@@ -83,13 +113,35 @@ void v_port_hw_systick_init(uint32_t period_us) {
 
 void v_port_hw_sched_irq_init(void) {
   /* SysTick below PendSV so a tick can pend a context switch that runs only
-   * once all higher-priority IRQs have drained. PendSV is the lowest. */
+   * once all higher-priority IRQs have drained. PendSV is the lowest.
+   *
+   * SVCall gets VAIOS_MAX_SYSCALL_PRIO_LEVEL — the same level the BASEPRI
+   * ceiling is derived from. It used to get nothing at all: SHPR2 kept the
+   * ARMv7-M reset value of 0, so a syscall ran at the highest priority in the
+   * machine for its whole duration. Nobody chose that. Leaving SVCall at 0 is
+   * conventional where SVC is a one-shot trampoline to start the first task,
+   * but here it is the entire syscall surface — the allocator, fd lookups, bus
+   * publishes — and at 0 every one of those masked even the IRQs that
+   * VAIOS_MAX_SYSCALL_PRIO_LEVEL promises are "never masked by a kernel
+   * critical section". A syscall was strictly better protected than any
+   * critical section in the kernel, which is not an invariant anything relies
+   * on. NavHAL's own hal_interrupt_enable docs make the same argument for why
+   * it refuses to leave peripheral IRQs at 0.
+   *
+   * At the ceiling instead: IRQs above it (levels 0..LEVEL-1, the band that
+   * must not call any vaios API) preempt a syscall as documented, and
+   * everything at or below it stays masked for the syscall's duration —
+   * exactly what ENTER_CRITICAL already guarantees. This does NOT loosen "a
+   * syscall must never wait on hardware": that follows from SysTick sitting at
+   * 14, below the ceiling, not from SVCall having been at 0. */
 #ifdef NAVHAL
   hal_interrupt_set_priority(SysTick_IRQn, 14);
   hal_interrupt_set_priority(PendSV_IRQn, 15);
+  hal_interrupt_set_priority(SVCall_IRQn, VAIOS_MAX_SYSCALL_PRIO_LEVEL);
 #else
   set_systick_interrupt_priority(14);
   set_pendsv_interrupt_priority(15);
+  set_svcall_interrupt_priority(VAIOS_MAX_SYSCALL_PRIO_LEVEL);
 #endif
 }
 
@@ -152,12 +204,39 @@ uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
 
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 #ifdef NAVHAL
+#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  // The console is the board's own USB port, not USART2. The point is a board
+  // whose debug probe has no VCP: the log needs no second cable and no probe.
+  // Nothing is transmitted until the host opens the port, so early output is
+  // lost unless VAIOS_CONSOLE_TO_KMSG is on to keep it in RAM — boot does NOT
+  // wait for a host here, because a flight build must not depend on one.
+  (void)baudrate;
+  (void)dma_tx_done_cb;
+  if (hal_usb_cdc_init() != HAL_OK) {
+    // No console to complain on — but with VAIOS_CONSOLE_TO_KMSG the ring keeps
+    // this, and it is readable over SWD. The usual cause is a PLL Q that did not
+    // come from a crystal: see VAIOS_CLOCK_HSE.
+    v_log(LOG_ERROR, "console: USB CDC init refused (needs a 48 MHz PLL Q from "
+                     "HSE — see VAIOS_CLOCK_HSE)");
+  }
+  return;
+#endif
+  // BOARD_CONSOLE_UART, not USART2: which UART carries the console is a board
+  // fact and the board already states it. The F767 answers UART3 and the qemu
+  // board UART1, so naming USART2 here was correct on this bench and wrong
+  // anywhere else.
   hal_uart_config_t uart_cfg = {.baudrate = baudrate};
-  hal_uart_init(HAL_UART_2, &uart_cfg);
-#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA) &&                     \
-    (BUFFERED_LOGGING == 1)
+  hal_uart_init(BOARD_CONSOLE_UART, &uart_cfg);
+#if VAIOS_PORT_CONSOLE_DMA
   if (dma_tx_done_cb) {
-    hal_interrupt_attach_callback(DMA1_Stream6_IRQn, dma_tx_done_cb);
+    // Ask the UART driver which stream it bound, rather than naming one. The
+    // answer is not a constant: several requests have a second stream (the
+    // driver notes USART6_TX is 6 or 7) and hal_uart_dma_set_binding can move
+    // it, so DMA1_Stream6_IRQn was right only for USART2 on an F4 that nothing
+    // had rebound. This follows whatever the console UART actually got.
+    hal_dma_binding_t tx;
+    if (hal_uart_dma_get_binding(BOARD_CONSOLE_UART, true, &tx) == HAL_OK)
+      hal_interrupt_attach_callback(tx.irq, dma_tx_done_cb);
   }
 #else
   (void)dma_tx_done_cb;
@@ -169,8 +248,12 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 }
 
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
-#if defined(NAVHAL) && defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
-  hal_uart_write_dma(HAL_UART_2, bytes, len);
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  // CDC has no DMA path of its own; the driver's write already copies into the
+  // peripheral FIFO, so the buffered logger's "DMA" write is a plain write.
+  hal_usb_cdc_write(bytes, (uint16_t)len);
+#elif VAIOS_PORT_CONSOLE_DMA
+  hal_uart_write_dma(BOARD_CONSOLE_UART, bytes, len);
 #else
   (void)bytes;
   (void)len;
@@ -179,7 +262,11 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
 
 void v_port_hw_console_write_string(const char *str) {
 #ifdef NAVHAL
-  hal_uart_write_string(HAL_UART_2, str);
+#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  hal_usb_cdc_write_string(str);
+#else
+  hal_uart_write_string(BOARD_CONSOLE_UART, str);
+#endif
 #else
   sh_write0(str);
 #endif
@@ -187,7 +274,14 @@ void v_port_hw_console_write_string(const char *str) {
 
 char v_port_hw_console_read_char(void) {
 #ifdef NAVHAL
-  return hal_uart_read_char(HAL_UART_2);
+#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  uint8_t c = 0;
+  while (hal_usb_cdc_read(&c, 1) == 0) // CDC reads never block; the console
+    ;                                  // contract here is blocking
+  return (char)c;
+#else
+  return hal_uart_read_char(BOARD_CONSOLE_UART);
+#endif
 #else
   return sh_readc();
 #endif
@@ -195,8 +289,8 @@ char v_port_hw_console_read_char(void) {
 
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 #ifdef NAVHAL
-  hal_interrupt_attach_callback(USART2_IRQn, rx_cb);
-  hal_interrupt_enable(USART2_IRQn);
+  hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ, rx_cb);
+  hal_interrupt_enable(BOARD_CONSOLE_UART_IRQ);
 #else
   /* QEMU semihosting has no async RX IRQ; the terminal polls instead. */
   (void)rx_cb;
@@ -205,20 +299,44 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 
 /* ---------------------------------------------------------------------------
  * SD/MMC (SDIO) — used by the VFS init path
+ *
+ * Gated on NAVHAL_HAS_SDIO, not on NAVHAL alone: common/hal_sdio.h wraps its
+ * whole body in that flag, so on a board whose config leaves the driver out
+ * (nucleo_f767zi, say) the types and enums below simply do not exist and this
+ * file will not compile. "A HAL is present" is not the same claim as "this
+ * board has an SD slot". Without the driver these behave exactly as they do on
+ * a backend with no SDIO at all — the VFS init path already treats a non-zero
+ * return as "no card here" and carries on.
  * ------------------------------------------------------------------------- */
 
 int v_port_hw_sdio_init(void) {
-#ifdef NAVHAL
-  /* clock_div is auto-calculated from the system clock. */
-  hal_sdio_config_t sd_config = {.clock_div = 118, .bus_width = 1};
+#if defined(NAVHAL) && NAVHAL_HAS_SDIO
+  /* clock_div is auto-calculated from the system clock. The width is a named
+   * value since NavHAL 0.3.8 — the peripheral's WIDBUS field is neither a lane
+   * count nor a flag, so the enum keeps that mapping in one place. */
+  hal_sdio_config_t sd_config = {.clock_div = 118,
+                                 .bus_width = VAIOS_SDIO_4BIT
+                                                  ? HAL_SDIO_BUS_WIDTH_4BIT
+                                                  : HAL_SDIO_BUS_WIDTH_1BIT};
   return (hal_sdio_init(&sd_config) == HAL_SDIO_OK) ? 0 : -1;
 #else
-  return -1; /* No SDIO model under QEMU. */
+  return -1; /* No SDIO driver on this target. */
+#endif
+}
+
+int v_port_hw_sdio_card_present(void) {
+#if defined(NAVHAL) && NAVHAL_HAS_SDIO
+  /* Reads the board's card-detect line (NavHAL 0.3.8). Before it existed, an
+   * empty slot and a card behind a broken data line both looked like a timeout —
+   * which is exactly the ambiguity that cost a day of debugging on this board. */
+  return hal_sdio_card_present() ? 1 : 0;
+#else
+  return 0;
 #endif
 }
 
 int v_port_hw_sdio_card_init(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_SDIO
   return (hal_sdio_card_init() == HAL_SDIO_OK) ? 0 : -1;
 #else
   return -1;
@@ -422,14 +540,21 @@ void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
  * ------------------------------------------------------------------------- */
 
 void v_port_hw_cycle_counter_init(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_CYCLE_COUNTER
   hal_cycle_counter_init();
 #endif
 }
 
 uint32_t v_port_hw_cycle_counter_read(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_CYCLE_COUNTER
   return hal_cycle_counter_get();
+#elif defined(NAVHAL)
+  /* The core has a DWT — every ARMv7E-M part does — but this config left the
+   * driver out (CONFIG_DRV_DWT), so there is nothing to read. hal_dwt.h still
+   * declares the functions and only the bodies are gated, so this used to
+   * compile and then fail at link. Zero means v_perf reports no cycles rather
+   * than a wrong number; turn CONFIG_DRV_DWT on to get real ones. */
+  return 0;
 #else
   /* No DWT CYCCNT on the QEMU model, but semihosting SYS_ELAPSED exposes the
    * emulator's virtual clock — a real, high-resolution monotonic source. Map

@@ -15,6 +15,8 @@
 uint8_t scheduler_running = 0;
 volatile uint32_t critical_nesting = 0;
 TCB *current_task = NULL;
+/* kernel/perf.c's v_perf_self_stats resolves the caller through this. */
+TCB *get_current_task(void) { return current_task; }
 TCB *idle_task = NULL;
 /* kernel/perf.c's per-task dump walks the scheduler lists via this; task.c
  * isn't linked into this utils-focused binary, so stub it to "no tasks". */

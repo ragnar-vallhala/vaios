@@ -10,7 +10,7 @@
  * SVC (yield, delay, semaphore, mutex, task exit), so PendSV_Handler,
  * SVCall_Handler, v_syscall_dispatch, init_task_stack and scheduler_start all
  * execute and register coverage. The last worker to finish dumps every TU's
- * .gcda over the UART (see portable/cortex-m4/gcov_dump.c).
+ * .gcda over the UART (see portable/armv7e-m/gcov_dump.c).
  *
  * Built under VAIOS_MPU_ENABLE + VAIOS_SYSCALL_SVC (privileged tasks — the
  * unprivileged-flip enforcement is exercised separately by mpu_user_demo /

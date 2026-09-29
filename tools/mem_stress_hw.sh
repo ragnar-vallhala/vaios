@@ -9,7 +9,7 @@
 # `probes` column is identical to the emulated run.
 #
 # For each backend it: builds NAVHAL firmware with -DVAIOS_HEAP_ALGO=<bk>,
-# objcopies to .bin, flashes via st-flash, then captures UART for a window
+# flashes via OpenOCD, then captures UART for a window
 # while the board reboots into the run.
 #
 # Usage:
@@ -22,6 +22,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/probe.sh
+. "$SCRIPT_DIR/lib/probe.sh"
 ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$ROOT"
 export srctree="${srctree:-$ROOT/extern/NavHAL}"
@@ -31,10 +33,11 @@ CAPTURE_SECS="${CAPTURE_SECS:-35}"
 BACKENDS=("$@")
 [ "${#BACKENDS[@]}" -eq 0 ] && BACKENDS=(SEGLIST TLSF)
 
-for t in arm-none-eabi-gcc arm-none-eabi-objcopy cmake st-flash st-info; do
+for t in arm-none-eabi-gcc cmake; do
   command -v "$t" >/dev/null || { echo "missing tool: $t" >&2; exit 2; }
 done
-st-info --probe 2>&1 | grep -qi 'stlink\|serial' || { echo "no ST-Link board" >&2; exit 2; }
+probe_require_tools || exit 2
+probe_present || { echo "no ST-Link at USB location $USB_LOC" >&2; exit 2; }
 [ -e "$PORT" ] || { echo "serial port $PORT absent" >&2; exit 2; }
 
 for bk in "${BACKENDS[@]}"; do
@@ -49,13 +52,11 @@ for bk in "${BACKENDS[@]}"; do
      || ! cmake --build "$bld" -j >"$bld.bld.log" 2>&1; then
     echo "  BUILD FAILED (see $bld.bld.log)"; tail -15 "$bld.bld.log"; exit 1
   fi
-  arm-none-eabi-objcopy -O binary "$bld/examples/main" "$bld/examples/main.bin"
-
   echo "  flashing ..."
+  probe_target_from_build "$bld"
   flashed=0
   for attempt in 1 2 3; do
-    if st-flash --connect-under-reset write "$bld/examples/main.bin" 0x8000000 \
-         >"/tmp/hw_${bk}_flash.log" 2>&1; then flashed=1; break; fi
+    if probe_flash "$bld/examples/main" "/tmp/hw_${bk}_flash.log"; then flashed=1; break; fi
     echo "    flash attempt $attempt failed; retrying ..."; sleep 1
   done
   if [ "$flashed" -ne 1 ]; then
@@ -70,7 +71,7 @@ for bk in "${BACKENDS[@]}"; do
   ( timeout "$CAPTURE_SECS" cat "$PORT" > "$out" 2>/dev/null ) &
   cap=$!
   sleep 1
-  st-flash reset >/dev/null 2>&1 || true
+  probe_reset || true
   wait "$cap" || true
 
   rows="$(grep -ac '@MS,' "$out" || true)"

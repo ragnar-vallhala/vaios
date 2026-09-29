@@ -23,7 +23,7 @@ done
 export srctree="$ROOT_DIR/extern/NavHAL"
 
 echo "=== building stage5_lifecycle (NAVHAL) ==="
-if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON \
+if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_CONSOLE_DMA=OFF \
        -DVAIOS_EXAMPLE=STAGE5_LIFECYCLE >/tmp/sitl_life_cfg.log 2>&1 \
    || ! cmake --build "$BUILD_DIR" -j >/tmp/sitl_life_bld.log 2>&1; then
   echo "FAIL: build (see /tmp/sitl_life_bld.log)"; tail -15 /tmp/sitl_life_bld.log

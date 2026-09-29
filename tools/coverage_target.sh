@@ -2,10 +2,10 @@
 # =============================================================================
 # tools/coverage_target.sh — on-target (Renode) gcov coverage for the ARM-only
 # sources that the host suite (tools/coverage.sh) structurally cannot reach:
-# portable/cortex-m4/{port,port_hw,semihosting,syscall}.c. Those are compiled
+# portable/armv7e-m/{port,port_hw,semihosting,syscall}.c. Those are compiled
 # only for the target, so host gcov reports them at 0% by omission.
 #
-# Flow (see docs and portable/cortex-m4/gcov_dump.c):
+# Flow (see docs and portable/armv7e-m/gcov_dump.c):
 #   1. build the on-target unit runner with -DVAIOS_GCOV=ON (--coverage)
 #   2. run it in Renode; at test end the image streams each TU's .gcda as
 #      framed base64 over the UART
@@ -35,6 +35,7 @@ export srctree="${srctree:-$ROOT_DIR/extern/NavHAL}"
 
 echo "=== building on-target coverage image (VAIOS_GCOV=ON) ==="
 if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON \
+       -DVAIOS_CONSOLE_DMA=OFF \
        -DVAIOS_EXAMPLE=UNIT_TESTS -DVAIOS_GCOV=ON >/tmp/covtgt_cfg.log 2>&1 \
    || ! cmake --build "$BUILD_DIR" -j"$(nproc)" >/tmp/covtgt_bld.log 2>&1; then
   echo "FAIL: build error"
@@ -88,9 +89,9 @@ cov_for() {
 }
 
 # The port subdir mirrors VAIOS_PORT; read it from the build's cache rather than
-# hardcoding cortex-m4, so this keeps working when another port is added.
+# hardcoding the port name, so this keeps working when another port is added.
 PORT="$(sed -n 's/^VAIOS_PORT:STRING=//p' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null)"
-PORT="${PORT:-cortex-m4}"
+PORT="${PORT:-armv7e-m}"
 PORT_DIR="$BUILD_DIR/portable/CMakeFiles/portable.dir/$PORT"
 echo
 echo "on-target coverage — ARM-only sources (host gcov cannot reach these):"
