@@ -1202,6 +1202,19 @@ int v_bus_wait(int fd, uint32_t ticks) {
   return v_semaphore_take(h->sub.notify, ticks);
 }
 
+int v_bus_fd_stats(int fd, v_bus_topic_stats_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_bus_stats, (uint32_t)fd, (uintptr_t)out);
+#endif
+  bus_handle_t *h = (bus_handle_t *)v_fd_obj(fd, &bus_fd_ops);
+  if (!h || !out)
+    return V_BUS_EINVAL;
+  // Either direction may ask: a writer wants `dropped`, a reader wants
+  // `evicted`, and neither reading tells you anything about another topic.
+  return v_bus_topic_stats(h->topic, out);
+}
+
 int v_bus_recv_wait(int fd, v_bus_rx_t *rx, uint32_t ticks) {
   // Composed of trapping calls, so it needs no trampoline of its own — and the
   // read is a separate step from the wait, which is what keeps the caller's

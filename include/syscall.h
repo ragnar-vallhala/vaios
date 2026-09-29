@@ -87,6 +87,9 @@ typedef enum {
                         //   peripheral itself: SVCall runs at priority 0 and
                         //   would mask the very completion it waits for. Same
                         //   split, same reason, as SYS_pbus_submit/wait/finish.
+  SYS_bus_stats = 47,   // this handle's topic counters (B7). Read-only and
+                        //   bounded, so no submit/wait/finish split: it copies
+                        //   a small struct under one critical section.
   SYS_MAX
 } v_syscall_t;
 

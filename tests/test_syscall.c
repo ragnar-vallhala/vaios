@@ -229,6 +229,12 @@ static void test_unpriv_bus_recv_bad_rx_buf_efault(void) {
   *rx = (v_bus_rx_t){.buf = (void *)BAD_PTR, .cap = 4};
   TEST_ASSERT_EQ(call(SYS_bus_recv, 3, base, 0), T_EFAULT);
 }
+/* Read-only, but it still writes a struct into the caller's memory, so the
+ * destination is checked like any other out-pointer. */
+static void test_unpriv_bus_stats_bad_out_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_bus_stats, 3, BAD_PTR, 0), T_EFAULT);
+}
 static void test_unpriv_bus_valid_passes(void) {
   uint32_t base = syscall_set_caller(BLOCK_SZ, 1);
   v_bus_rx_t *rx = (v_bus_rx_t *)(uintptr_t)base;
@@ -236,6 +242,8 @@ static void test_unpriv_bus_valid_passes(void) {
   /* Validation passes; the body then rejects fd 3 (no bus handle here). */
   TEST_ASSERT_EQ(call(SYS_bus_recv, 3, base, 0), V_BUS_EINVAL);
   TEST_ASSERT_EQ(call(SYS_bus_send, 3, base + 64, 4), V_BUS_EINVAL);
+  /* Same shape: validation passes, the body rejects fd 3. */
+  TEST_ASSERT_EQ(call(SYS_bus_stats, 3, base, 0), V_BUS_EINVAL);
   /* No bus is initialised in this binary, so a valid name finds no topic. */
   TEST_ASSERT_EQ(call(SYS_bus_open, base, V_BUS_RD, 0), V_BUS_EINVAL);
 }
@@ -461,6 +469,7 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_bus_send_bad_payload_efault),
     TEST_CASE(test_unpriv_bus_recv_bad_rx_efault),
     TEST_CASE(test_unpriv_bus_recv_bad_rx_buf_efault),
+    TEST_CASE(test_unpriv_bus_stats_bad_out_efault),
     TEST_CASE(test_unpriv_bus_valid_passes),
     TEST_CASE(test_unpriv_bus_zero_len_not_faulted),
     TEST_CASE(test_unpriv_ro_read_ok_write_refused),

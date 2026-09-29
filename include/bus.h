@@ -353,6 +353,17 @@ typedef struct {
 int v_bus_topic_stats(const v_bus_topic_t *topic, v_bus_topic_stats_t *out);
 int v_bus_stats(const v_bus_t *bus, v_bus_stats_t *out);
 
+// The same topic counters, addressed by an open handle instead of by a topic
+// pointer, so an unprivileged task can read them: a publisher that wants to
+// know whether the pool is refusing it, or a reader watching `evicted` climb,
+// should not have to be privileged to find out. Per-counter best-effort, as the
+// struct's note above says. VA_PASS, or V_BUS_EINVAL on a bad fd or NULL.
+//
+// There is deliberately no fd-addressed v_bus_stats: the bus-wide counters
+// describe a pool shared with every other topic, which is not this handle's to
+// see. A task gets what it holds a handle to.
+int v_bus_fd_stats(int fd, v_bus_topic_stats_t *out);
+
 // --- Pool state ---------------------------------------------------------------
 // Blocks in the shared pool (not counting topics' reserved stashes).
 uint16_t v_bus_free_blocks(const v_bus_t *bus);

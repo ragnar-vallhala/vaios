@@ -209,6 +209,12 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
       if (args[2] && !v_access_ok((const void *)(uintptr_t)args[1], args[2], 0))
         return V_EFAULT;
       break;
+    case SYS_bus_stats:
+      // args[1] is the struct the kernel fills in the caller's memory.
+      if (!v_access_ok((void *)(uintptr_t)args[1],
+                       sizeof(v_bus_topic_stats_t), 1))
+        return V_EFAULT;
+      break;
     case SYS_bus_recv: {
       // The rx block is written back (len/missed), and the payload buffer it
       // points at is written too.
@@ -375,6 +381,10 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
        args[1]=payload, args[2]=len. */
     return v_bus_send((int)args[0], (const void *)(uintptr_t)args[1],
                       (uint16_t)args[2]);
+  case SYS_bus_stats:
+    /* This handle's topic counters (B7). args[0]=fd, args[1]=out. */
+    return v_bus_fd_stats((int)args[0],
+                          (v_bus_topic_stats_t *)(uintptr_t)args[1]);
   case SYS_bus_wait:
     /* Park until this handle has a message (B6). args[0] = fd, args[1] = ticks.
        Blocking, deferred-result: nothing of the caller's is held while it
