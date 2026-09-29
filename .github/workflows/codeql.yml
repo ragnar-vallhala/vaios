@@ -29,6 +29,22 @@ name: codeql
 #    from the old category permanently — they must then be dismissed by hand.
 #    Renaming the bare "/language:c-cpp" to the per-target categories above
 #    stranded the two kernel/ipc.c alerts that 1285048 had already fixed.
+#
+#    It stranded the CONFIGURATION too, which is the half that kept showing.
+#    Code scanning remembers every tool+category it has seen on the default
+#    branch, so with nothing uploading "/language:c-cpp" any more, the aggregate
+#    "Code scanning results / CodeQL" check reported "1 configuration not found"
+#    on every run from the rename onward — NEUTRAL, so it blocked nothing, and
+#    it looked like a broken analysis rather than a bookkeeping leftover.
+#
+#    Cleared 2026-09-29 by deleting the three stranded analyses (one on dev
+#    holding 38 already-unreachable results, two on PR merge refs holding none):
+#      gh api -X DELETE \
+#        "repos/<owner>/<repo>/code-scanning/analyses/<id>?confirm_delete=true"
+#    Deleting an analysis deletes the results it holds, which is why this is
+#    only safe for a category nothing uploads to. The live categories and all
+#    40 open alerts were untouched. If a category is ever renamed again, expect
+#    to do this, and prefer not renaming.
 on:
   push:
     branches: [dev, stable]
