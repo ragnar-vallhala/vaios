@@ -335,8 +335,16 @@ if(NAVHAL AND NOT TARGET hal)
   endif()
   file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config" "${_nav_staged}")
 
+  # Through `cmake -E env`, not bare: NavHAL's Kconfig globs its arch tree with
+  # `source "src/arch/*/Kconfig.choice"`, which kconfiglib resolves against
+  # $srctree. Calling python directly made this step depend on the CALLER having
+  # exported srctree -- true of every build I ran by hand, and false of
+  # tools/run_hw_tests.sh, which configured fine before this block existed. A
+  # configure step should not need the shell to have been prepared for it.
   execute_process(
-    COMMAND ${Python3_EXECUTABLE}
+    COMMAND ${CMAKE_COMMAND} -E env
+            "srctree=${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL"
+            ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/tools/kconfig.py"
             --kconfig "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/Kconfig"
             --config "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config"
@@ -431,7 +439,19 @@ set(CMAKE_C_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS} -Wall -O2 -g -std=c11")
 if(PORT_IS_HOSTED)
   set(CMAKE_EXE_LINKER_FLAGS "")
 else()
-  set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs")
+  # -L as well as -T. Since NavHAL 0.3.3 a board's linker script carries only
+  # its MEMORY block and pulls the section layout in by name
+  # (`INCLUDE cortex-m4.ld`), which lives once under
+  # extern/NavHAL/src/arch/<ISA>/link/ instead of being copied into every board.
+  # ld resolves an INCLUDE against its -L path, so without this the link fails
+  # with "cannot open linker script file cortex-m4.ld".
+  #
+  # A NAVHAL=ON build gets this path anyway, from the hal target's interface
+  # flags. A NAVHAL=OFF one (QEMU/Renode, tools/test_qemu_smoke.sh) has no hal
+  # target to inherit from, so it needs it stated here. That path went unnoticed
+  # through the 0.3.2 -> 0.3.9 bump because it only bites when an EXECUTABLE is
+  # linked, and the NAVHAL=OFF checks build the `vaios` library target.
+  set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -L ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/arch/${VAIOS_PORT}/link -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs")
 endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT})

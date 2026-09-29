@@ -26,6 +26,12 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
+
+# NavHAL's Kconfig globs its arch tree relative to $srctree, so a NAVHAL=ON
+# configure needs it. Every renode_*.sh exports it and tools/vtest.sh exports it
+# for the suites it launches; this script did neither, so it worked under vtest
+# and failed when run directly. Set it here so it stands on its own.
+export srctree="${srctree:-$REPO_ROOT/extern/NavHAL}"
 # shellcheck source=lib/probe.sh
 . "$SCRIPT_DIR/lib/probe.sh"
 
@@ -78,13 +84,25 @@ if [ "$chipid" != "$EXPECT_CHIPID" ]; then
   exit 2
 fi
 
-# The probe's own USB serial port, unless PORT says otherwise.
+# The serial port belonging to THIS probe, unless PORT says otherwise.
+#
+# It used to take the first /dev/serial/by-id entry on the machine, which is only
+# right when exactly one board is attached. With two it silently flashed the
+# board at USB_LOC and read the OTHER one's console: every assertion then failed
+# as "missing", which looks like a dead image rather than a crossed cable.
+# The tty is a child of the probe's own USB device, so ask sysfs.
 if [ -z "$PORT" ]; then
-  link=$(ls /dev/serial/by-id/* 2>/dev/null | head -1)
-  PORT=$([ -n "$link" ] && readlink -f "$link" || echo /dev/ttyACM0)
+  tty=$(find /sys/bus/usb/devices/"$USB_LOC":*/ -maxdepth 2 -name 'ttyACM*' \
+        -printf '%f\n' 2>/dev/null | head -1)
+  [ -n "$tty" ] && PORT="/dev/$tty"
 fi
-if [ ! -e "$PORT" ]; then
-  echo "serial port $PORT not present (set PORT=... to override)" >&2
+if [ -z "$PORT" ] || [ ! -e "$PORT" ]; then
+  echo "no serial console on the probe at USB location $USB_LOC." >&2
+  echo "This suite reads the board's UART, so it needs one. The NAVIXSM-F401RE" >&2
+  echo "has no VCP at all (its ST-Link is a clone without one) -- for that board" >&2
+  echo "read the kernel log over SWD instead:" >&2
+  echo "    tools/pitl_run.sh --kmsg <build-dir>" >&2
+  echo "Otherwise point USB_LOC at a probe that has a VCP, or set PORT=..." >&2
   exit 2
 fi
 echo "board: probe at $USB_LOC (chipid $chipid) on $PORT"
