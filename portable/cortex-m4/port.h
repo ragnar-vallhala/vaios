@@ -213,6 +213,10 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
 
 // SD/MMC over SDIO (VFS backend). Return 0 on success, non-zero on failure.
 int v_port_hw_sdio_init(void);
+// Whether a card is in the slot, from the board's card-detect line. 0 when the
+// port has no SDIO or no card-detect. Lets an empty slot be reported as such
+// instead of as a failed card.
+int v_port_hw_sdio_card_present(void);
 int v_port_hw_sdio_card_init(void);
 
 // Cycle counter (DWT CYCCNT) backing the perf module.

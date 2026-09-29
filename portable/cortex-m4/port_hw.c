@@ -267,15 +267,27 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 
 int v_port_hw_sdio_init(void) {
 #ifdef NAVHAL
-  /* clock_div is auto-calculated from the system clock. */
-  // NavHAL reads bus_width as a flag, not a count: 1 means switch to the 4-bit
-  // bus, 0 means stay on DAT0 alone. Four lines need all four wired; a socket
-  // with only DAT0 initialises fine and then fails every data transfer.
+  /* clock_div is auto-calculated from the system clock. The width is a named
+   * value since NavHAL 0.3.8 — the peripheral's WIDBUS field is neither a lane
+   * count nor a flag, so the enum keeps that mapping in one place. */
   hal_sdio_config_t sd_config = {.clock_div = 118,
-                                 .bus_width = VAIOS_SDIO_4BIT ? 1 : 0};
+                                 .bus_width = VAIOS_SDIO_4BIT
+                                                  ? HAL_SDIO_BUS_WIDTH_4BIT
+                                                  : HAL_SDIO_BUS_WIDTH_1BIT};
   return (hal_sdio_init(&sd_config) == HAL_SDIO_OK) ? 0 : -1;
 #else
   return -1; /* No SDIO model under QEMU. */
+#endif
+}
+
+int v_port_hw_sdio_card_present(void) {
+#ifdef NAVHAL
+  /* Reads the board's card-detect line (NavHAL 0.3.8). Before it existed, an
+   * empty slot and a card behind a broken data line both looked like a timeout —
+   * which is exactly the ambiguity that cost a day of debugging on this board. */
+  return hal_sdio_card_present() ? 1 : 0;
+#else
+  return 0;
 #endif
 }
 

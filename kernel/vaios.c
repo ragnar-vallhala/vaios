@@ -64,6 +64,12 @@ void v_system_init(vaios_init_config_t *cfg) {
         ;
     }
 
+    if (!v_port_hw_sdio_card_present()) {
+      v_log(LOG_ERROR, "SD slot is empty (card-detect reads no card).");
+      while (1)
+        ;
+    }
+
     if (v_port_hw_sdio_card_init() != 0) {
       v_log(LOG_ERROR, "SD Card Handshake Failed!");
       while (1)

@@ -95,6 +95,7 @@ void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
 int v_port_hw_sdio_init(void);
+int v_port_hw_sdio_card_present(void);
 int v_port_hw_sdio_card_init(void);
 void v_port_hw_cycle_counter_init(void);
 uint32_t v_port_hw_cycle_counter_read(void);

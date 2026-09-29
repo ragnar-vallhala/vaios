@@ -410,10 +410,13 @@ config VAIOS_SDIO_4BIT
     default y
     help
       Drive the card over DAT0..DAT3 instead of DAT0 alone. Four times the
-      bandwidth, and it needs all four data lines wired and pulled up: a board or
-      socket with only DAT0 connected initialises fine (CMD is a separate line)
-      and then fails every data transfer, which looks like a dead card. Turn this
-      off to find out — if 1-bit works, the wiring is the problem.
+      bandwidth, and it needs all four data lines wired and pulled up: a board with
+      one of DAT1..DAT3 unwired, or an open solder joint on it, initialises fine
+      (CMD is a separate line) and then fails every data transfer, which looks like
+      a dead card. Turn this off to find out — if 1-bit works, the wiring is the
+      problem. A pull-up test is not enough to clear the wiring: a series resistor
+      can hold the MCU side of an open joint high. Check that each line goes LOW
+      during a transfer.
 
 config VAIOS_VFS_IO_SLOTS
     int "In-flight file requests a system may have (I/O worker)"

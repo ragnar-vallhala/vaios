@@ -85,6 +85,7 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 
 // --- SDIO: none. -------------------------------------------------------------
 int v_port_hw_sdio_init(void) { return -1; }
+int v_port_hw_sdio_card_present(void) { return 0; }
 int v_port_hw_sdio_card_init(void) { return -1; }
 
 // --- Cycle counter == a monotonic clock (microseconds, 32-bit wrap). ---------
