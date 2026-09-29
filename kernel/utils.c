@@ -854,7 +854,8 @@ void v_log(Log_Type type, const char *msg, ...) {
   while (1) {
     ENTER_CRITICAL();
     // Conservatively check if we have enough room (Prefix + MAX_MSG + Suffix)
-    if (log_buffer_storage_writing_head + prefix_len + LOG_MSG_MAX_LEN + 3 <=
+    // prefix + message + '~' + CRLF + NUL
+    if (log_buffer_storage_writing_head + prefix_len + LOG_MSG_MAX_LEN + 4 <=
         LOG_BUFFER_STORAGE_SIZE) {
       break;
     }
@@ -917,6 +918,12 @@ void v_log(Log_Type type, const char *msg, ...) {
                                log_buffer_storage_writing_head),
                       LOG_MSG_MAX_LEN, msg, args);
   log_buffer_storage_writing_head += msg_len;
+
+  // vaprint_fmt_buf stops one short of the buffer and says nothing, so a cut
+  // message reads as a whole one — "size 0x8000" arrives as "size 0x8", which
+  // is not obviously wrong, just wrong. Mark it.
+  if (msg_len == LOG_MSG_MAX_LEN - 1)
+    log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '~';
 
   // 3. Add suffix
   log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\r';

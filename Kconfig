@@ -506,7 +506,18 @@ config LOG_BUFFER_SIZE
     default 32
 config LOG_MSG_MAX_LEN
     int "Max log message length (bytes)"
-    default 64
+    default 96
+    help
+      The formatted message, NOT counting the "[INFO 42] " prefix (up to 47
+      bytes) or the CRLF. A longer message is cut and marked with a trailing
+      '~' — see v_log. 64 was too small for ordinary banners: the heap line
+      lost the last three digits of its size and read as a plausible wrong
+      number, which is worse than an obviously cut one.
+
+      This is not a RAM cost — it is reserved headroom inside
+      LOG_BUFFER_STORAGE_SIZE, so raising it only means fewer messages batch
+      into one flush. Keep 47 + this + 4 under LOG_BUFFER_STORAGE_SIZE or a
+      single message can never fit and v_log will spin.
 config LOG_BUFFER_STORAGE_SIZE
     int "Log buffer backing storage (bytes)"
     default 256

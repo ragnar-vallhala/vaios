@@ -92,8 +92,12 @@ static void test_pf_truncation_respects_buf_size(void) {
    * write past out_size — verify the trailing canary byte. */
   char buf[16];
   memset(buf, 0xAA, sizeof(buf));
-  print_fmt_buf(buf, 8, "%s", "abcdefghijk");
+  int n = print_fmt_buf(buf, 8, "%s", "abcdefghijk");
   TEST_ASSERT_EQ((unsigned char)buf[15], 0xAAu); /* untouched */
+  /* Truncation is silent: the return is the capped length, not the length the
+   * message wanted. v_log keys its '~' marker off exactly this, so if the
+   * formatter ever starts returning the would-be length, the marker breaks. */
+  TEST_ASSERT_EQ(n, 7);
 }
 
 static void test_pf_empty_format(void) {
