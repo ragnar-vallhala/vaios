@@ -56,7 +56,7 @@ endif()
 # design) and libc allocations the tests don't own; we care about OOB/UAF here,
 # not leaks. Applied to each test via set_tests_properties(... ENVIRONMENT ...),
 # which REPLACES the caller's ASAN_OPTIONS -- hence verify_asan_link_order=0
-# here: a runner that pipes us through stdbuf (extern/vtest) LD_PRELOADs a
+# here: a runner that pipes us through stdbuf (vtest) LD_PRELOADs a
 # library ahead of the ASan runtime, and without this every binary aborts with
 # "ASan runtime does not come first in initial library list". Harmless when the
 # tests are run directly, where nothing is preloaded.

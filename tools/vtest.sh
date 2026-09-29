@@ -14,26 +14,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Build and launch the vtest orchestrator (extern/vtest) over vaios's suites,
-# which are declared in ./vtest.conf.
+# Launch the installed vtest orchestrator over vaios's suites, which are declared
+# in ./vtest.conf.
 #
 #   tools/vtest.sh            interactive TUI
 #   tools/vtest.sh --run      everything, batch (host + gates + QEMU + SITL)
 #   tools/vtest.sh --list     the catalog, without running anything
 #
-# Rebuilds only when the source is newer than the binary. NAVHAL builds inside
-# the suites need $srctree, so export it here rather than in every suite.
+# vtest is a TOOL, not a dependency of vaios: this used to carry it as the
+# extern/vtest submodule and compile vtest.c into build/vtest on every run, which
+# meant vaios pinned a version of its own test runner and rebuilt it to look at
+# its own test list. It is installed like cmake or renode now, and a repo that
+# does not have it says so rather than building one.
+#
+# Skips rather than fails when it is absent, matching every other optional tool
+# here: CI does not run vtest at all (it runs the underlying scripts directly),
+# so a machine without it is a machine that simply cannot use this entry point.
+#
+# NAVHAL builds inside the suites need $srctree, so export it here rather than in
+# every suite.
 set -eu
 cd "$(dirname "$0")/.."
-BIN=build/vtest
 
-if [ ! -f extern/vtest/vtest.c ]; then
-  echo "extern/vtest is empty — run: git submodule update --init extern/vtest" >&2
-  exit 2
+if ! command -v vtest >/dev/null 2>&1; then
+  echo "SKIP: 'vtest' not installed."
+  echo "  Install it from https://github.com/ragnar-vallhala/vtest (it puts"
+  echo "  vtest and vtest-loc on PATH), or run the suites directly — vtest.conf"
+  echo "  names the script behind each one, and that is what CI invokes."
+  exit 0
 fi
-if [ ! -x "$BIN" ] || [ extern/vtest/vtest.c -nt "$BIN" ]; then
-  mkdir -p build
-  ${CC:-cc} -std=c11 -O2 -Wall -Wextra extern/vtest/vtest.c -o "$BIN"
-fi
+
 export srctree="${srctree:-$PWD/extern/NavHAL}"
-exec "$BIN" "$@"
+exec vtest "$@"
