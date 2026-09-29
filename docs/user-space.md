@@ -139,20 +139,61 @@ a validated syscall and a crash.
 This one is structural, and it is worth understanding before adding any syscall
 that touches hardware.
 
-`SVCall` runs at priority **0** on this port — the highest there is. While a
-syscall body executes, *every* interrupt is masked: SysTick (priority 14), and
-every peripheral IRQ (NavHAL defaults to 8). So a syscall that waits for an
-interrupt-driven completion waits forever:
+`SVCall` runs at level **7** on this port — `VAIOS_MAX_SYSCALL_PRIO_LEVEL`, the
+same level the `BASEPRI` ceiling is derived from. While a syscall body executes,
+every interrupt at or below that ceiling is masked: SysTick (level 14), PendSV
+(15), and every peripheral IRQ (NavHAL defaults enabled lines to 8). So a
+syscall that waits for an interrupt-driven completion waits forever:
 
 - the completion IRQ cannot be taken, so the flag it would clear never clears;
 - `wfi` never wakes, because the interrupt that would wake it is masked;
 - and any timeout measured in milliseconds never expires either, because the
   millisecond counter is driven by the masked SysTick.
 
-Observed on hardware with an SD transfer: `SHPR2=0`, `ICSR` VECTACTIVE = 11
-(inside SVCall), `BASEPRI=0`, `sd_busy=1`, and the tick frozen at 18 — the whole
-system stopped, including a higher-priority task that wanted nothing from the
+Observed on hardware with an SD transfer: `ICSR` VECTACTIVE = 11 (inside
+SVCall), `BASEPRI=0`, `sd_busy=1`, and the tick frozen at 18 — the whole system
+stopped, including a higher-priority task that wanted nothing from the
 filesystem.
+
+### Why level 7, and not the 0 it used to be
+
+Until this was reviewed, `SVCall` ran at priority 0, the highest in the machine.
+Nothing chose that: `v_port_hw_sched_irq_init` set SysTick and PendSV explicitly
+and never mentioned SVCall, so `SHPR2` kept the ARMv7-M reset value. The
+original hardware capture above recorded `SHPR2=0` as an observation, not a
+decision.
+
+Leaving SVCall at 0 is conventional where `SVC` is a one-shot trampoline that
+starts the first task and is never executed again — the handler is a few
+instructions and its priority barely matters. Here `SVC` is the entire syscall
+surface: the allocator, the fd tables, bus publishes. At 0, each of those ran
+strictly more protected than any critical section in the kernel, and that is not
+an invariant anything relies on — kernel state is held by `BASEPRI`, which masks
+to level 7.
+
+It also quietly broke a promise. `VAIOS_MAX_SYSCALL_PRIO_LEVEL` says IRQs more
+urgent than it "are never masked by a kernel critical section and MUST NOT call
+any vaios API". At SVCall 0, every syscall masked exactly those IRQs for its
+whole duration. NavHAL makes the same argument in the other direction: its
+`hal_interrupt_enable` refuses to leave a peripheral at 0 precisely because
+priority 0 is not maskable by an RTOS `BASEPRI` section.
+
+At the ceiling instead, the two agree. An IRQ in the zero-latency band (levels
+0..6) preempts a syscall, as documented — safe because that band is already
+forbidden from calling any vaios API. Everything at or below the ceiling stays
+masked for the syscall's duration, which is exactly what `ENTER_CRITICAL`
+guarantees anyway.
+
+**This does not loosen the rule above.** A syscall still cannot wait for a
+peripheral, because SysTick sits at 14 — below the ceiling, so still masked. The
+rule follows from the ceiling, never from SVCall having been at 0.
+
+Verified on an F401 by reading the register off the running board: `SHPR2` is
+`0x70000000` (level 7), `SHPR3` is `0xe0f00000` (SysTick 14, PendSV 15).
+
+Nothing occupies levels 0–6 today — NavHAL defaults enabled IRQs to 8 — so this
+was a latent contract violation rather than a live fault. That is also why it
+was cheap to correct now, before a sensor ISR wants the latency it was promised.
 
 **The pattern that works** is the one the peripheral bus and the bus/queue
 blocking paths already use: split the operation so the *waiting* happens in

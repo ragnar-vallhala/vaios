@@ -113,13 +113,35 @@ void v_port_hw_systick_init(uint32_t period_us) {
 
 void v_port_hw_sched_irq_init(void) {
   /* SysTick below PendSV so a tick can pend a context switch that runs only
-   * once all higher-priority IRQs have drained. PendSV is the lowest. */
+   * once all higher-priority IRQs have drained. PendSV is the lowest.
+   *
+   * SVCall gets VAIOS_MAX_SYSCALL_PRIO_LEVEL — the same level the BASEPRI
+   * ceiling is derived from. It used to get nothing at all: SHPR2 kept the
+   * ARMv7-M reset value of 0, so a syscall ran at the highest priority in the
+   * machine for its whole duration. Nobody chose that. Leaving SVCall at 0 is
+   * conventional where SVC is a one-shot trampoline to start the first task,
+   * but here it is the entire syscall surface — the allocator, fd lookups, bus
+   * publishes — and at 0 every one of those masked even the IRQs that
+   * VAIOS_MAX_SYSCALL_PRIO_LEVEL promises are "never masked by a kernel
+   * critical section". A syscall was strictly better protected than any
+   * critical section in the kernel, which is not an invariant anything relies
+   * on. NavHAL's own hal_interrupt_enable docs make the same argument for why
+   * it refuses to leave peripheral IRQs at 0.
+   *
+   * At the ceiling instead: IRQs above it (levels 0..LEVEL-1, the band that
+   * must not call any vaios API) preempt a syscall as documented, and
+   * everything at or below it stays masked for the syscall's duration —
+   * exactly what ENTER_CRITICAL already guarantees. This does NOT loosen "a
+   * syscall must never wait on hardware": that follows from SysTick sitting at
+   * 14, below the ceiling, not from SVCall having been at 0. */
 #ifdef NAVHAL
   hal_interrupt_set_priority(SysTick_IRQn, 14);
   hal_interrupt_set_priority(PendSV_IRQn, 15);
+  hal_interrupt_set_priority(SVCall_IRQn, VAIOS_MAX_SYSCALL_PRIO_LEVEL);
 #else
   set_systick_interrupt_priority(14);
   set_pendsv_interrupt_priority(15);
+  set_svcall_interrupt_priority(VAIOS_MAX_SYSCALL_PRIO_LEVEL);
 #endif
 }
 
