@@ -188,8 +188,10 @@ guarantees anyway.
 peripheral, because SysTick sits at 14 — below the ceiling, so still masked. The
 rule follows from the ceiling, never from SVCall having been at 0.
 
-Verified on an F401 by reading the register off the running board: `SHPR2` is
-`0x70000000` (level 7), `SHPR3` is `0xe0f00000` (SysTick 14, PendSV 15).
+Verified by reading the registers off both running boards — an F401 (Cortex-M4)
+and a Nucleo-F767ZI (Cortex-M7): `SHPR2` is `0x70000000` (level 7) and `SHPR3`
+is `0xe0f00000` (SysTick 14, PendSV 15) on each. The two share one port, so the
+same `v_port_hw_sched_irq_init` sets both.
 
 Nothing occupies levels 0–6 today — NavHAL defaults enabled IRQs to 8 — so this
 was a latent contract violation rather than a live fault. That is also why it
