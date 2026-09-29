@@ -77,8 +77,9 @@ ST-Link clone has no VCP:
 
 ```sh
 tools/pitl_run.sh --kmsg build_bench 12     # flash + run
-st-util --no-reset -p 4242 &
-gdb-multiarch -batch -ex 'target extended-remote :4242' -ex interrupt \
+openocd -f interface/stlink.cfg -c 'adapter usb location 3-2' \
+        -f target/stm32f4x.cfg -c init &
+gdb-multiarch -batch -ex 'target extended-remote :3333' -ex interrupt \
   -ex 'print bus_bench_cycles' build_bench/examples/benchmark/benchmark
 ```
 

@@ -53,8 +53,8 @@ mkdir build && cd build
 cmake -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=FIFO_TEST ..
 cmake --build .
 
-arm-none-eabi-objcopy -O binary examples/main examples/main.bin
-st-flash --connect-under-reset write examples/main.bin 0x8000000
+openocd -f interface/stlink.cfg -c 'adapter usb location 3-2' \
+        -f target/stm32f4x.cfg -c 'program examples/main verify reset exit'
 ```
 
 UART output (USART2, 115200 8N1) appears on the Nucleo's ST-Link VCP at
@@ -103,7 +103,7 @@ Three layers of tests, each runnable from one script.
 | Layer | Command | What it does |
 | ----- | ------- | ------------ |
 | Host unit tests | `bash tools/run_tests.sh` | Builds and runs the host-native suites under `tests/` with `gcc` (no toolchain, no board). Two binaries: `vaios_tests` (memory, task, scheduler, IPC, structure, VFS, vaios, terminal) and `vaios_utils_tests` (the formatter, isolated to avoid symbol collisions). |
-| Hardware regression | `bash tools/run_hw_tests.sh` | Builds and flashes a curated set of examples (`FIFO_TEST`, `PRIORITY_INVERSION`, `IPC_TEST`) to a connected Nucleo, captures UART, and greps for required PASS / completion lines. Requires the ARM toolchain, `st-flash`, and `/dev/ttyACM0` (override with `PORT=...`). |
+| Hardware regression | `bash tools/run_hw_tests.sh` | Builds and flashes a curated set of examples (`FIFO_TEST`, `PRIORITY_INVERSION`, `IPC_TEST`) to a connected Nucleo, captures UART, and greps for required PASS / completion lines. Requires the ARM toolchain, `openocd`, and `/dev/ttyACM0` (override with `PORT=...`). Picks the probe by USB port, `USB_LOC=3-2` by default — the ST-Links here share a serial. |
 | CI | `.github/workflows/ci.yml` | Runs the host suite on every push and PR (Ubuntu runner). NavHAL is not required — the host build stubs the relevant headers. |
 
 Exit codes are non-zero on any failure, so all three are CI-friendly.

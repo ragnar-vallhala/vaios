@@ -8,7 +8,7 @@
 #   qemu      Context-switch smoke in QEMU     tools/test_qemu_smoke.sh  (arm-gcc, qemu)
 #   coverage  Host gcov line/branch report     tools/coverage.sh         (gcov)
 #   sitl      On-target unit tests in Renode   build + Renode            (arm-gcc, renode)
-#   pitl      Hardware regression on a board   tools/run_hw_tests.sh     (st-flash + board)
+#   pitl      Hardware regression on a board   tools/run_hw_tests.sh     (openocd + board)
 #
 # Usage:
 #   tools/run_all_tests.sh                 # every layer whose tools are present
@@ -21,6 +21,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/probe.sh
+. "$SCRIPT_DIR/lib/probe.sh"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 PORT="${PORT:-/dev/ttyACM0}"
 CAPTURE_SECS="${CAPTURE_SECS:-10}"
@@ -160,16 +162,14 @@ run_sitl() {
 # ---------------------------------------------------------------- pitl --------
 run_pitl() {
   header "PITL — hardware regression on a connected board"
-  if ! have arm-none-eabi-gcc || ! have st-flash || ! have st-info; then
-    STATUS[pitl]=SKIP; DETAIL[pitl]="no arm toolchain / st-tools"; return
+  if ! have arm-none-eabi-gcc || ! have openocd; then
+    STATUS[pitl]=SKIP; DETAIL[pitl]="no arm toolchain / openocd"; return
   fi
-  # Cheap, side-effect-free gate first: no serial port means no board to talk
-  # to, so skip before poking the ST-Link with `st-info --probe`.
   if [ ! -e "$PORT" ]; then
     STATUS[pitl]=SKIP; DETAIL[pitl]="serial port $PORT absent (set PORT=...)"; return
   fi
-  if ! st-info --probe 2>/dev/null | grep -qi 'stlink\|serial'; then
-    STATUS[pitl]=SKIP; DETAIL[pitl]="no ST-Link board detected"; return
+  if ! probe_present; then
+    STATUS[pitl]=SKIP; DETAIL[pitl]="no ST-Link at USB location $USB_LOC"; return
   fi
   if CAPTURE_SECS="$CAPTURE_SECS" PORT="$PORT" bash "$SCRIPT_DIR/run_hw_tests.sh"; then
     STATUS[pitl]=PASS

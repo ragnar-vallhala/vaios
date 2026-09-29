@@ -11,20 +11,26 @@
 #   tools/pitl_run.sh --kmsg <build-dir> [run-secs]   read the log over SWD
 #
 # Environment:
-#   SERIAL=<stlink serial>   which probe (required only with several attached)
+#   USB_LOC=<bus>-<port>     which probe; default 3-2. See tools/lib/probe.sh —
+#                            the probes here share a serial, so the USB port is
+#                            the only way to name one.
 #   PORT=<tty>               where the board's UART lands; default: the single
 #                            /dev/serial/by-id entry, else /dev/ttyACM0
 #
 # --kmsg needs no serial port at all: build with VAIOS_CONSOLE_TO_KMSG=y, let the
-# firmware run, then read the kernel log ring out of RAM over SWD (st-util +
-# gdb). That is the mode for a board whose ST-Link clone has no VCP. It does not
-# disturb timing — unlike semihosting, which halts the core on every write and
-# would wreck any cadence measurement.
+# firmware run, then read the kernel log ring out of RAM over SWD. That is the
+# mode for a board whose ST-Link clone has no VCP. It does not disturb timing —
+# unlike semihosting, which halts the core on every write and would wreck any
+# cadence measurement.
 #
 # Exit: 0 if it flashed and captured anything, 1 otherwise. What the output
 # MEANS is the caller's business — this script only gets it off the board.
 # =============================================================================
 set -uo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+# shellcheck source=lib/probe.sh
+. "$SCRIPT_DIR/lib/probe.sh"
 
 KMSG=0
 if [ "${1:-}" = "--kmsg" ]; then KMSG=1; shift; fi
@@ -37,101 +43,43 @@ ELF="$BUILD_DIR/examples/main"
 [ -f "$ELF" ] || ELF="$BUILD_DIR/examples/benchmark/benchmark"
 [ -f "$ELF" ] || { echo "no firmware in $BUILD_DIR (examples/main or examples/benchmark/benchmark)" >&2; exit 2; }
 
-for bin in arm-none-eabi-objcopy st-flash; do
-  command -v "$bin" >/dev/null || { echo "missing required tool: $bin" >&2; exit 2; }
-done
-
-# One probe attached: infer it. Several: SERIAL must say which, because st-flash
-# would otherwise write this firmware to whichever MCU it enumerates first.
-SERIAL="${SERIAL:-}"
-if [ -z "$SERIAL" ]; then
-  mapfile -t serials < <(st-info --probe 2>/dev/null | awk '/serial:/{print $2}')
-  if [ "${#serials[@]}" -eq 1 ]; then
-    SERIAL="${serials[0]}"
-  else
-    echo "found ${#serials[@]} probes; set SERIAL=<one of>:" >&2
-    printf '  %s\n' "${serials[@]}" >&2
-    exit 2
-  fi
-fi
-
-# stlink 1.8.0 cannot match --serial against a clone probe whose USB serial
-# descriptor holds raw bytes instead of ASCII hex: it reports "Couldn't find any
-# ST-Link devices", which reads like nothing is attached. STLINK_DEVICE=<bus>:<addr>
-# does work — but the address changes every time the board re-enumerates, which a
-# flash-and-reset cycle does. So resolve the serial to a fresh address from sysfs
-# before every st-* call. Passive: nothing is reset to find out.
-resolve_probe() {
-  [ -n "${STLINK_DEVICE_FIXED:-}" ] && { export STLINK_DEVICE="$STLINK_DEVICE_FIXED"; return 0; }
-  [ -n "$SERIAL" ] || return 0
-  local addr
-  addr=$(python3 - "$SERIAL" <<'PYEOF'
-import glob, sys
-want = sys.argv[1].strip().upper()
-for d in glob.glob('/sys/bus/usb/devices/*/'):
-    try:
-        if open(d + 'idVendor').read().strip() != '0483':
-            continue
-        # sysfs decodes the descriptor as UTF-8; latin-1 gets the raw bytes back
-        raw = open(d + 'serial', 'rb').read().decode('utf-8').strip().encode('latin-1')
-        if raw.hex().upper() == want:
-            print("%s:%s" % (open(d + 'busnum').read().strip(),
-                             open(d + 'devnum').read().strip()))
-            break
-    except (OSError, UnicodeError):
-        continue
-PYEOF
-)
-  [ -n "$addr" ] || { echo "probe $SERIAL is not attached" >&2; return 1; }
-  export STLINK_DEVICE="$addr"
+probe_require_tools || exit 2
+probe_present || {
+  echo "no ST-Link at USB location $USB_LOC." >&2
+  echo "Set USB_LOC=<bus>-<port>; the 0483 entries under /sys/bus/usb/devices/ list them." >&2
+  exit 2
 }
-[ -n "${STLINK_DEVICE:-}" ] && STLINK_DEVICE_FIXED="$STLINK_DEVICE"
-resolve_probe || exit 2
 
-echo "=== flashing $(basename "$BUILD_DIR") -> probe $SERIAL, reading ${PORT:-SWD log ring} ==="
-arm-none-eabi-objcopy -O binary "$ELF" "$ELF.bin" || exit 1
+echo "=== flashing $(basename "$BUILD_DIR") -> probe at $USB_LOC, reading ${PORT:-SWD log ring} ==="
 
 # The previous firmware may have parked the MCU in WFI or reconfigured the debug
-# pins, which fails the first SWD handshake. --connect-under-reset fixes that
-# when NRST is wired; on a clone probe where it is not, --hot-plug attaches to
-# the running core instead. Try both before asking for a finger on the button.
+# pins, which fails the first SWD handshake. A second attempt after a pause
+# usually lands; past that it needs a finger on the reset button.
 flashed=0
-for mode in --connect-under-reset --hot-plug --connect-under-reset ""; do
-  resolve_probe || exit 1
-  if st-flash $mode write "$ELF.bin" 0x8000000 \
-       >/tmp/pitl_flash.log 2>&1; then
-    flashed=1
-    [ -n "$mode" ] && echo "    (attached with ${mode})"
-    break
-  fi
+for attempt in 1 2 3; do
+  if probe_flash "$ELF" /tmp/pitl_flash.log; then flashed=1; break; fi
   sleep 1
 done
 if [ "$flashed" -ne 1 ]; then
   echo "FLASH FAILED — last lines:" >&2
-  tail -5 /tmp/pitl_flash.log >&2
+  tail -8 /tmp/pitl_flash.log >&2
   echo "Recovery: hold the board's reset button, re-run, release when writing starts." >&2
   exit 1
 fi
 
 if [ "$KMSG" -eq 1 ]; then
-  command -v st-util >/dev/null && command -v gdb-multiarch >/dev/null || {
-    echo "--kmsg needs st-util and gdb-multiarch" >&2; exit 2; }
-  { resolve_probe && st-flash reset >/dev/null 2>&1; } || true
+  command -v gdb-multiarch >/dev/null || { echo "--kmsg needs gdb-multiarch" >&2; exit 2; }
   echo "running for ${CAPTURE_SECS}s, then reading the log ring over SWD ..."
   sleep "$CAPTURE_SECS"
 
-  # --no-reset is essential: st-util resets the target on connection by default,
-  # which clears the very RAM ring we came to read.
-  resolve_probe || exit 1
-  st-util --no-reset -p 4242 >/tmp/pitl_stutil.log 2>&1 &
-  stutil=$!
+  oocd=$(probe_gdbserver /tmp/pitl_openocd.log)
   sleep 2
   # Halt, then read the ring symbolically: head/tail are absolute counters, so
   # the live text is [tail, head) modulo the ring size.
   gdb-multiarch -batch -nx \
     -ex "set pagination off" \
     -ex "set confirm off" \
-    -ex "target extended-remote :4242" \
+    -ex "target extended-remote :$GDB_PORT" \
     -ex "interrupt" \
     -ex "printf \"KMSG_LIVE %u\\n\", systick_count" \
     -ex "printf \"KMSG_HEAD %u\\n\", kmsg_head" \
@@ -139,7 +87,7 @@ if [ "$KMSG" -eq 1 ]; then
     -ex "printf \"KMSG_SIZE %u\\n\", (unsigned)sizeof(kmsg_ring)" \
     -ex "dump binary value /tmp/pitl_kmsg.bin kmsg_ring" \
     "$ELF" >/tmp/pitl_gdb.log 2>&1
-  kill $stutil 2>/dev/null; wait $stutil 2>/dev/null
+  kill "$oocd" 2>/dev/null; wait "$oocd" 2>/dev/null
   head=$(awk '/^KMSG_HEAD/{print $2}' /tmp/pitl_gdb.log)
   tail_=$(awk '/^KMSG_TAIL/{print $2}' /tmp/pitl_gdb.log)
   size=$(awk '/^KMSG_SIZE/{print $2}' /tmp/pitl_gdb.log)
@@ -204,7 +152,7 @@ log="$(mktemp)"
 ( timeout "$CAPTURE_SECS" cat "$PORT" > "$log" 2>/dev/null ) &
 cap=$!
 sleep 1
-{ resolve_probe && st-flash reset >/dev/null 2>&1; } || true
+probe_reset || true
 wait "$cap" || true
 
 echo "---- captured UART ($CAPTURE_SECS s) ----"
