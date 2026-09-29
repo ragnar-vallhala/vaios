@@ -1,7 +1,7 @@
 # Nav Configuration File
 [project]
 name = "vaios"
-version = "0.1.0"
+version = "0.2.0"
 # vaios builds a static archive (libvaios) that nav firmware projects depend on.
 # Its CMake target is named `vaios`, matching this name so nav links it directly.
 type = "library"
