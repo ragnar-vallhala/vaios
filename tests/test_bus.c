@@ -1265,12 +1265,15 @@ static uint16_t cb_last_len;
 static uint8_t cb_last_first;
 static void *cb_last_arg;
 
-static void cb_record(const void *payload, uint16_t len, uint32_t missed,
+/* `msg`, not `payload`: this file already has a file-scope `payload` array for
+ * the all-or-nothing cases, and a parameter shadowing it reads as if the two
+ * were related. */
+static void cb_record(const void *msg, uint16_t len, uint32_t missed,
                       void *arg) {
   (void)missed;
   cb_calls++;
   cb_last_len = len;
-  cb_last_first = ((const uint8_t *)payload)[0];
+  cb_last_first = ((const uint8_t *)msg)[0];
   cb_last_arg = arg;
 }
 

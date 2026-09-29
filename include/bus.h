@@ -349,10 +349,17 @@ int v_bus_snapshot_stop(v_bus_snap_t *snap);
 typedef void (*v_bus_cb_t)(const void *payload, uint16_t len, uint32_t missed,
                            void *arg);
 
-// Subscribe `cb` to `topic`, delivering into `buf` (`cap` bytes) — caller
-// storage, so this costs no heap and the buffer's lifetime is yours. Returns a
-// slot id (>= 0) to pass to v_bus_unsubscribe_cb, or V_BUS_EINVAL /
-// V_BUS_EBUSY (no free slot: VAIOS_BUS_MAX_CALLBACKS).
+// Subscribe `cb` to `topic`, delivering into `buf` (`cap` bytes). Returns a slot
+// id (>= 0) to pass to v_bus_unsubscribe_cb, or V_BUS_EINVAL / V_BUS_EBUSY (no
+// free slot: VAIOS_BUS_MAX_CALLBACKS).
+//
+// `buf` IS CALLER STORAGE AND MUST OUTLIVE THE SUBSCRIPTION. That is what keeps
+// this off the heap, and it is the same contract v_bus_subscribe already has for
+// the v_bus_sub_t you hand it. A static or a long-lived allocation is fine; a
+// local in a function that then returns is not — the worker would write into a
+// dead frame from another context, at a time unrelated to the mistake, which is
+// about the worst debugging shape there is. Unsubscribe before the storage goes
+// away.
 //
 // `cap` must fit the largest message the topic publishes. A message too big to
 // copy out stays unread by design (v_bus_pop leaves it), so an undersized
