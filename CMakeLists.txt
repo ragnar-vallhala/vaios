@@ -410,6 +410,18 @@ if(NAVHAL AND NOT PORT_IS_HOSTED AND CMAKE_SYSTEM_PROCESSOR)
     set(PORT_ARCH_FLAGS "-mcpu=${CMAKE_SYSTEM_PROCESSOR} -mthumb")
 endif()
 
+# The buffered console's DMA path. ON everywhere real; the SITL runners turn it
+# off because Renode's generic STM32F4 platform wires a DMA request line for
+# spi2 only, so a UART TX DMA transfer is never triggered there and the console
+# goes silent. Off, the logger falls back to the blocking write -- the same path
+# it used before the DMA gate was fixed, so SITL still tests the kernel, just
+# not that transport.
+option(VAIOS_CONSOLE_DMA "Use UART DMA for the buffered console" ON)
+if(NOT VAIOS_CONSOLE_DMA)
+  add_compile_definitions(VAIOS_PORT_CONSOLE_DMA=0)
+  message(STATUS "VAIOS: buffered console on the blocking write (DMA off)")
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_ASM_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS}")
 set(CMAKE_C_FLAGS "${PORT_ARCH_FLAGS} ${FPU_FLAGS} -Wall -O2 -g -std=c11")

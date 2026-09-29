@@ -220,12 +220,19 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
  * wrong. NAVHAL_HAS_UART_DMA is the flag NavHAL actually generates.
  *
  * The CDC route is excluded: hal_usb_cdc_write copies into the peripheral FIFO
- * and returns, so there is no completion callback to wait for. */
+ * and returns, so there is no completion callback to wait for.
+ *
+ * -DVAIOS_CONSOLE_DMA=OFF forces this to 0. That exists for Renode: its generic
+ * STM32F4 platform wires a DMA request line for spi2 only, so a UART TX DMA
+ * transfer is never triggered there and the console goes silent. The SITL
+ * runners pass it; on hardware the DMA path is the one that runs. */
+#ifndef VAIOS_PORT_CONSOLE_DMA
 #if defined(NAVHAL) && NAVHAL_HAS_UART_DMA &&                                  \
     !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC && (BUFFERED_LOGGING == 1)
 #define VAIOS_PORT_CONSOLE_DMA 1
 #else
 #define VAIOS_PORT_CONSOLE_DMA 0
+#endif
 #endif
 
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);

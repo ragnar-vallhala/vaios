@@ -22,7 +22,7 @@ export srctree="$ROOT_DIR/extern/NavHAL"
 
 echo "=== building flight_user (NAVHAL) ==="
 mkdir -p "$BUILD_DIR"
-if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON \
+if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_CONSOLE_DMA=OFF \
        -DVAIOS_EXAMPLE=FLIGHT_USER >"$BUILD_DIR/cfg.log" 2>&1 \
    || ! cmake --build "$BUILD_DIR" -j >"$BUILD_DIR/bld.log" 2>&1; then
   echo "FAIL: build (see $BUILD_DIR/bld.log)"; tail -15 "$BUILD_DIR/bld.log"
