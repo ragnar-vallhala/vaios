@@ -140,7 +140,7 @@ fi
 if [ ! -e "$PORT" ]; then
   echo "no serial port appeared (looked for /dev/serial/by-id/*, then $PORT)." >&2
   echo "A USART2 console needs a VCP or a USB-TTL adapter; a USB-CDC console" >&2
-  echo "needs VAIOS_CONSOLE_USB_CDC=y and DRV_USB_CDC=y. Or use --kmsg." >&2
+  echo "needs CONFIG_CONSOLE_ROUTE_CDC=y and DRV_USB_CDC=y. Or use --kmsg." >&2
   exit 1
 fi
 echo "    reading $PORT"

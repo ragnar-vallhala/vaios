@@ -7,8 +7,10 @@
 
 A small preemptive real-time operating system for ARM Cortex-M4, targeted at
 the hard-real-time workloads of a 1 kHz flight controller. Built on top of
-[NavHAL](https://github.com/ragnar-vallhala/NavHAL) for the STM32F4 hardware
-abstraction layer; reference board is the Nucleo-F401RE.
+[NavHAL](https://github.com/ragnar-vallhala/NavHAL) for the hardware abstraction
+layer. The bench board is the NAVIXSM-F401RE (Cortex-M4); the port is ARMv7E-M,
+so a Cortex-M7 board such as the Nucleo-F767ZI builds from the same sources —
+pick one with `-DNAVHAL_CONFIG_FILE=extern/NavHAL/cmake/defconfigs/<board>.defconfig`.
 
 ## Features
 

@@ -182,7 +182,7 @@ uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
 
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 #ifdef NAVHAL
-#if VAIOS_CONSOLE_USB_CDC
+#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   // The console is the board's own USB port, not USART2. The point is a board
   // whose debug probe has no VCP: the log needs no second cable and no probe.
   // Nothing is transmitted until the host opens the port, so early output is
@@ -224,7 +224,7 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 }
 
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
-#if defined(NAVHAL) && VAIOS_CONSOLE_USB_CDC
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   // CDC has no DMA path of its own; the driver's write already copies into the
   // peripheral FIFO, so the buffered logger's "DMA" write is a plain write.
   hal_usb_cdc_write(bytes, (uint16_t)len);
@@ -238,7 +238,7 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
 
 void v_port_hw_console_write_string(const char *str) {
 #ifdef NAVHAL
-#if VAIOS_CONSOLE_USB_CDC
+#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   hal_usb_cdc_write_string(str);
 #else
   hal_uart_write_string(BOARD_CONSOLE_UART, str);
@@ -250,7 +250,7 @@ void v_port_hw_console_write_string(const char *str) {
 
 char v_port_hw_console_read_char(void) {
 #ifdef NAVHAL
-#if VAIOS_CONSOLE_USB_CDC
+#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   uint8_t c = 0;
   while (hal_usb_cdc_read(&c, 1) == 0) // CDC reads never block; the console
     ;                                  // contract here is blocking

@@ -340,7 +340,7 @@ config VAIOS_CLOCK_HSE
       USB: hal_usb_cdc_init refuses to run on anything but a 48 MHz PLL Q derived
       from a crystal, rather than enumerate unreliably. Turn this on for boards
       that have an HSE source (a fitted crystal, or the ST-Link's 8 MHz MCO in
-      bypass), which is what VAIOS_CONSOLE_USB_CDC needs.
+      bypass), which is what NavHAL's CDC console route needs.
 
       The PLL M divider is derived from VAIOS_CLOCK_HSE_HZ so the VCO input lands
       at 1 MHz, matching the HSI path (16 MHz / 16) — so N/P/Q, and therefore
@@ -355,18 +355,16 @@ config VAIOS_CLOCK_HSE_HZ
       8 MHz on an ST Nucleo (MCO from the ST-Link), 8 or 25 MHz on most custom
       boards.
 
-config VAIOS_CONSOLE_USB_CDC
-    bool "Console on USB CDC instead of USART2 (NavHAL builds)"
-    default n
-    help
-      Route console output and input to the board's own USB port
-      (hal_usb_cdc_*, which needs NAVHAL_CONFIG_DRV_USB_CDC and a PLL Q of
-      exactly 48 MHz) instead of USART2. For a board whose debug probe has no
-      virtual COM port, this is the log channel that needs no extra cable.
-
-      A CDC port transmits nothing until the host opens it, so output before
-      that is lost; pair this with VAIOS_CONSOLE_TO_KMSG to keep early boot
-      output in RAM. Boot never waits for a host.
+# Where the console goes is NOT a vaios setting. NavHAL owns that choice
+# (CONSOLE_ROUTE_UART / CONSOLE_ROUTE_CDC under "Console"), because the console
+# is a board property and NavHAL is where boards are described. vaios used to
+# carry VAIOS_CONSOLE_USB_CDC alongside it: two switches for one decision, both
+# in this same menuconfig, with nothing making them agree — set NavHAL's to CDC
+# and vaios still wrote to the UART. port_hw.c now reads NavHAL's flag.
+#
+# vaios keeps its own dispatch rather than calling hal_console_*, because the
+# buffered logger needs the DMA write that hal_console does not offer. Two
+# implementations of one decision is fine; two decisions was the bug.
 
 config VAIOS_CONSOLE_TO_KMSG
     bool "Mirror console writes into the /dev/kmsg ring"
