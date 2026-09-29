@@ -15,15 +15,48 @@
 #   USB_LOC=<bus>-<port>   which probe; default 3-2 (the NAVIXSM-F401RE).
 #                          `lsusb -t`, or the idVendor 0483 entry under
 #                          /sys/bus/usb/devices/, gives the location.
-#   OPENOCD_TARGET=<cfg>   target script; default target/stm32f4x.cfg
+#   OPENOCD_TARGET=<cfg>   target script. Default target/stm32f4x.cfg, but a
+#                          script that knows its build dir should call
+#                          probe_target_from_build to follow the family it was
+#                          configured for. Setting this pins it.
 #   OPENOCD_IFACE=<cfg>    interface script; default interface/stlink.cfg
 #   GDB_PORT=<n>           gdb server port for probe_gdbserver; default 3333
 # =============================================================================
 
 USB_LOC="${USB_LOC:-3-2}"
 OPENOCD_IFACE="${OPENOCD_IFACE:-interface/stlink.cfg}"
+# Remember whether the caller pinned the target before defaulting it, so
+# probe_target_from_build can tell "not set" from "deliberately chosen".
+_PROBE_TARGET_PINNED=${OPENOCD_TARGET:+1}
 OPENOCD_TARGET="${OPENOCD_TARGET:-target/stm32f4x.cfg}"
 GDB_PORT="${GDB_PORT:-3333}"
+
+# probe_target_from_build <build-dir> — point OpenOCD at the family this build
+# was configured for, instead of the F4 default.
+#
+# NavHAL's Kconfig already resolved board -> family and wrote it to the build's
+# config.cmake, and OpenOCD names its STM32 scripts target/<family>x.cfg. So
+# this is a derivation, not a table of boards: stm32f4 -> target/stm32f4x.cfg,
+# stm32f7 -> target/stm32f7x.cfg. An explicit OPENOCD_TARGET wins.
+#
+# It matters as soon as more than one family is on the bench. The F4 script
+# cannot read an F7's id ("device id" never appears and probe_chipid returns
+# nothing), and flashing through the wrong family script is not something to
+# discover by watching a board fail to come up.
+#
+# Quiet no-op for a build dir with no config.cmake (a standalone NAVHAL=OFF
+# build, or a path that is not a build dir): the default stands, and whatever
+# is attempted next reports its own failure.
+probe_target_from_build() {
+  local cfg="${1:-}/config.cmake" family
+  if [ -z "${_PROBE_TARGET_PINNED:-}" ] && [ -f "$cfg" ]; then
+    family=$(sed -nE 's/^set\(CONFIG_FAMILY "([^"]+)".*/\1/p' "$cfg" | head -1)
+    case "$family" in
+      stm32*) OPENOCD_TARGET="target/${family}x.cfg" ;;
+    esac
+  fi
+  return 0
+}
 
 probe_require_tools() {
   command -v openocd >/dev/null || {

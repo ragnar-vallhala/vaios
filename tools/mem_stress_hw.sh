@@ -53,6 +53,7 @@ for bk in "${BACKENDS[@]}"; do
     echo "  BUILD FAILED (see $bld.bld.log)"; tail -15 "$bld.bld.log"; exit 1
   fi
   echo "  flashing ..."
+  probe_target_from_build "$bld"
   flashed=0
   for attempt in 1 2 3; do
     if probe_flash "$bld/examples/main" "/tmp/hw_${bk}_flash.log"; then flashed=1; break; fi

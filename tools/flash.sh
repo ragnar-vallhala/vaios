@@ -188,6 +188,9 @@ ELF="${BUILD_DIR}/examples/main"
 [[ -f "$ELF" ]] || die "build produced no firmware at ${ELF} (did the example link?)"
 ok "Built $(basename "$ELF") ($(stat -c%s "$ELF") bytes)"
 
+# Follow the family this build was configured for, rather than the F4 default.
+probe_target_from_build "$BUILD_DIR"
+
 if [[ "$BUILD_ONLY" == "1" ]]; then
   ok "Build-only requested — not flashing."
   exit 0

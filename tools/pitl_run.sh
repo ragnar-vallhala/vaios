@@ -43,6 +43,9 @@ ELF="$BUILD_DIR/examples/main"
 [ -f "$ELF" ] || ELF="$BUILD_DIR/examples/benchmark/benchmark"
 [ -f "$ELF" ] || { echo "no firmware in $BUILD_DIR (examples/main or examples/benchmark/benchmark)" >&2; exit 2; }
 
+# Follow the family this build was configured for, rather than the F4 default.
+probe_target_from_build "$BUILD_DIR"
+
 probe_require_tools || exit 2
 probe_present || {
   echo "no ST-Link at USB location $USB_LOC." >&2

@@ -62,6 +62,10 @@ fi
 
 # --- check the board is the one this firmware is built for -------------------
 # Writing an F401 image to an F767 is what "Failed to parse flash type" means.
+# The target script has to match the family first: probe_chipid through the
+# wrong one reads nothing at all, which would report as "no device id" rather
+# than as the mismatch it is.
+probe_target_from_build "$BUILD_DIR"
 chipid=$(probe_chipid)
 if [ -z "$chipid" ]; then
   echo "could not read a device id from the probe at $USB_LOC" >&2
