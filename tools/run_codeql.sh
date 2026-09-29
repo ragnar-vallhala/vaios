@@ -33,8 +33,9 @@
 #      (see the paths-ignore caveat in codeql.yml) and dismisses them by hand;
 #      here they are simply printed, tagged [submodule] in the summary.
 #
-# Exit: 0 if the analysis ran, 1 if a build or the analysis itself failed. It
-# does NOT fail on findings — this is a triage tool, and the gate is CI.
+# Exit: 0 if the analysis ran (and 0, with a SKIP line, when the CLI is absent —
+# it is an optional tool); 1 if a build or the analysis itself failed. It does
+# NOT fail on findings: this is a triage tool, and the gate is CI.
 # =============================================================================
 set -uo pipefail
 
@@ -49,18 +50,21 @@ WHICH="${1:-all}"
 CODEQL="${CODEQL:-$HOME/codeql/codeql/codeql}"
 [ -x "$CODEQL" ] || CODEQL="$(command -v codeql 2>/dev/null)"
 if [ -z "${CODEQL:-}" ] || [ ! -x "$CODEQL" ]; then
-  cat >&2 <<'EOF'
-codeql CLI not found.
+  # Exit 0, not 1: this is an optional tool, and vtest's `check` adapter takes
+  # the exit status as the verdict with no skip state of its own. A missing
+  # CodeQL must read as "not run here", the same way test_build_matrix.sh treats
+  # a missing arm-none-eabi-gcc and the renode runners a missing renode.
+  echo "SKIP: 'codeql' CLI not installed (analysis not run)"
+  cat <<'EOF'
+  Install the bundle (CLI + precompiled query packs) once, ~1.4 GB extracted:
 
-Install the bundle (CLI + precompiled query packs) once:
+    gh release download codeql-bundle-v2.27.1 --repo github/codeql-action \
+       --pattern codeql-bundle-linux64.tar.gz --dir "$HOME"
+    mkdir -p "$HOME/codeql" && tar -xzf "$HOME/codeql-bundle-linux64.tar.gz" -C "$HOME/codeql"
 
-  gh release download codeql-bundle-v2.27.1 --repo github/codeql-action \
-     --pattern codeql-bundle-linux64.tar.gz --dir "$HOME"
-  tar -xzf "$HOME/codeql-bundle-linux64.tar.gz" -C "$HOME/codeql"
-
-or set CODEQL=<path to the codeql executable>.
+  or set CODEQL=<path to the codeql executable>.
 EOF
-  exit 1
+  exit 0
 fi
 
 SUITE="codeql/cpp-queries:codeql-suites/cpp-security-and-quality.qls"
