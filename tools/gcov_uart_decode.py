@@ -3,7 +3,7 @@
 # tools/gcov_uart_decode.py — reconstruct on-target .gcda files from a Renode
 # (or any) UART capture of a -DVAIOS_GCOV=ON run.
 #
-# The on-target dumper (portable/cortex-m4/gcov_dump.c) streams each instrumented
+# The on-target dumper (portable/armv7e-m/gcov_dump.c) streams each instrumented
 # translation unit's .gcda as base64, framed like:
 #
 #     @@VAIOS_GCDA_DUMP_BEGIN

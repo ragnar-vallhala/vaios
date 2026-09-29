@@ -1032,7 +1032,7 @@ void v_log_flush(void) {
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
-// SysTick body. The ARM vector handler (portable/cortex-m4/port_hw.c) and its
+// SysTick body. The ARM vector handler (portable/armv7e-m/port_hw.c) and its
 // NavHAL timebase poke wrap this; the kernel keeps only the arch-neutral work.
 void v_kernel_tick(void) {
   PERF_ISR_SYSTICK_BEGIN();

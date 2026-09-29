@@ -2,8 +2,8 @@
 #define VAIOS_HOST_PORT_SYSCALL_H
 
 /*
- * Host model of the SVC trap ABI — shadows portable/cortex-m4/port_syscall.h in
- * the test build (portable/cortex-m4 is not on the host include path, so
+ * Host model of the SVC trap ABI — shadows portable/armv7e-m/port_syscall.h in
+ * the test build (portable/armv7e-m is not on the host include path, so
  * include/syscall.h's `#include "port_syscall.h"` resolves here). No ARM
  * svc/mrs: v_svc* funnel through v_host_svc, which flips v_test_in_handler
  * around v_syscall_dispatch so the dispatch-reached primitive bodies see

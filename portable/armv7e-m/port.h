@@ -14,7 +14,7 @@
 //
 // NVIC_PRIO_BITS comes from Kconfig on a real ARM build (VAIOS_ARCH_HAS_IRQ_
 // PRIORITY is set, so the symbol is emitted). The fallback covers the host test
-// build, which compiles this header via portable/cortex-m4/syscall.c — a
+// build, which compiles this header via portable/armv7e-m/syscall.c — a
 // same-directory "port.h" include that outranks the tests/stubs shadow — where
 // the arch config symbol is absent.
 #ifndef NVIC_PRIO_BITS

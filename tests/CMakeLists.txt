@@ -12,7 +12,7 @@ cmake_minimum_required(VERSION 3.20)
 # -------------------------------------------------------------------------
 # Include paths
 #   1. The real <include/> headers (memory.h, task.h, ipc.h, etc.)
-#   2. This directory's stub port.h – must shadow portable/cortex-m4/port.h
+#   2. This directory's stub port.h – must shadow portable/armv7e-m/port.h
 # -------------------------------------------------------------------------
 set(VAIOS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
@@ -301,7 +301,7 @@ set_tests_properties(vaios_taskheap_tests PROPERTIES
 # -------------------------------------------------------------------------
 # vaios_syscall_tests — fifth executable for the SVC syscall dispatch.
 #
-# The main binary does not link portable/cortex-m4/syscall.c, so
+# The main binary does not link portable/armv7e-m/syscall.c, so
 # v_syscall_dispatch — the Stage-5 pointer-validation switch + privileged-only
 # IPC gate — was never host-tested (STAGE5_REVIEW_FINDINGS #2, and the dispatch
 # side of #1/#3). Build it with SVC + MPU_USER_SEPARATION on (DEVFS/IPC_FD/
@@ -318,7 +318,7 @@ add_executable(vaios_syscall_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/syscall_stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
-    "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"
+    "${VAIOS_ROOT}/portable/armv7e-m/syscall.c"
     "${VAIOS_ROOT}/kernel/structure.c"                # SYS_q_* bodies (M4)
     "${VAIOS_ROOT}/kernel/vfs.c"                      # SYS_lseek/stat/... (M5)
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/v_fs_stub.c"
@@ -386,7 +386,7 @@ add_executable(vaios_ipcfd_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/syscall_stubs.c"  # svc host hooks + perf/kmsg stubs
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
-    "${VAIOS_ROOT}/portable/cortex-m4/syscall.c"          # v_wait etc. trap via svc
+    "${VAIOS_ROOT}/portable/armv7e-m/syscall.c"          # v_wait etc. trap via svc
     "${VAIOS_ROOT}/kernel/structure.c"                   # SYS_q_* bodies (M4)
     "${VAIOS_ROOT}/kernel/task.c"
     "${VAIOS_ROOT}/kernel/ipc.c"

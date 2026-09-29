@@ -1,6 +1,6 @@
 /**
  * @file test_syscall.c
- * @brief SVC syscall-dispatch validation tests — portable/cortex-m4/syscall.c.
+ * @brief SVC syscall-dispatch validation tests — portable/armv7e-m/syscall.c.
  *
  * The main vaios_tests binary does not link syscall.c, so v_syscall_dispatch —
  * where the Stage-5 security decisions live (the unprivileged pointer-validation

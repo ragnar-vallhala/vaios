@@ -1,7 +1,7 @@
 FILE(GLOB_RECURSE VAIOS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.c)
 
 # Arch/hardware backends (semihosting, the QEMU interrupt shim) now live in
-# portable/cortex-m4/ behind the port facade — the kernel proper is
+# portable/armv7e-m/ behind the port facade — the kernel proper is
 # architecture-independent. Their build gating moved to portable/CMakeLists.
 
 # Drop optional module sources when their CMake option is OFF (see top-level

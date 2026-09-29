@@ -78,7 +78,7 @@ config VAIOS_ARCH_STACK_DESCENDING
 # Port-specific symbols (e.g. NVIC_PRIO_BITS) live with the port. Each port's
 # symbols are gated on the capability its arch selects, so only the active port's
 # are visible.
-rsource "portable/cortex-m4/Kconfig"
+rsource "portable/armv7e-m/Kconfig"
 rsource "portable/host/Kconfig"
 
 # Generic knobs, named for the concept rather than the ARM peripheral that

@@ -1,6 +1,6 @@
 /**
  * @file port.h
- * @brief Host-native stub replacing portable/cortex-m4/port.h
+ * @brief Host-native stub replacing portable/armv7e-m/port.h
  *
  * Replaces ARM-specific inline assembly macros with no-ops so that kernel
  * C code can be compiled and tested on the host machine.
@@ -29,7 +29,7 @@
   do {                                                                         \
   } while (0)
 
-/* NVIC priority model, host-emulated to match portable/cortex-m4/port.h — the
+/* NVIC priority model, host-emulated to match portable/armv7e-m/port.h — the
  * FromISR priority predicate (vaios_isr_priority_is_safe) is exercised by
  * test_ipc.c. __NVIC_PRIO_BITS is hardcoded here, not taken from Kconfig: the
  * host arch has no VAIOS_ARCH_HAS_IRQ_PRIORITY, so NVIC_PRIO_BITS isn't emitted. */
@@ -43,7 +43,7 @@ static inline int v_port_prio_is_more_urgent(uint32_t a, uint32_t b) {
   return a < b;
 }
 
-/* Minimum task stack, mirroring portable/cortex-m4/port.h so the scheduler's
+/* Minimum task stack, mirroring portable/armv7e-m/port.h so the scheduler's
  * size validation behaves identically under host test as on target. */
 #define VAIOS_ARCH_MIN_STACK 128u
 

@@ -146,7 +146,7 @@ docker run --rm -it -v "$PWD:/project" vaios:dev
 ```
 include/             Public API headers
 kernel/              Scheduler, IPC, memory, logging, terminal, VFS
-portable/cortex-m4/  ARM Cortex-M4 port (port.c/h, PendSV, SVCall, BASEPRI)
+portable/armv7e-m/  ARM Cortex-M4 port (port.c/h, PendSV, SVCall, BASEPRI)
 extern/NavHAL/       HAL submodule (clocks, GPIO, UART, DMA, SDIO, DWT)
 examples/            Standalone example applications
 tests/               Host-native unit tests (gcc, x86)

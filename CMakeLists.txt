@@ -11,12 +11,18 @@ set(CMAKE_CXX_FLAGS_INIT "" CACHE STRING "" FORCE)
 # (Not derived from Kconfig: the toolchain must be known before project(), but
 # Kconfig generation runs after it, so the arch is chosen by this cache var —
 # override with -DVAIOS_PORT=<port>.)
-set(VAIOS_PORT "cortex-m4" CACHE STRING "Target port (selects portable/<port>/)")
+# The port is named for the ISA, not for a core: Cortex-M4 and Cortex-M7 are
+# both ARMv7E-M and share every line of portable/armv7e-m/ — same context-switch
+# asm, same MPU, same SysTick/PendSV/SVC. Only -mcpu and the FPU unit differ,
+# and those come from NavHAL's resolved config further down. This is also how
+# NavHAL names its own arch tree (src/arch/armv7e-m, cmake/arch/armv7e-m.cmake),
+# so an M7 board needs no new port here.
+set(VAIOS_PORT "armv7e-m" CACHE STRING "Target port (selects portable/<port>/)")
 set(_vaios_port_arch "${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT}/arch.cmake")
 if(NOT EXISTS "${_vaios_port_arch}")
   message(FATAL_ERROR
     "Unknown vaios port '${VAIOS_PORT}': ${_vaios_port_arch} not found. "
-    "Add portable/${VAIOS_PORT}/arch.cmake, or -DVAIOS_PORT=cortex-m4.")
+    "Add portable/${VAIOS_PORT}/arch.cmake, or -DVAIOS_PORT=armv7e-m.")
 endif()
 include("${_vaios_port_arch}")
 
@@ -65,7 +71,7 @@ add_custom_target(vaios_copy_compile_commands ALL
 # Nothing here should be read as the answer for a NAVHAL build; it is only what
 # a QEMU/Renode build (NAVHAL=OFF) falls back to.
 set(CMAKE_SYSTEM_PROCESSOR
-    "${VAIOS_PORT}"
+    "cortex-m4"
     CACHE STRING "Target processor (NAVHAL builds: from NavHAL's config)" FORCE)
 set(BOARD
     nucleo_f401re
@@ -345,6 +351,18 @@ if(NAVHAL AND NOT TARGET hal)
   include("${CMAKE_BINARY_DIR}/config.cmake")
   message(STATUS "VAIOS: target from NavHAL -> board ${BOARD}, "
                  "processor ${CMAKE_SYSTEM_PROCESSOR}, ISA ${ARCH_ISA}")
+
+  # The port directory was chosen before project(), from VAIOS_PORT; NavHAL has
+  # only now said which ISA the config means. If they differ, vaios would build
+  # one instruction set and link it against another — say so here rather than
+  # let it surface as a strange link error or, worse, not surface at all.
+  if(NOT PORT_IS_HOSTED AND NOT ARCH_ISA STREQUAL VAIOS_PORT)
+    message(FATAL_ERROR
+      "Port/ISA mismatch: VAIOS_PORT='${VAIOS_PORT}' but NavHAL's config "
+      "resolves to ISA '${ARCH_ISA}' (board ${BOARD}, ${CMAKE_SYSTEM_PROCESSOR}). "
+      "Pass -DVAIOS_PORT=${ARCH_ISA}, or point -DNAVHAL_CONFIG_FILE at a config "
+      "for this port.")
+  endif()
 endif()
 
 # The FPU unit name is a CPU fact: -mfpu=fpv4-sp-d16 on an M4, fpv5-d16 on an
@@ -404,7 +422,7 @@ else()
   set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs")
 endif()
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${CMAKE_SYSTEM_PROCESSOR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT})
 
 # Arch is now a Kconfig choice (VAIOS_ARCH_CORTEX_M4, emitted into
 # vaios_autoconf.h); the kernel reads capability symbols, not a CORTEX_M4
@@ -459,7 +477,7 @@ if(NAVHAL)
   # stub. Capability-gated NavHAL headers wrap their whole body in
   # `#if NAVHAL_CONFIG_DRV_*` (common/hal_sdio.h today, hal_eth.h next), so
   # without the flag ambient in vaios sources those APIs compile out and their
-  # symbols vanish from consumers like portable/cortex-m4/port_hw.c. The header
+  # symbols vanish from consumers like portable/armv7e-m/port_hw.c. The header
   # is generated at configure time (before any TU compiles) and its dir is
   # already on the include path. Applies to portable/kernel/examples added below.
   # SHELL: keeps the two-token option intact — CMake otherwise de-duplicates the
@@ -504,10 +522,10 @@ add_compile_options("SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/include/vaios_co
 # cannot reach (context switch, MPU, SVC dispatch, fault handlers, semihosting).
 # NavHAL was added above and keeps its own uninstrumented flags. Plain
 # --coverage (NOT -fprofile-info-section) so the embedded .gcda path survives for
-# __gcov_info_to_gcda; portable/cortex-m4/gcov_sections.ld (prepended -> parsed
+# __gcov_info_to_gcda; portable/armv7e-m/gcov_sections.ld (prepended -> parsed
 # first) bounds .init_array; --coverage at link pulls the correct multilib
 # libgcov. The linker fragment sits with its companion dumper
-# (portable/cortex-m4/gcov_dump.c); drive it via tools/coverage_target.sh.
+# (portable/armv7e-m/gcov_dump.c); drive it via tools/coverage_target.sh.
 # Default OFF: normal builds are byte-for-byte unaffected.
 # ---------------------------------------------------------------------------
 option(VAIOS_GCOV "Instrument vaios for on-target gcov coverage (.gcda streamed over UART)" OFF)

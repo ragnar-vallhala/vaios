@@ -2,7 +2,7 @@
  * @file port_hw_stub.c
  * @brief Host-native stubs for the port hardware facade (v_port_hw_*).
  *
- * The real implementations live in portable/cortex-m4/port_hw.c and drive
+ * The real implementations live in portable/armv7e-m/port_hw.c and drive
  * NavHAL / QEMU. On the host test build there is no hardware, so every
  * wrapper is a no-op — except the cycle counter, which returns a strictly
  * increasing value so the perf module's monotonicity and per-task accounting

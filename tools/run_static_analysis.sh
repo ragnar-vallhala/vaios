@@ -35,8 +35,8 @@ if command -v cppcheck >/dev/null 2>&1; then
        --error-exitcode=2 -j"$JOBS" --quiet \
        --suppressions-list="$SUPPRESS" \
        --suppress=missingInclude --suppress=missingIncludeSystem \
-       -I include -I portable/cortex-m4 \
-       kernel/ portable/cortex-m4/ ); then
+       -I include -I portable/armv7e-m \
+       kernel/ portable/armv7e-m/ ); then
     echo "  PASS: cppcheck clean"
   else
     echo "  FAIL: cppcheck reported findings above"; rc=1

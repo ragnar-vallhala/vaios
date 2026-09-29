@@ -20,6 +20,10 @@
 
 #ifdef NAVHAL
 #include "navhal.h"
+// Generated from the board's Kconfig: BOARD_CONSOLE_UART and friends. The
+// console is a board property, so it is read from here rather than named in
+// this file — see v_port_hw_console_init.
+#include "board.h"
 #else
 #include "semihosting.h"
 
@@ -195,11 +199,19 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
   }
   return;
 #endif
+  // BOARD_CONSOLE_UART, not USART2: which UART carries the console is a board
+  // fact and the board already states it. The F767 answers UART3 and the qemu
+  // board UART1, so naming USART2 here was correct on this bench and wrong
+  // anywhere else.
   hal_uart_config_t uart_cfg = {.baudrate = baudrate};
-  hal_uart_init(HAL_UART_2, &uart_cfg);
+  hal_uart_init(BOARD_CONSOLE_UART, &uart_cfg);
 #if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA) &&                     \
     (BUFFERED_LOGGING == 1)
   if (dma_tx_done_cb) {
+    // The one board fact still named here: DMA1 stream 6 is USART2_TX on an
+    // F4, and no board describes its console's DMA stream yet. Correct while
+    // the console is USART2 on an F4; a board that answers otherwise needs a
+    // BOARD_CONSOLE_UART_DMA_IRQ from NavHAL before this line can follow it.
     hal_interrupt_attach_callback(DMA1_Stream6_IRQn, dma_tx_done_cb);
   }
 #else
@@ -217,7 +229,7 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
   // peripheral FIFO, so the buffered logger's "DMA" write is a plain write.
   hal_usb_cdc_write(bytes, (uint16_t)len);
 #elif defined(NAVHAL) && defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
-  hal_uart_write_dma(HAL_UART_2, bytes, len);
+  hal_uart_write_dma(BOARD_CONSOLE_UART, bytes, len);
 #else
   (void)bytes;
   (void)len;
@@ -229,7 +241,7 @@ void v_port_hw_console_write_string(const char *str) {
 #if VAIOS_CONSOLE_USB_CDC
   hal_usb_cdc_write_string(str);
 #else
-  hal_uart_write_string(HAL_UART_2, str);
+  hal_uart_write_string(BOARD_CONSOLE_UART, str);
 #endif
 #else
   sh_write0(str);
@@ -244,7 +256,7 @@ char v_port_hw_console_read_char(void) {
     ;                                  // contract here is blocking
   return (char)c;
 #else
-  return hal_uart_read_char(HAL_UART_2);
+  return hal_uart_read_char(BOARD_CONSOLE_UART);
 #endif
 #else
   return sh_readc();
@@ -253,8 +265,8 @@ char v_port_hw_console_read_char(void) {
 
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 #ifdef NAVHAL
-  hal_interrupt_attach_callback(USART2_IRQn, rx_cb);
-  hal_interrupt_enable(USART2_IRQn);
+  hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ, rx_cb);
+  hal_interrupt_enable(BOARD_CONSOLE_UART_IRQ);
 #else
   /* QEMU semihosting has no async RX IRQ; the terminal polls instead. */
   (void)rx_cb;
@@ -263,10 +275,18 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
 
 /* ---------------------------------------------------------------------------
  * SD/MMC (SDIO) — used by the VFS init path
+ *
+ * Gated on NAVHAL_HAS_SDIO, not on NAVHAL alone: common/hal_sdio.h wraps its
+ * whole body in that flag, so on a board whose config leaves the driver out
+ * (nucleo_f767zi, say) the types and enums below simply do not exist and this
+ * file will not compile. "A HAL is present" is not the same claim as "this
+ * board has an SD slot". Without the driver these behave exactly as they do on
+ * a backend with no SDIO at all — the VFS init path already treats a non-zero
+ * return as "no card here" and carries on.
  * ------------------------------------------------------------------------- */
 
 int v_port_hw_sdio_init(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_SDIO
   /* clock_div is auto-calculated from the system clock. The width is a named
    * value since NavHAL 0.3.8 — the peripheral's WIDBUS field is neither a lane
    * count nor a flag, so the enum keeps that mapping in one place. */
@@ -276,12 +296,12 @@ int v_port_hw_sdio_init(void) {
                                                   : HAL_SDIO_BUS_WIDTH_1BIT};
   return (hal_sdio_init(&sd_config) == HAL_SDIO_OK) ? 0 : -1;
 #else
-  return -1; /* No SDIO model under QEMU. */
+  return -1; /* No SDIO driver on this target. */
 #endif
 }
 
 int v_port_hw_sdio_card_present(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_SDIO
   /* Reads the board's card-detect line (NavHAL 0.3.8). Before it existed, an
    * empty slot and a card behind a broken data line both looked like a timeout —
    * which is exactly the ambiguity that cost a day of debugging on this board. */
@@ -292,7 +312,7 @@ int v_port_hw_sdio_card_present(void) {
 }
 
 int v_port_hw_sdio_card_init(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_SDIO
   return (hal_sdio_card_init() == HAL_SDIO_OK) ? 0 : -1;
 #else
   return -1;

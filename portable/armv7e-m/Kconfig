@@ -14,4 +14,4 @@ config NVIC_PRIO_BITS
     help
       Number of priority bits the Cortex-M NVIC implements (device-specific;
       STM32F4 = 4). Feeds MAX_SYSCALL_INTERRUPT_PRIORITY in
-      portable/cortex-m4/port.h.
+      portable/armv7e-m/port.h.

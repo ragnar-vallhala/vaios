@@ -1,5 +1,5 @@
 /* Host backing for the vaios_syscall_tests binary — puts v_syscall_dispatch
- * (portable/cortex-m4/syscall.c) under host test with the real pointer
+ * (portable/armv7e-m/syscall.c) under host test with the real pointer
  * validators (kernel/task.c v_access_ok / v_strnlen_user).
  *
  * Two seams the ARM build implements in asm, provided here for the host:
