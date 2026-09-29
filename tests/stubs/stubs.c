@@ -39,6 +39,34 @@ void stub_reset_yield_count(void) { _yield_count = 0; }
 
 void task_yield(void) { _yield_count++; }
 
+/* Kernel-internal yield (pends PendSV directly on target). Count it too so the
+ * refactored internal callers (task_delay/exit/block) keep the old semantics. */
+void v_port_trigger_pendsv(void) { _yield_count++; }
+
+/* Port facade the kernel calls on host. get_psp returns 0 ("no PSP"), which
+ * memory.c's grow-guard and utils.c's overflow check both treat as a no-op;
+ * ptr_is_ram returns 1 since host TCBs come from the host heap, not a known
+ * target map, so the scheduler's range check is a no-op here. */
+uint32_t v_port_get_psp(void) { return 0; }
+int v_port_ptr_is_ram(const void *p) {
+  (void)p;
+  return 1;
+}
+
+/* User-readable read-only region ("flash") for the validators. Empty unless a
+ * test sets it with stub_set_user_ro(). */
+static uintptr_t g_ro_lo, g_ro_hi;
+void stub_set_user_ro(uintptr_t lo, uintptr_t hi) {
+  g_ro_lo = lo;
+  g_ro_hi = hi;
+}
+int v_port_user_region(uintptr_t a, int write, uintptr_t *end) {
+  if (write || a < g_ro_lo || a >= g_ro_hi)
+    return 0;
+  *end = g_ro_hi;
+  return 1;
+}
+
 /* -------------------------------------------------------------------------
  * init_task_stack stub – trivial host implementation
  * ---------------------------------------------------------------------- */
@@ -49,6 +77,9 @@ void init_task_stack(TCB *task) {
    * task_create() does not crash.  No real exception frame is needed. */
   task->sp = task->mem_block;
 }
+
+/* No separate per-task context in the unit-test stubs — nothing to free. */
+void v_port_free_task_stack(TCB *task) { (void)task; }
 
 /* -------------------------------------------------------------------------
  * _heap_start – backing storage for the kernel heap on the host.

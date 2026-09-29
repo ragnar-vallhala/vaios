@@ -15,6 +15,8 @@
 uint8_t scheduler_running = 0;
 volatile uint32_t critical_nesting = 0;
 TCB *current_task = NULL;
+/* kernel/perf.c's v_perf_self_stats resolves the caller through this. */
+TCB *get_current_task(void) { return current_task; }
 TCB *idle_task = NULL;
 /* kernel/perf.c's per-task dump walks the scheduler lists via this; task.c
  * isn't linked into this utils-focused binary, so stub it to "no tasks". */
@@ -43,7 +45,10 @@ void v_port_trigger_pendsv(void) {}
 /* The low-level character sinks utils.c's v_print and SysTick path call.
  * direct_dma_print is defined in utils.c itself (empty when DMA defines are
  * off) so we DON'T stub it here. v_print routes to sh_write0 (semihosting)
- * in the non-NAVHAL branch — stubbed to nothing. SysTick_Handler calls
+ * in the non-NAVHAL branch — stubbed to nothing. v_kernel_tick calls
  * wake_up_delayed_tasks_isr from task.c, which isn't in this binary. */
 void sh_write0(const char *s) { (void)s; }
 int wake_up_delayed_tasks_isr(void) { return 0; }
+/* v_log's full-buffer wait sleeps via task_delay once the scheduler runs;
+ * scheduler_running is 0 here, so it is never reached. */
+void task_delay(uint32_t ticks) { (void)ticks; }

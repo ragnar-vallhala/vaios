@@ -8,7 +8,7 @@
 #   qemu      Context-switch smoke in QEMU     tools/test_qemu_smoke.sh  (arm-gcc, qemu)
 #   coverage  Host gcov line/branch report     tools/coverage.sh         (gcov)
 #   sitl      On-target unit tests in Renode   build + Renode            (arm-gcc, renode)
-#   pitl      Hardware regression on a board   tools/run_hw_tests.sh     (st-flash + board)
+#   pitl      Hardware regression on a board   tools/run_hw_tests.sh     (openocd + board)
 #
 # Usage:
 #   tools/run_all_tests.sh                 # every layer whose tools are present
@@ -21,6 +21,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/probe.sh
+. "$SCRIPT_DIR/lib/probe.sh"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 PORT="${PORT:-/dev/ttyACM0}"
 CAPTURE_SECS="${CAPTURE_SECS:-10}"
@@ -110,9 +112,15 @@ run_sitl() {
 
   echo "building build_pil (NAVHAL, UNIT_TESTS) ..."
   if ! cmake -S "$ROOT_DIR" -B "$ROOT_DIR/build_pil" \
-         -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_EXAMPLE=UNIT_TESTS >/tmp/all_sitl_cfg.log 2>&1 \
+         -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_CONSOLE_DMA=OFF \
+         -DVAIOS_EXAMPLE=UNIT_TESTS >/tmp/all_sitl_cfg.log 2>&1 \
      || ! cmake --build "$ROOT_DIR/build_pil" >/tmp/all_sitl_bld.log 2>&1; then
-    STATUS[sitl]=FAIL; DETAIL[sitl]="build failed (see /tmp/all_sitl_bld.log)"; return
+    # Surface the actual error (configure or compile) so a CI failure is
+    # self-diagnosing instead of an opaque "build failed".
+    echo "  ---- last 25 lines of build output ----"
+    tail -n 25 /tmp/all_sitl_cfg.log /tmp/all_sitl_bld.log 2>/dev/null | sed 's/^/  | /'
+    echo "  ---------------------------------------"
+    STATUS[sitl]=FAIL; DETAIL[sitl]="build failed (see logs above)"; return
   fi
 
   # Detach stdin (</dev/null) so `--console` renode never tries to read from an
@@ -155,16 +163,14 @@ run_sitl() {
 # ---------------------------------------------------------------- pitl --------
 run_pitl() {
   header "PITL — hardware regression on a connected board"
-  if ! have arm-none-eabi-gcc || ! have st-flash || ! have st-info; then
-    STATUS[pitl]=SKIP; DETAIL[pitl]="no arm toolchain / st-tools"; return
+  if ! have arm-none-eabi-gcc || ! have openocd; then
+    STATUS[pitl]=SKIP; DETAIL[pitl]="no arm toolchain / openocd"; return
   fi
-  # Cheap, side-effect-free gate first: no serial port means no board to talk
-  # to, so skip before poking the ST-Link with `st-info --probe`.
   if [ ! -e "$PORT" ]; then
     STATUS[pitl]=SKIP; DETAIL[pitl]="serial port $PORT absent (set PORT=...)"; return
   fi
-  if ! st-info --probe 2>/dev/null | grep -qi 'stlink\|serial'; then
-    STATUS[pitl]=SKIP; DETAIL[pitl]="no ST-Link board detected"; return
+  if ! probe_present; then
+    STATUS[pitl]=SKIP; DETAIL[pitl]="no ST-Link at USB location $USB_LOC"; return
   fi
   if CAPTURE_SECS="$CAPTURE_SECS" PORT="$PORT" bash "$SCRIPT_DIR/run_hw_tests.sh"; then
     STATUS[pitl]=PASS

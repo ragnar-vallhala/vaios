@@ -2,7 +2,16 @@
 #include "ipc.h"
 #include "memory.h"
 #include "perf_hooks.h"
+#include "periph_bus.h" // v_pbus_task_teardown
 #include "port.h" // ENTER_CRITICAL / EXIT_CRITICAL
+#include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
+#if VAIOS_DEVFS && VAIOS_MODULE_VFS
+// In kernel/vfs.c. Declared here rather than including vfs.h, which would drag
+// the whole filesystem API into the scheduler.
+void v_vfs_task_teardown(struct Task_Control_Block *t);
+#else
+#define v_vfs_task_teardown(t) ((void)(t))
+#endif
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
@@ -176,25 +185,56 @@ TCB *get_highest_priority_task(void) {
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
-uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
+uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority) {
-  return task_create_named(entry, arg, stack_size, priority, "");
+  return task_create_named(entry, arg, size, priority, "");
 }
 
 uint32_t task_create_named(void (*entry)(void *), void *arg,
-                           uint32_t stack_size, uint32_t priority,
+                           uint32_t size, uint32_t priority,
                            const char *name) {
-  if (stack_size < 128)
-    stack_size = 128;
-  stack_size &= ~(3); // Align to 4 bytes
+  // Universal floor: a stack too small to hold the port's initial context frame
+  // can't run. Rejected on every build, MPU or not.
+  if (size < VAIOS_ARCH_MIN_STACK) {
+    V_KLOG(LOG_ERROR,
+           "[TASK] size %u below the %u B minimum stack; task not created",
+           (unsigned)size, (unsigned)VAIOS_ARCH_MIN_STACK);
+    return 0;
+  }
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+  // With per-task MPU regions on, each stack maps onto a single power-of-two MPU
+  // region, so the size must be an exact power of two. Reject anything else
+  // rather than silently rounding, which would desync the caller's view of the
+  // stack from the region geometry. This constraint follows the *feature*, not
+  // the chip: with MPU stack protection off, any size >= the minimum is fine.
+  if ((size & (size - 1)) != 0) {
+    V_KLOG(LOG_ERROR,
+           "[TASK] size %u is not a power of two; task not created",
+           (unsigned)size);
+    return 0;
+  }
+#endif
 
   TCB *task = (TCB *)v_malloc(sizeof(TCB));
   if (!task)
     return 0;
   task->task_id = ++task_count;
   task->name = name ? name : "";
-  task->stack_size = stack_size;
-  task->mem_block = (uint32_t *)v_malloc(stack_size);
+  task->stack_size = size;
+#if VAIOS_MPU_USER_SEPARATION
+  // The per-task RW-unprivileged region covers the WHOLE block as one MPU region,
+  // which needs a size-aligned, power-of-two base. Align the block to its own
+  // size (size is already required power-of-two). The guard at the base stays
+  // size-aligned trivially. Encoded in init_task_stack.
+  task->mem_block = (uint32_t *)v_memalign(size, size);
+#elif VAIOS_MPU_STACK_GUARD
+  // The MPU stack-guard region sits at the stack base, so the base must land on
+  // the guard's size boundary. v_memalign gives that; the no-access guard region
+  // is encoded in init_task_stack.
+  task->mem_block = (uint32_t *)v_memalign(VAIOS_MPU_GUARD_SIZE, size);
+#else
+  task->mem_block = (uint32_t *)v_malloc(size);
+#endif
   if (!task->mem_block) {
     v_panic(__FILE__, __LINE__, "failed to allocate stack for task %u",
             task->task_id);
@@ -202,9 +242,15 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->ticks_run = 0;
   task->entry = entry;
   task->arg = arg;
-  task->sp = task->mem_block + (stack_size / sizeof(uint32_t));
+  task->sp = task->mem_block + (size / sizeof(uint32_t));
   task->priority = priority;
   task->base_priority = priority;
+#if VAIOS_MPU_USER_SEPARATION
+  // User tasks run unprivileged by default (the flip). scheduler_init raises the
+  // idle task back to privileged; a privileged system task would set this after
+  // create.
+  task->privileged = 0;
+#endif
   task->delay_ticks = 0;
   task->next = NULL;
   task->prev = NULL;
@@ -223,21 +269,62 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   /* Paint the whole stack so the high-water mark is measurable from the
    * untouched sentinel run. Done before init_task_stack lays the initial
    * frame at the top (that region then reads as "used"). */
-  for (uint32_t i = 0; i < stack_size / sizeof(uint32_t); i++)
+  for (uint32_t i = 0; i < size / sizeof(uint32_t); i++)
     task->mem_block[i] = V_PERF_STACK_FILL;
 #endif
   task->magic = TCB_MAGIC;
+#if VAIOS_DEVFS
+  v_fd_table_init(task); // fd 0/1/2 -> /dev/console
+#endif
+#if VAIOS_IPC_FD
+  task->in_multiwait = 0; // not in v_wait()
+  task->narm = 0;
+#endif
+#if VAIOS_TASK_HEAP
+  // The heap sits at the LOW end of this task's block, just above the stack
+  // guard; it grows up while the stack grows down from the top of the same
+  // block. Empty until the first malloc.
+  {
+    uint32_t guard_off = 0;
+#if VAIOS_MPU_STACK_GUARD
+    guard_off = VAIOS_MPU_GUARD_SIZE;
+#endif
+    task->heap_base = (uint8_t *)task->mem_block + guard_off;
+    task->heap_brk = task->heap_base;
+    task->heap_peak_brk = task->heap_base;
+  }
+#endif
   init_task_stack(task);
 
   ENTER_CRITICAL();
   add_to_ready_list(task);
   EXIT_CRITICAL();
   V_KLOG(LOG_DEBUG,
-        "[TASK] Created Task id: %u priority: %u memory block addr: 0x%x stack "
+        "[TASK] Created Task id: %u priority: %u memory block addr: %p stack "
         "size: 0x%x",
-        task->task_id, priority, task->mem_block, stack_size);
+        task->task_id, priority, task->mem_block, size);
   return task->task_id;
 }
+
+#if VAIOS_MPU_USER_SEPARATION
+uint32_t task_create_privileged(void (*entry)(void *), void *arg, uint32_t size,
+                                uint32_t priority, const char *name) {
+  // As task_create_named, but the task runs PRIVILEGED. Reachable only from
+  // privileged code — task_create* is not a syscall, so an unprivileged task
+  // cannot call it at all — and meant for the kernel's own service tasks, like
+  // the VFS I/O worker, which must touch kernel memory and a peripheral.
+  uint32_t id = task_create_named(entry, arg, size, priority, name);
+  if (!id)
+    return 0;
+  TCB *t = get_task_by_id(id);
+  if (!t)
+    return 0;
+  ENTER_CRITICAL();
+  t->privileged = 1;
+  EXIT_CRITICAL();
+  return id;
+}
+#endif
 
 void task_set_name(uint32_t task_id, const char *name) {
   TCB *task = get_task_by_id(task_id);
@@ -251,6 +338,148 @@ const char *task_get_name(const TCB *task) {
 
 const char *task_get_name_by_id(uint32_t task_id) {
   return task_get_name(get_task_by_id(task_id));
+}
+
+// Every live task, for the ownership walks below. Callers hold no critical
+// section: each helper takes its own, because get_task_by_id does too and
+// ENTER_CRITICAL does not nest.
+// Every list walk below is bounded by the number of tasks that can exist. A
+// scheduler list is singly linked and has been self-linked by a double enqueue
+// before (see task_exit_request), and a kernel that spins forever on a corrupt
+// list is worse than one that gives up: the bound turns a hang into a miscount.
+#define TASK_WALK_MAX (task_count + 2u)
+
+static uint32_t count_children(uint32_t parent_id) {
+  uint32_t n = 0, steps = 0;
+  ENTER_CRITICAL();
+  for (uint8_t p = 0; p <= MAX_PRIORITY; p++)
+    for (TCB *t = ready_lists[p]; t && steps < TASK_WALK_MAX; t = t->next, steps++)
+      if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
+        n++;
+  steps = 0;
+  for (TCB *t = blocked_list; t && steps < TASK_WALK_MAX; t = t->next, steps++)
+    if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
+      n++;
+  steps = 0;
+  for (TCB *t = delayed_list; t && steps < TASK_WALK_MAX; t = t->next, steps++)
+    if (t->parent_id == parent_id && t->status != TASK_TERMINATED)
+      n++;
+  EXIT_CRITICAL();
+  return n;
+}
+
+// The id of one live task whose owner is gone (terminated or already reaped),
+// or 0. parent_id 0 means "created by privileged init" and is never an orphan.
+static uint32_t find_orphan(void) {
+  uint32_t ids[1] = {0}, steps = 0;
+  ENTER_CRITICAL();
+  TCB *lists[2] = {blocked_list, delayed_list};
+  for (uint8_t p = 0; p <= MAX_PRIORITY && !ids[0]; p++)
+    for (TCB *t = ready_lists[p]; t && !ids[0] && steps < TASK_WALK_MAX;
+         t = t->next, steps++)
+      if (t->parent_id && t->status != TASK_TERMINATED)
+        ids[0] = t->task_id;
+  for (int i = 0; i < 2 && !ids[0]; i++) {
+    steps = 0;
+    for (TCB *t = lists[i]; t && !ids[0] && steps < TASK_WALK_MAX;
+         t = t->next, steps++)
+      if (t->parent_id && t->status != TASK_TERMINATED)
+        ids[0] = t->task_id;
+  }
+  EXIT_CRITICAL();
+  if (!ids[0])
+    return 0;
+  // Outside the section (get_task_by_id takes its own): is its owner gone?
+  TCB *child = get_task_by_id(ids[0]);
+  if (!child)
+    return 0;
+  TCB *owner = get_task_by_id(child->parent_id);
+  if (owner && owner->status != TASK_TERMINATED)
+    return 0; // owner still alive: not an orphan
+  return ids[0];
+}
+
+// Children die with their owner, at any depth. Iterative on purpose: recursing
+// per generation would put an unbounded chain on the handler stack. Each pass
+// terminates one orphan and rescans, so any nesting drains, and the loop is
+// capped by the number of tasks that exist. A parent_id can never alias a new
+// task, because ids only ever increase.
+static void reap_orphans(void) {
+  for (uint32_t guard = 0; guard <= task_count; guard++) {
+    uint32_t victim = find_orphan();
+    if (!victim)
+      return;
+    task_exit_request(victim); // marks it terminated; its own children follow
+  }
+}
+
+int v_task_kill(uint32_t child_id) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc1(SYS_task_kill, child_id);
+#endif
+  if (!child_id)
+    return V_TASK_EINVAL;
+  TCB *t = get_task_by_id(child_id);
+  if (!t || t->status == TASK_TERMINATED)
+    return V_TASK_EINVAL;
+  // Ownership, not privilege: even a privileged task may not end someone
+  // else's child. current_task == NULL is init, before anyone owns anything.
+  if (current_task && t->parent_id != current_task->task_id)
+    return V_TASK_EPERM;
+  task_exit_request(child_id);
+  return VA_PASS;
+}
+
+int v_task_spawn(const v_task_spawn_t *cfg) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc1(SYS_task_spawn, (uintptr_t)cfg);
+#endif
+  if (!cfg || !cfg->entry || !cfg->stack_size)
+    return V_TASK_EINVAL;
+  if (cfg->stack_size > VAIOS_TASK_SPAWN_STACK_MAX || cfg->priority > MAX_PRIORITY)
+    return V_TASK_EINVAL;
+  TCB *parent = current_task;
+  if (parent) {
+    // A child may not outrank its parent: spawning must not be a way to get
+    // scheduling weight the caller does not already have.
+    if (cfg->priority > parent->priority)
+      return V_TASK_EPERM;
+    if (count_children(parent->task_id) >= VAIOS_TASK_MAX_CHILDREN)
+      return V_TASK_EAGAIN;
+  }
+  uint32_t id = task_create_named(cfg->entry, cfg->arg, cfg->stack_size,
+                                  cfg->priority, cfg->name ? cfg->name : "");
+  if (id == 0u)
+    return V_TASK_ENOMEM; // no stack: the heap said no
+  TCB *child = get_task_by_id(id);
+  if (!child)
+    return V_TASK_ENOMEM; // created but unreachable: treat as failure
+  ENTER_CRITICAL();
+  child->parent_id = parent ? parent->task_id : 0u;
+  EXIT_CRITICAL();
+  return (int)id;
+}
+
+int v_task_info(v_task_info_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc1(SYS_task_info, (uintptr_t)out);
+#endif
+  if (!out || current_task == NULL)
+    return VA_FAIL;
+  ENTER_CRITICAL();
+  out->id = current_task->task_id;
+  out->priority = current_task->priority;
+  out->stack_size = current_task->stack_size;
+  const char *n = task_get_name(current_task);
+  uint32_t i = 0;
+  for (; i + 1u < V_TASK_NAME_MAX && n[i]; i++) // bounded: a long name truncates
+    out->name[i] = n[i];
+  out->name[i] = 0;
+  EXIT_CRITICAL();
+  return VA_PASS;
 }
 
 //-----------------------------------------------------------------------------
@@ -276,19 +505,12 @@ TCB *get_next_task(void) {
   int p = highest_ready_prio();
   if (p >= 0) {
     TCB *t = rl_pop_head((uint32_t)p);
-#if defined(VAIOS_HOST_TEST)
-    /* Host TCBs come from the host heap, not target SRAM, so the address
-     * range check below is meaningless (and (uint32_t)-truncating a 64-bit
-     * host pointer is undefined). Keep the priority sanity check only. */
-    if (t->priority > MAX_PRIORITY) {
-      v_panic(__FILE__, __LINE__, "invalid task priority: %u", t->priority);
+    /* Corruption sanity check on the popped TCB. The RAM-range test lives in
+     * the port (v_port_ptr_is_ram); the host stub returns 1 since host TCBs
+     * come from the host heap, not a known target map. */
+    if (!v_port_ptr_is_ram(t) || t->priority > MAX_PRIORITY) {
+      v_panic(__FILE__, __LINE__, "invalid task pointer: %p", (void *)t);
     }
-#else
-    if ((uint32_t)t < 0x20000000 || (uint32_t)t > 0x20020000 ||
-        t->priority > MAX_PRIORITY) {
-      v_panic(__FILE__, __LINE__, "invalid task pointer: 0x%x", (uint32_t)t);
-    }
-#endif
     current_task = t;
   } else {
     if (current_task->status != TASK_RUNNING) {
@@ -315,16 +537,94 @@ void set_next_task(void) {
     v_panic(__FILE__, __LINE__, "current_task is NULL");
 }
 
-__attribute__((noreturn)) void task_exit(void) {
+// Privileged body: mark the caller terminated, park it for the idle GC, and pend
+// the switch. RETURNS to its caller (the SVC dispatch or task_exit's spin), which
+// is why task_exit — not this — is the noreturn entry.
+void v_task_exit_impl(void) {
   ENTER_CRITICAL();
+  v_ipc_task_teardown(current_task); // release held mutexes / wait memberships
+  v_pbus_task_teardown(current_task); // ... and bus locks
+  v_vfs_task_teardown(current_task);  // ... and files, which get closed not lost
   current_task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, current_task);
   _terminated_count++;
   EXIT_CRITICAL();
+  reap_orphans(); // a task that exits takes the tasks it spawned with it (M3b)
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
+}
 
-  task_yield();
+// A task's function-return LR. Under the unprivileged flip the body touches
+// kernel state (ready lists, ICSR), so an unprivileged task must trap; the
+// dispatch runs v_task_exit_impl privileged. Flag off (or privileged), run it
+// directly. Either way we never return — PendSV switches the terminated task out.
+__attribute__((noreturn)) void task_exit(void) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    v_svc0(SYS_exit); // traps; kernel terminates us; we never resume
+  else
+#endif
+    v_task_exit_impl();
   while (1)
     ;
+}
+
+// --- Syscall-boundary pointer validation (Stage 5, 5c) ----------------------
+// Always compiled (pure, host-testable); only the USE in the syscall dispatch is
+// gated on VAIOS_MPU_USER_SEPARATION.
+// A user pointer is valid only if [p, p+len) lies wholly within the calling
+// task's own block [mem_block, mem_block+stack_size). Overflow-safe. `write` is
+// a hook for a future finer split; the whole block is RW today.
+int v_access_ok(const void *p, uint32_t len, int write) {
+  TCB *t = current_task;
+  if (!t || !t->mem_block)
+    return 0;
+  uintptr_t a = (uintptr_t)p;
+  // Memory outside the block the port says this task may already touch
+  // itself: flash for reads (string literals, const tables), and on the host
+  // the task's separately allocated stack. The port reports exactly what its
+  // (software) MPU grants the running task, so this widens nothing.
+  uintptr_t port_end;
+  if (v_port_user_region(a, write, &port_end))
+    return len <= (uint32_t)(port_end - a);
+  uintptr_t base = (uintptr_t)t->mem_block;
+#if VAIOS_MPU_STACK_GUARD
+  // The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack guard (MPU
+  // AP_NONE) — not readable/writable even by the kernel, and no user object
+  // lives there. Exclude it, or a pointer into the guard would pass validation
+  // and then fault the kernel's own copy. (STAGE5_REVIEW_FINDINGS #11.)
+  base += VAIOS_MPU_GUARD_SIZE;
+#endif
+  uintptr_t end = (uintptr_t)t->mem_block + t->stack_size;
+  if (a < base || a > end)
+    return 0;
+  return len <= (uint32_t)(end - a); // a+len <= end, no wrap (a<=end already)
+}
+
+// Bounded NUL scan for a user string, never reading past the caller's block
+// or the port-reported region it starts in (a literal in flash, a host stack).
+// Returns the length (excluding NUL), or -1 if the pointer is out of bounds or
+// no NUL is found within `max` / that region.
+long v_strnlen_user(const char *s, uint32_t max) {
+  TCB *t = current_task;
+  if (!t || !t->mem_block)
+    return -1;
+  uintptr_t a = (uintptr_t)s;
+  uintptr_t end;
+  if (!v_port_user_region(a, 0, &end)) {
+    uintptr_t base = (uintptr_t)t->mem_block;
+#if VAIOS_MPU_STACK_GUARD
+    base += VAIOS_MPU_GUARD_SIZE; // exclude the no-access guard (v_access_ok)
+#endif
+    end = (uintptr_t)t->mem_block + t->stack_size;
+    if (a < base || a >= end)
+      return -1;
+  }
+  uint32_t avail = (uint32_t)(end - a);
+  uint32_t limit = avail < max ? avail : max;
+  for (uint32_t i = 0; i < limit; i++)
+    if (s[i] == '\0')
+      return (long)i;
+  return -1; // unterminated within bounds
 }
 void task_exit_request(uint32_t task_id) {
   TCB *task = get_task_by_id(task_id);
@@ -338,13 +638,25 @@ void task_exit_request(uint32_t task_id) {
     remove_from_ready_list(task);
   else if (task->status == TASK_DELAYED)
     remove_from_delayed_list(task);
+  else if (task->status == TASK_BLOCKED)
+    // A blocked task already sits on blocked_list (via next/prev); unlink it
+    // before re-enqueuing below, or enqueue_task self-links the node and
+    // corrupts the list. Its wait-queue membership is cleared by the teardown.
+    remove_from_blocked_list(task);
+
+  // Release held mutexes and unlink any wait-queue memberships so a later
+  // give/unlock/wake never touches this soon-freed TCB.
+  v_ipc_task_teardown(task);
+  v_pbus_task_teardown(task); // queued / held v_pbus_lock slots
+  v_vfs_task_teardown(task);  // in-flight file requests, and open files
 
   task->status = TASK_TERMINATED;
   enqueue_task(&blocked_list, task);
   _terminated_count++;
   EXIT_CRITICAL();
 
-  task_yield();
+  reap_orphans(); // anything this task spawned goes with it (M3b)
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 //-----------------------------------------------------------------------------
 // Idle Task Function
@@ -382,22 +694,24 @@ void idle_task_function(void *arg) {
       if (to_free) {
         V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
               to_free->task_id);
+        v_port_free_task_stack(to_free); // release any separate port context
         if (to_free->mem_block) {
           v_free(to_free->mem_block);
           to_free->mem_block = NULL;
         }
+        // The per-task heap lives inside mem_block, so it was already freed
+        // above — no separate release needed.
         v_free(to_free);
       }
     }
 
-#ifdef NAVHAL
     /* Sleep the core until the next interrupt instead of busy-spinning. Each
      * wake does one housekeeping pass (log flush + dead-task GC) then sleeps
      * again, so idle CPU/power collapses from a full-clock spin to interrupt
      * cadence. A wakeup event pending at entry returns immediately, so the GC
-     * and flush still keep up. (No-HAL builds keep the spin.) */
-    hal_cpu_idle();
-#endif
+     * and flush still keep up. The port facade WFIs on HAL targets and is a
+     * no-op (busy-spin) on no-HAL/host builds — no NavHAL knowledge here. */
+    v_port_hw_cpu_idle();
   }
 }
 
@@ -443,6 +757,12 @@ void remove_from_delayed_list(TCB *task) {
 }
 
 void task_delay(uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) { // task-facing: trap into the kernel
+    v_svc1(SYS_delay, ticks);
+    return;
+  }
+#endif
   if (current_task == NULL)
     v_panic(__FILE__, __LINE__, "current_task is NULL");
   if (current_task == idle_task)
@@ -456,10 +776,14 @@ void task_delay(uint32_t ticks) {
   add_to_delayed_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 
 bool task_delay_until(uint32_t *last_wake, uint32_t period) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return v_svc2(SYS_delay_until, (uintptr_t)last_wake, period) != 0;
+#endif
   if (current_task == NULL)
     v_panic(__FILE__, __LINE__, "current_task is NULL");
   if (current_task == idle_task || last_wake == NULL || period == 0)
@@ -479,7 +803,7 @@ bool task_delay_until(uint32_t *last_wake, uint32_t period) {
   add_to_delayed_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
   return true;
 }
 
@@ -537,9 +861,34 @@ int wake_up_delayed_tasks_isr(void) {
       task->delay_ticks = 0;
       task->status = TASK_READY;
       add_to_ready_list(task);
+      task->wait_mutex = NULL; // clear for a timed-out mutex waiter (no-op for sems)
+#if VAIOS_SYSCALL_SVC
+      // Deliver VA_FAIL to a syscall-blocked take()/lock() that timed out.
+      v_syscall_wake_result(task, VA_FAIL);
+#endif
       if (current_task && task->priority > current_task->priority)
         higher_woken = 1;
     }
+#if VAIOS_IPC_FD
+    // 2b. Eject a v_wait() multi-waiter whose timeout expired. Its observer
+    // nodes are unlinked later by mwait_disarm (thread mode); clearing
+    // in_multiwait makes any give on a watched sem skip it in the meantime. The
+    // result must be negative (not VA_FAIL/0, which is a valid ready index) so
+    // v_wait treats it as "timed out" and its disarm reports no ready fd.
+    else if (task->in_multiwait && task->delay_ticks != 0 &&
+             task->delay_ticks < now) {
+      task->in_multiwait = 0;
+      remove_from_blocked_list(task);
+      task->delay_ticks = 0;
+      task->status = TASK_READY;
+      add_to_ready_list(task);
+#if VAIOS_SYSCALL_SVC
+      v_syscall_wake_result(task, -1);
+#endif
+      if (current_task && task->priority > current_task->priority)
+        higher_woken = 1;
+    }
+#endif
     task = next;
   }
 
@@ -568,7 +917,7 @@ void task_block(void) {
   add_to_blocked_list(current_task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 
 void add_to_blocked_list(TCB *task) {
@@ -594,7 +943,7 @@ void task_unblock(uint32_t task_id) {
   add_to_ready_list(task);
   EXIT_CRITICAL();
 
-  task_yield();
+  v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
 void task_change_priority(TCB *task, uint32_t new_priority) {
   if (!task || new_priority > MAX_PRIORITY)
@@ -628,6 +977,11 @@ void scheduler_init(void) {
   scheduler_running = 0;
   task_create(idle_task_function, NULL, IDLE_TASK_STACK_SIZE, 0);
   idle_task = ready_lists[0];
+#if VAIOS_MPU_USER_SEPARATION
+  // The idle task runs kernel housekeeping (log flush, dead-task GC), so it must
+  // stay privileged even though task_create defaults new tasks to unprivileged.
+  idle_task->privileged = 1;
+#endif
   current_task = idle_task;
 }
 

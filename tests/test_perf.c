@@ -40,7 +40,7 @@ static void reset(void) {
 
 /* Some tests need a valid current_task because they call into vfs_open,
  * which on the host build routes through v_mutex_lock — that derefs
- * current_task. The earlier suites (run_vfs_tests) leave vfs_mutex
+ * current_task. The earlier vfs_suite leaves vfs_mutex
  * non-NULL, so we can't bypass the lock. Use this sentinel TCB. */
 static TCB _vfs_dummy_task = {.task_id = 99, .priority = 1, .magic = TCB_MAGIC};
 static void reset_with_current_task(void) {
@@ -372,28 +372,31 @@ static void test_dump_to_file_opens_truncating_write_only(void) {
 /* Suite entrypoint                                                       */
 /* ---------------------------------------------------------------------- */
 
-void run_perf_tests(void) {
-  TEST_SUITE_BEGIN("perf");
-  TEST_RUN(test_reset_zeros_sched_switches);
-  TEST_RUN(test_sched_switch_counter_monotonic);
-  TEST_RUN(test_sched_per_task_accumulate);
-  TEST_RUN(test_sched_idle_accounting);
-  TEST_RUN(test_sched_max_burst_tracks_largest);
-  TEST_RUN(test_isr_systick_min_max_last);
-  TEST_RUN(test_isr_systick_preemption_counter);
-  TEST_RUN(test_ipc_counters_independent);
-  TEST_RUN(test_heap_alloc_per_class_bucketing);
-  TEST_RUN(test_heap_free_coalesces_sum);
-  TEST_RUN(test_heap_oom_separate_from_allocs);
-  TEST_RUN(test_heap_peak_is_monotonic);
-  TEST_RUN(test_snapshot_bundles_all_subsystems);
-  TEST_RUN(test_task_stats_copies_from_tcb);
-  TEST_RUN(test_task_stack_highwater);
-  TEST_RUN(test_task_stack_highwater_edges);
-  TEST_RUN(test_task_stats_null_task_returns_zero);
-  TEST_RUN(test_dump_to_file_open_failure_returns_minus_one);
-  TEST_RUN(test_dump_to_file_null_path_returns_minus_one);
-  TEST_RUN(test_dump_to_file_success_writes_csv);
-  TEST_RUN(test_dump_to_file_opens_truncating_write_only);
-  TEST_SUITE_END();
-}
+static const test_case_t perf_cases[] = {
+    TEST_CASE(test_reset_zeros_sched_switches),
+    TEST_CASE(test_sched_switch_counter_monotonic),
+    TEST_CASE(test_sched_per_task_accumulate),
+    TEST_CASE(test_sched_idle_accounting),
+    TEST_CASE(test_sched_max_burst_tracks_largest),
+    TEST_CASE(test_isr_systick_min_max_last),
+    TEST_CASE(test_isr_systick_preemption_counter),
+    TEST_CASE(test_ipc_counters_independent),
+    TEST_CASE(test_heap_alloc_per_class_bucketing),
+    TEST_CASE(test_heap_free_coalesces_sum),
+    TEST_CASE(test_heap_oom_separate_from_allocs),
+    TEST_CASE(test_heap_peak_is_monotonic),
+    TEST_CASE(test_snapshot_bundles_all_subsystems),
+    TEST_CASE(test_task_stats_copies_from_tcb),
+    TEST_CASE(test_task_stack_highwater),
+    TEST_CASE(test_task_stack_highwater_edges),
+    TEST_CASE(test_task_stats_null_task_returns_zero),
+    TEST_CASE(test_dump_to_file_open_failure_returns_minus_one),
+    TEST_CASE(test_dump_to_file_null_path_returns_minus_one),
+    TEST_CASE(test_dump_to_file_success_writes_csv),
+    TEST_CASE(test_dump_to_file_opens_truncating_write_only),
+};
+const test_suite_t perf_suite = {
+    .name = "perf",
+    .cases = perf_cases,
+    .count = TEST_COUNT(perf_cases),
+};

@@ -9,7 +9,25 @@ void print_fmt(const char *fmt, ...);
 int print_fmt_buf(char *out, uint32_t out_size, const char *fmt, ...);
 int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args);
 
+// Kernel-side direct log (printk): the privileged console path. Separate from
+// the task-facing v_printf(), which formats and traps through write(fd 1).
+#define printk print_fmt
+
+#if VAIOS_DEVFS
+// Task-facing printf: formats, then routes through write(1) -> /dev/console.
+int v_printf(const char *fmt, ...);
+// Kernel log ring backing /dev/kmsg (appended by the printk path; drained by a
+// task read()ing /dev/kmsg).
+void v_kmsg_append(const char *buf, uint32_t len);
+int v_kmsg_read(char *out, uint32_t len);
+#endif
+
 uint32_t v_get_ticks(void);
+
+// Kernel SysTick body: advance the tick, wake delayed tasks, pend PendSV. The
+// arch vector handler (portable/<arch>/) calls this, so the CMSIS vector name
+// stays out of the kernel.
+void v_kernel_tick(void);
 
 typedef enum {
   LOG_TRACE, // Extremely fine-grained information (every function call,

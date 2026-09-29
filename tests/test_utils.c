@@ -53,6 +53,16 @@ static void test_pf_percent_x_lower(void) {
               strcmp(buf, "DEADBEEF") == 0); /* tolerate either case */
 }
 
+/* %p prints the full pointer width (uintptr_t), 0x-prefixed, and consumes
+ * exactly one arg — so a trailing specifier still reads its own value (the
+ * host-port desync regression: %p emitted literally ate the next arg). */
+static void test_pf_percent_p(void) {
+  char buf[64] = {0};
+  void *p = (void *)(uintptr_t)0xABCD;
+  print_fmt_buf(buf, sizeof(buf), "%p tail=%u", p, 7u);
+  TEST_ASSERT(strcmp(buf, "0xabcd tail=7") == 0);
+}
+
 static void test_pf_percent_s(void) {
   char buf[32] = {0};
   print_fmt_buf(buf, sizeof(buf), "value=%s", "world");
@@ -82,8 +92,12 @@ static void test_pf_truncation_respects_buf_size(void) {
    * write past out_size — verify the trailing canary byte. */
   char buf[16];
   memset(buf, 0xAA, sizeof(buf));
-  print_fmt_buf(buf, 8, "%s", "abcdefghijk");
+  int n = print_fmt_buf(buf, 8, "%s", "abcdefghijk");
   TEST_ASSERT_EQ((unsigned char)buf[15], 0xAAu); /* untouched */
+  /* Truncation is silent: the return is the capped length, not the length the
+   * message wanted. v_log keys its '~' marker off exactly this, so if the
+   * formatter ever starts returning the would-be length, the marker breaks. */
+  TEST_ASSERT_EQ(n, 7);
 }
 
 static void test_pf_empty_format(void) {
@@ -130,28 +144,86 @@ static void test_atof_leading_whitespace(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * v_memset / v_memcpy / v_strcmp / v_strncmp — pure mem/string helpers used
+ * across the kernel (previously 0-call in coverage).
+ * ---------------------------------------------------------------------- */
+
+static void test_memset_fills(void) {
+  unsigned char b[8];
+  void *r = v_memset(b, 0xAB, sizeof b);
+  TEST_ASSERT_EQ(r, (void *)b);
+  for (unsigned i = 0; i < sizeof b; i++)
+    TEST_ASSERT_EQ(b[i], 0xAB);
+}
+
+static void test_memset_zero_len(void) {
+  unsigned char b[4] = {1, 2, 3, 4};
+  v_memset(b, 0xFF, 0); /* no-op */
+  TEST_ASSERT_EQ(b[0], 1);
+}
+
+static void test_memcpy_copies(void) {
+  const char src[] = "abcdef";
+  char dst[8] = {0};
+  void *r = v_memcpy(dst, src, 7);
+  TEST_ASSERT_EQ(r, (void *)dst);
+  TEST_ASSERT(strcmp(dst, "abcdef") == 0);
+}
+
+static void test_memcpy_zero_len(void) {
+  char dst[4] = {'x', 'x', 'x', 'x'};
+  v_memcpy(dst, "yy", 0);
+  TEST_ASSERT_EQ(dst[0], 'x'); /* untouched */
+}
+
+static void test_strcmp_equal_and_order(void) {
+  TEST_ASSERT_EQ(v_strcmp("abc", "abc"), 0);
+  TEST_ASSERT(v_strcmp("abc", "abd") < 0);
+  TEST_ASSERT(v_strcmp("abd", "abc") > 0);
+  TEST_ASSERT(v_strcmp("ab", "abc") < 0); /* shorter prefix compares less */
+}
+
+static void test_strncmp_bounded(void) {
+  TEST_ASSERT_EQ(v_strncmp("abcXX", "abcYY", 3), 0); /* equal in first 3 */
+  TEST_ASSERT(v_strncmp("abc", "abd", 3) < 0);
+  TEST_ASSERT_EQ(v_strncmp("abc", "abd", 2), 0); /* equal in first 2 */
+  TEST_ASSERT_EQ(v_strncmp("", "", 5), 0);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_utils_tests(void) {
-  TEST_SUITE_BEGIN("utils (print_fmt_buf + v_atof)");
-  /* print_fmt_buf */
-  TEST_RUN(test_pf_plain_string);
-  TEST_RUN(test_pf_percent_d_positive);
-  TEST_RUN(test_pf_percent_d_negative);
-  TEST_RUN(test_pf_percent_d_zero);
-  TEST_RUN(test_pf_percent_u);
-  TEST_RUN(test_pf_percent_x_lower);
-  TEST_RUN(test_pf_percent_s);
-  TEST_RUN(test_pf_percent_c);
-  TEST_RUN(test_pf_double_percent);
-  TEST_RUN(test_pf_multiple_args);
-  TEST_RUN(test_pf_truncation_respects_buf_size);
-  TEST_RUN(test_pf_empty_format);
-  /* v_atof */
-  TEST_RUN(test_atof_integer);
-  TEST_RUN(test_atof_decimal);
-  TEST_RUN(test_atof_negative);
-  TEST_RUN(test_atof_zero);
-  TEST_RUN(test_atof_leading_whitespace);
-  TEST_SUITE_END();
-}
+static const test_case_t utils_cases[] = {
+    /* print_fmt_buf */
+    TEST_CASE(test_pf_plain_string),
+    TEST_CASE(test_pf_percent_d_positive),
+    TEST_CASE(test_pf_percent_d_negative),
+    TEST_CASE(test_pf_percent_d_zero),
+    TEST_CASE(test_pf_percent_u),
+    TEST_CASE(test_pf_percent_x_lower),
+    TEST_CASE(test_pf_percent_p),
+    TEST_CASE(test_pf_percent_s),
+    TEST_CASE(test_pf_percent_c),
+    TEST_CASE(test_pf_double_percent),
+    TEST_CASE(test_pf_multiple_args),
+    TEST_CASE(test_pf_truncation_respects_buf_size),
+    TEST_CASE(test_pf_empty_format),
+    /* v_atof */
+    TEST_CASE(test_atof_integer),
+    TEST_CASE(test_atof_decimal),
+    TEST_CASE(test_atof_negative),
+    TEST_CASE(test_atof_zero),
+    TEST_CASE(test_atof_leading_whitespace),
+    /* mem/string helpers */
+    TEST_CASE(test_memset_fills),
+    TEST_CASE(test_memset_zero_len),
+    TEST_CASE(test_memcpy_copies),
+    TEST_CASE(test_memcpy_zero_len),
+    TEST_CASE(test_strcmp_equal_and_order),
+    TEST_CASE(test_strncmp_bounded),
+};
+const test_suite_t utils_suite = {
+    .name = "utils (print_fmt_buf + v_atof)",
+    .cases = utils_cases,
+    .count = TEST_COUNT(utils_cases),
+};

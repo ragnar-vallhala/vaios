@@ -14,6 +14,7 @@
 #include "atomic.h"
 #include "port.h" /* ENTER_CRITICAL / EXIT_CRITICAL */
 #include "task.h"
+#include "syscall.h" /* SVC trap wrappers (VAIOS_SYSCALL_SVC) */
 #include "utils.h" /* print_fmt, print_fmt_buf, v_get_ticks */
 
 #include <stddef.h>
@@ -96,7 +97,7 @@ uint32_t v_perf_sched_switches(void) { return _perf_sched_switches; }
 uint64_t v_perf_idle_cycles(void)    { return _perf_idle_cycles; }
 
 /* --------------------------------------------------------------------------
- * ISR accounting. Hooked from SysTick_Handler via PERF_ISR_SYSTICK_BEGIN /
+ * ISR accounting. Hooked from v_kernel_tick via PERF_ISR_SYSTICK_BEGIN /
  * PERF_ISR_SYSTICK_END (see perf_hooks.h).
  *
  * Stats are bare 32-bit globals; the single writer is SysTick itself,
@@ -242,19 +243,60 @@ void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out) {
   ENTER_CRITICAL();
   *out = t->perf;
   EXIT_CRITICAL();
-  /* Stack high-water: unused stack still holds the V_PERF_STACK_FILL sentinel
-   * painted at create. The untouched run at the bottom (the deepest the stack
-   * can grow) is free headroom; the rest is the peak ever used. Read racily
-   * w.r.t. a running task, but the high-water only grows so a stale read is
-   * safe. Scanned outside the critical section to keep it short. */
+  /* Stack high-water: the untouched free middle still holds the
+   * V_PERF_STACK_FILL sentinel painted at create. The stack grows DOWN from the
+   * TOP, so count the used run from the top word down to the first sentinel —
+   * that is the deepest the stack ever reached, independent of any heap growing
+   * up from the bottom of the same block. Read racily w.r.t. a running task,
+   * but the high-water only grows so a stale read is safe; scanned outside the
+   * critical section to keep it short. */
   out->stack_size = t->stack_size;
-  out->stack_peak = t->stack_size;
+  out->stack_peak = t->stack_size; /* default (e.g. NULL mem_block): assume fully used */
+  out->heap_peak = 0;
+  out->total_peak = 0;
   if (t->mem_block && t->stack_size) {
     uint32_t total = t->stack_size / sizeof(uint32_t);
-    uint32_t freew = 0;
-    while (freew < total && t->mem_block[freew] == V_PERF_STACK_FILL)
-      freew++;
-    out->stack_peak = t->stack_size - freew * (uint32_t)sizeof(uint32_t);
+    /* The untouched free middle is a contiguous sentinel run bounded below by
+     * the heap's PEAK (memory the heap never reached, so still sentinel) and
+     * above by the deepest the stack ever grew. Scan UP from the heap peak: the
+     * first non-sentinel word is the stack's low-water, so the span from there
+     * to the top is the stack high-water. Scanning from the top instead would
+     * stop at the first unwritten local inside a live frame and under-report.
+     * With no heap, the run starts at the block base (index 0), matching the
+     * original stack-only measurement. */
+    uint32_t start = 0;
+#if VAIOS_MPU_STACK_GUARD
+    /* The bottom VAIOS_MPU_GUARD_SIZE bytes are the no-access stack-overflow
+     * guard region. AP=000 denies EVERYONE, privileged included, so scanning
+     * from the block base faults the kernel — and from a syscall handler that
+     * fault escalates with the logger unavailable, which looks like a hang.
+     * task.c skips the guard the same way wherever it walks a task block. */
+    start = VAIOS_MPU_GUARD_SIZE / sizeof(uint32_t);
+#endif
+#if VAIOS_TASK_HEAP
+    /* The heap's peak break is already above the guard (heap_base = block base
+     * + guard), and memory the heap never reached still holds the sentinel. */
+    if (t->heap_peak_brk) {
+      uint32_t h = (uint32_t)((t->heap_peak_brk - (uint8_t *)t->mem_block) /
+                              sizeof(uint32_t));
+      if (h > start)
+        start = h;
+    }
+#endif
+    uint32_t j = start;
+    while (j < total && t->mem_block[j] == V_PERF_STACK_FILL)
+      j++;
+    out->stack_peak = (total - j) * (uint32_t)sizeof(uint32_t);
+#if VAIOS_TASK_HEAP
+    /* Heap peak = highest break ever reached, from heap_base. total_peak is the
+     * worst-case combined footprint and folds in the guard, since
+     * heap_peak_brk - mem_block = guard + heap. */
+    out->heap_peak = (uint32_t)(t->heap_peak_brk - t->heap_base);
+    out->total_peak =
+        (uint32_t)(t->heap_peak_brk - (uint8_t *)t->mem_block) + out->stack_peak;
+#else
+    out->total_peak = out->stack_peak;
+#endif
   }
 }
 
@@ -266,6 +308,12 @@ void v_perf_task_stats(struct Task_Control_Block *t, v_perf_task_t *out) {
  * -------------------------------------------------------------------------- */
 
 void v_perf_snapshot(v_perf_snapshot_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) { // task-facing: the DWT and the counters are kernel-side
+    v_svc2(SYS_perf_snapshot, (uintptr_t)out, 0);
+    return;
+  }
+#endif
   if (!out) return;
   ENTER_CRITICAL();
   out->cycles         = v_perf_cycles();
@@ -276,6 +324,16 @@ void v_perf_snapshot(v_perf_snapshot_t *out) {
   v_perf_isr_stats(&out->isr);
   v_perf_ipc_stats(&out->ipc);
   v_perf_heap_stats(&out->heap);
+}
+
+void v_perf_self_stats(v_perf_task_t *out) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) {
+    v_svc2(SYS_perf_snapshot, 0, (uintptr_t)out);
+    return;
+  }
+#endif
+  v_perf_task_stats(get_current_task(), out);
 }
 
 /* --------------------------------------------------------------------------
@@ -290,7 +348,7 @@ void v_perf_snapshot(v_perf_snapshot_t *out) {
  * the two on the same UART corrupts both streams byte-by-byte. Callers
  * that want an "announcement" line immediately before the snapshot
  * should use print_fmt for that line too — not v_log. See
- * examples/perf_example.c for the pattern.
+ * examples/30_perf_example.c for the pattern.
  */
 void v_perf_dump(void) {
   v_perf_snapshot_t s;
@@ -347,14 +405,14 @@ void v_perf_dump(void) {
       v_perf_task_stats(tasks[i], &ts);
       unsigned st = (unsigned)tasks[i]->status;
       const char *nm = task_get_name(tasks[i]);
-      print_fmt("  t%u %s%s%sp%u %s cyc=0x%x%x sw=%u stack=%u/%u\r\n",
-                (unsigned)tasks[i]->task_id, nm[0] ? "\"" : "", nm,
-                nm[0] ? "\" " : "", (unsigned)tasks[i]->priority,
-                stname[st <= 4u ? st : 0u],
-                (unsigned)(ts.cycles_run >> 32),
-                (unsigned)(ts.cycles_run & 0xFFFFFFFFu),
-                (unsigned)ts.switches_in, (unsigned)ts.stack_peak,
-                (unsigned)ts.stack_size);
+      print_fmt(
+          "  t%u %s%s%sp%u %s cyc=0x%x%x sw=%u stack=%u heap=%u total=%u/%u\r\n",
+          (unsigned)tasks[i]->task_id, nm[0] ? "\"" : "", nm,
+          nm[0] ? "\" " : "", (unsigned)tasks[i]->priority,
+          stname[st <= 4u ? st : 0u], (unsigned)(ts.cycles_run >> 32),
+          (unsigned)(ts.cycles_run & 0xFFFFFFFFu), (unsigned)ts.switches_in,
+          (unsigned)ts.stack_peak, (unsigned)ts.heap_peak,
+          (unsigned)ts.total_peak, (unsigned)ts.stack_size);
     }
   }
   print_fmt("=== end ===\r\n");

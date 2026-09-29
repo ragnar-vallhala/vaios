@@ -399,7 +399,10 @@ static int handoff_server_step(void) {
 
 /* A correct requester: take the token, DRAIN any stale response, request, let
  * the server answer, take the response, release the token. */
-static uint32_t handoff_call(uint32_t id) {
+/* Writes the response to *out. Void (not uint32_t-returning) so the TEST_ASSERT
+ * early-return — which yields no value — is well-formed. */
+static void handoff_call(uint32_t id, uint32_t *out) {
+  *out = 0;
   uint8_t tok;
   TEST_ASSERT(mpmc_try_pop(&hs_lock, &tok));
   uint32_t junk;
@@ -410,14 +413,17 @@ static uint32_t handoff_call(uint32_t id) {
   uint32_t res = 0;
   TEST_ASSERT(mpmc_try_pop(&hs_res, &res));
   mpmc_try_push(&hs_lock, &tok);
-  return res;
+  *out = res;
 }
 
 /* Normal operation: every request gets its own response, repeatedly. */
 static void test_handoff_pairs_request_with_response(void) {
   handoff_setup();
-  for (uint32_t id = 1u; id <= 32u; id++)
-    TEST_ASSERT_EQ(handoff_call(id), HS_ANSWER(id));
+  for (uint32_t id = 1u; id <= 32u; id++) {
+    uint32_t r;
+    handoff_call(id, &r);
+    TEST_ASSERT_EQ(r, HS_ANSWER(id));
+  }
 }
 
 /* After a requester abandons its wait (a stale response left parked), the next
@@ -432,7 +438,9 @@ static void test_handoff_drain_recovers_after_abandon(void) {
   mpmc_try_push(&hs_lock, &tok);        /* A releases WITHOUT popping its res */
   TEST_ASSERT(!mpmc_is_empty(&hs_res)); /* a stale response is parked */
 
-  TEST_ASSERT_EQ(handoff_call(11u), HS_ANSWER(11u)); /* B gets B's answer */
+  uint32_t r11;
+  handoff_call(11u, &r11);
+  TEST_ASSERT_EQ(r11, HS_ANSWER(11u)); /* B gets B's answer */
 }
 
 /* Documents WHY the drain is required: a naive requester that skips it reads the
@@ -460,35 +468,38 @@ static void test_handoff_without_drain_desyncs(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_structure_tests(void) {
-  TEST_SUITE_BEGIN("Structure (SPSC FIFO & MPMC Queue)");
-  /* SPSC */
-  TEST_RUN(test_spsc_init_empty);
-  TEST_RUN(test_spsc_write_read_single);
-  TEST_RUN(test_spsc_write_read_multi);
-  TEST_RUN(test_spsc_full_drop_policy);
-  TEST_RUN(test_spsc_perf_peak_and_drops);
-  TEST_RUN(test_spsc_overwrite_counts_drops);
-  TEST_RUN(test_spsc_full_overwrite_policy);
-  TEST_RUN(test_spsc_wrap_around);
-  TEST_RUN(test_spsc_peek_does_not_consume);
-  TEST_RUN(test_spsc_skip_consumes_without_copying);
-  TEST_RUN(test_spsc_reset);
-  TEST_RUN(test_spsc_zero_copy_write_read);
-  /* MPMC */
-  TEST_RUN(test_mpmc_init_empty);
-  TEST_RUN(test_mpmc_try_push_pop_single);
-  TEST_RUN(test_mpmc_try_pop_empty);
-  TEST_RUN(test_mpmc_bulk);
-  TEST_RUN(test_mpmc_full_try_push_fails);
-  TEST_RUN(test_mpmc_blocking_push_pop_immediate);
-  TEST_RUN(test_mpmc_peek_does_not_consume);
-  TEST_RUN(test_mpmc_peek_empty_fails);
-  TEST_RUN(test_mpmc_reset_empties);
-  TEST_RUN(test_mpmc_overwrite_policy);
-  /* Request/response handoff contract (fs_owner rendezvous) */
-  TEST_RUN(test_handoff_pairs_request_with_response);
-  TEST_RUN(test_handoff_drain_recovers_after_abandon);
-  TEST_RUN(test_handoff_without_drain_desyncs);
-  TEST_SUITE_END();
-}
+static const test_case_t structure_cases[] = {
+    /* SPSC */
+    TEST_CASE(test_spsc_init_empty),
+    TEST_CASE(test_spsc_write_read_single),
+    TEST_CASE(test_spsc_write_read_multi),
+    TEST_CASE(test_spsc_full_drop_policy),
+    TEST_CASE(test_spsc_perf_peak_and_drops),
+    TEST_CASE(test_spsc_overwrite_counts_drops),
+    TEST_CASE(test_spsc_full_overwrite_policy),
+    TEST_CASE(test_spsc_wrap_around),
+    TEST_CASE(test_spsc_peek_does_not_consume),
+    TEST_CASE(test_spsc_skip_consumes_without_copying),
+    TEST_CASE(test_spsc_reset),
+    TEST_CASE(test_spsc_zero_copy_write_read),
+    /* MPMC */
+    TEST_CASE(test_mpmc_init_empty),
+    TEST_CASE(test_mpmc_try_push_pop_single),
+    TEST_CASE(test_mpmc_try_pop_empty),
+    TEST_CASE(test_mpmc_bulk),
+    TEST_CASE(test_mpmc_full_try_push_fails),
+    TEST_CASE(test_mpmc_blocking_push_pop_immediate),
+    TEST_CASE(test_mpmc_peek_does_not_consume),
+    TEST_CASE(test_mpmc_peek_empty_fails),
+    TEST_CASE(test_mpmc_reset_empties),
+    TEST_CASE(test_mpmc_overwrite_policy),
+    /* Request/response handoff contract (fs_owner rendezvous) */
+    TEST_CASE(test_handoff_pairs_request_with_response),
+    TEST_CASE(test_handoff_drain_recovers_after_abandon),
+    TEST_CASE(test_handoff_without_drain_desyncs),
+};
+const test_suite_t structure_suite = {
+    .name = "Structure (SPSC FIFO & MPMC Queue)",
+    .cases = structure_cases,
+    .count = TEST_COUNT(structure_cases),
+};

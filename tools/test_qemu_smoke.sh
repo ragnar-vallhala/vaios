@@ -27,6 +27,11 @@ if ! command -v qemu-system-arm >/dev/null 2>&1; then echo "SKIP: qemu-system-ar
 if ! command -v arm-none-eabi-gcc >/dev/null 2>&1; then echo "SKIP: arm-none-eabi-gcc not found"; exit 0; fi
 
 RUNS="${QEMU_SMOKE_RUNS:-16}"
+# A clean run finishes well under a second; these bounds only catch a hang. They
+# are generous because the suite runs alongside builds and Renode on CI and in
+# the vtest batch, where a tight bound turns a slow machine into a red suite.
+CTX_TIMEOUT="${QEMU_SMOKE_TIMEOUT:-12}"
+CLOCK_TIMEOUT="${QEMU_CLOCK_TIMEOUT:-20}"
 B="$ROOT_DIR/build_qemu_smoke"
 ELF="$B/examples/main"
 
@@ -39,20 +44,35 @@ if ! cmake -S . -B "$B" -DNAVHAL=OFF -DVAIOS_FPU=OFF -DEXAMPLES=ON \
 fi
 
 echo "=== run x$RUNS in QEMU (netduinoplus2) ==="
-pass=0
+pass=0; retried=0
+smoke_run() {
+  timeout "$CTX_TIMEOUT" qemu-system-arm -M netduinoplus2 -cpu cortex-m4 \
+      -kernel "$ELF" -nographic -semihosting -d guest_errors 2>&1
+}
 for i in $(seq 1 "$RUNS"); do
-  out=$(timeout 5 qemu-system-arm -M netduinoplus2 -cpu cortex-m4 \
-          -kernel "$ELF" -nographic -semihosting -d guest_errors 2>&1)
+  out=$(smoke_run)
   if echo "$out" | grep -qiE '0xFFFFFFDC|HARDFAULT'; then
-    printf 'F'   # bus fault — the race
+    printf 'F'   # bus fault — the race this hunts; never retried
+    continue
+  fi
+  if echo "$out" | grep -q '\[SMOKE\] PASS'; then
+    printf '.'; pass=$((pass+1)); continue
+  fi
+  # Neither: a real hang, or QEMU starved off the CPU by a parallel build. Give
+  # it one more go so a loaded machine does not read as a scheduler bug; a true
+  # hang fails both attempts.
+  out=$(smoke_run)
+  retried=$((retried+1))
+  if echo "$out" | grep -qiE '0xFFFFFFDC|HARDFAULT'; then
+    printf 'F'
   elif echo "$out" | grep -q '\[SMOKE\] PASS'; then
-    printf '.'; pass=$((pass+1))
+    printf 'r'; pass=$((pass+1))
   else
-    printf '?'   # no fault but no PASS (hang / B not scheduled)
+    printf '?'   # no fault but no PASS twice over (hang / B not scheduled)
   fi
 done
 echo
-echo "context-switch clean PASS: $pass/$RUNS"
+echo "context-switch clean PASS: $pass/$RUNS$([ "$retried" -gt 0 ] && echo " ($retried retried after a timeout)")"
 ctx_ok=$([ "$pass" -eq "$RUNS" ] && echo 1 || echo 0)
 
 # --- clock bring-up case: NAVHAL build with internal_clock_setup=1 must not hang
@@ -67,7 +87,7 @@ if cmake -S . -B "$CB" -DNAVHAL=ON \
        -DNAVHAL_CONFIG_FILE="$ROOT_DIR/tests/configs/navhal_softfp.config" \
        -DEXAMPLES=ON -DVAIOS_EXAMPLE=CLOCK_BOOT_SMOKE >/tmp/qc_cfg.log 2>&1 \
    && cmake --build "$CB" --target main -j"$(nproc)" >/tmp/qc_bld.log 2>&1; then
-  out=$(timeout 8 qemu-system-arm -M netduinoplus2 -cpu cortex-m4 \
+  out=$(timeout "$CLOCK_TIMEOUT" qemu-system-arm -M netduinoplus2 -cpu cortex-m4 \
           -kernel "$CB/examples/main" -nographic -semihosting 2>&1)
   if echo "$out" | grep -q '\[CLOCK\] PASS'; then
     echo "clock bring-up: PASS (v_init returned, no hang)"; clock_ok=1

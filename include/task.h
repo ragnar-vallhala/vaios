@@ -7,14 +7,20 @@
 
 #include "vaios_config.h"
 #include "perf.h"
+#include "vfile.h" // v_fd_entry (per-task fd table)
 
 //-----------------------------------------------------------------------------
-// Architecture Validation
-// Require CORTEX_M to be defined by the build system/port.
+// Architecture validation
+// The Kconfig arch `choice` always selects exactly one port, so this is a
+// sanity check that the generated config actually reached this TU (i.e. the
+// build force-includes vaios_autoconf.h) rather than a hand-maintained arch
+// gate. The kernel below reads capability symbols (VAIOS_ARCH_HAS_MPU, ...),
+// never an arch name.
 //-----------------------------------------------------------------------------
-#ifndef CORTEX_M4
+#if !defined(VAIOS_ARCH_CORTEX_M4) && !defined(VAIOS_ARCH_HOST) &&             \
+    !defined(VAIOS_ARCH_AVR)
 #error                                                                         \
-    "Define a valid architecture macro (e.g., CORTEX_M) before including task.h"
+    "No vaios arch selected -- is vaios_autoconf.h on the include path? Run the Kconfig step."
 #endif
 
 //-----------------------------------------------------------------------------
@@ -31,13 +37,33 @@ typedef enum {
 //-----------------------------------------------------------------------------
 // Task Control Block (TCB) Structure
 //-----------------------------------------------------------------------------
+#if VAIOS_IPC_FD
+// One multi-wait registration: a v_wait()ing task links a node into each
+// watched semaphore's observer list. When that sem becomes ready (count goes
+// positive) the give path walks the list and wakes each node's owner. `sem` is
+// the sema_t the node is linked into (opaque here); `idx` is unused by the
+// kernel but kept for symmetry with the fds[] the caller passed.
+struct Task_Control_Block;
+typedef struct v_wnode {
+  struct v_wnode *next; // next observer in the sem's list
+  void *sem;            // sema_t this node is linked into
+  struct Task_Control_Block *owner;
+  int32_t idx;
+} v_wnode;
+#endif
+
 typedef struct Task_Control_Block {
   uint32_t *sp;           // Current stack pointer (PSP)
   uint32_t *mem_block;    // Base of allocated stack memory
   void *arg;              // Task argument
   void (*entry)(void *);  // Task entry function
   uint32_t stack_size;    // Stack size in bytes
-  uint32_t task_id;       // Unique task identifier
+  uint32_t task_id;       // Unique task identifier (monotonic; never reused)
+  // Lifecycle ownership (M3): the task that spawned this one, 0 for tasks
+  // created by privileged init. Only the parent may end a child, and a task's
+  // live children die with it. Counted by scanning when needed rather than
+  // cached, so there is no counter to drift across the exit paths.
+  uint32_t parent_id;
   const char *name;       // Optional human-readable name (flash literal, not
                           // owned/copied; "" when unset). See task_get_name.
   uint32_t delay_ticks;   // Absolute wakeup tick (deadline)
@@ -58,6 +84,55 @@ typedef struct Task_Control_Block {
   struct Task_Control_Block *wait_next;
 #if VAIOS_MODULE_PERF
   v_perf_task_t perf; // Per-task perf counters (see perf.h)
+#endif
+#if VAIOS_MPU_STACK_GUARD
+  // Pre-encoded MPU stack-guard region (RBAR/RASR word pair), applied on
+  // context switch. Opaque here (mirrors NavHAL's hal_mpu_encoded_t) so task.h
+  // stays architecture-independent. Valid only when mpu_guard_valid != 0.
+  uint32_t mpu_guard[2];
+  uint8_t mpu_guard_valid;
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+  // Pre-encoded per-task RW-unprivileged region over the WHOLE block, applied on
+  // context switch alongside the guard. Grants the running (unprivileged) task
+  // access to only its own stack+heap; the higher-numbered guard still wins at
+  // the base. Valid only when mpu_block_valid != 0.
+  uint32_t mpu_block[2];
+  uint8_t mpu_block_valid;
+  // Privilege of this task's thread-mode execution: 0 = unprivileged (the
+  // default for user tasks), 1 = privileged. Applied to CONTROL.nPRIV on
+  // switch-in. The idle task is privileged (it does kernel housekeeping).
+  uint8_t privileged;
+#endif
+#if VAIOS_SYSCALL_SVC
+  // Deferred blocking-syscall result: set by the waker (v_syscall_wake_result)
+  // and written into this task's stacked r0 by PendSV (v_syscall_deliver_result)
+  // when it is next scheduled in, so a blocked sem_take/mutex_lock returns it.
+  int32_t syscall_result;
+  uint8_t has_syscall_result;
+#endif
+#if VAIOS_DEVFS
+  v_fd_entry fds[VAIOS_MAX_FDS]; // per-task file-descriptor table (Stage 2)
+#endif
+#if VAIOS_TASK_HEAP
+  // Per-task heap (Stage 4). The heap lives at the LOW end of this task's own
+  // mem_block (just above the stack guard) and grows UP; the stack grows down
+  // from the top of the same block. heap_base is fixed (block base + guard);
+  // heap_brk is the current top of the heap, bounded at malloc time by the live
+  // stack pointer. malloc/free/calloc/realloc (memory.c) operate here.
+  uint8_t *heap_base;
+  uint8_t *heap_brk;
+  uint8_t *heap_peak_brk; // highest heap_brk ever reached (peak footprint)
+#endif
+#if VAIOS_IPC_FD
+  // Multi-fd wait (v_wait). While blocked in v_wait, in_multiwait == 1 and
+  // wnodes[0..narm) are linked into the watched sems' observer lists; the give
+  // path or the timeout scan clears in_multiwait and wakes the task, which then
+  // unlinks the nodes. Bounded by the fd-table size (can't watch more fds than
+  // it holds).
+  v_wnode wnodes[VAIOS_MAX_FDS];
+  uint8_t in_multiwait;
+  uint8_t narm; // number of currently armed wnodes
 #endif
   uint32_t magic; // Sanity check (must be TCB_MAGIC)
 } TCB;
@@ -88,25 +163,81 @@ TCB *get_highest_priority_task(void);
 // Task Stack Initialization (port-specific)
 //-----------------------------------------------------------------------------
 void init_task_stack(TCB *task); // Implemented in port.c
+// Release any port-owned per-task context that init_task_stack allocated
+// separately from mem_block (the host port's ucontext stack). Called by the
+// dead-task GC just before mem_block/TCB are freed. A no-op on ports that keep
+// the context inside mem_block (Cortex-M). Implemented in port.c.
+void v_port_free_task_stack(TCB *task);
 
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
-uint32_t task_create(void (*entry)(void *), void *arg, uint32_t stack_size,
+uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority);
 // As task_create, but also tags the task with a human-readable name for
 // diagnostics (perf dumps, telemetry). `name` must point at storage that
 // outlives the task — typically a string literal in flash; the TCB keeps the
 // pointer, not a copy. Pass NULL or "" for an unnamed task. task_create() is a
 // thin wrapper over this with name = "".
-uint32_t task_create_named(void (*entry)(void *), void *arg,
-                           uint32_t stack_size, uint32_t priority,
-                           const char *name);
+uint32_t task_create_named(void (*entry)(void *), void *arg, uint32_t size,
+                           uint32_t priority, const char *name);
+#if VAIOS_MPU_USER_SEPARATION
+// As task_create_named, but the task runs PRIVILEGED: it may touch kernel memory
+// and peripherals. For the kernel's own service tasks — the VFS I/O worker is
+// the reason this exists — never for application work. Only privileged code can
+// call it, because task_create* is not a syscall.
+uint32_t task_create_privileged(void (*entry)(void *), void *arg, uint32_t size,
+                                uint32_t priority, const char *name);
+#endif
 // Tag an existing task by id (e.g. after task_create). `name` storage must
 // outlive the task (string literal in flash). No-op if the id is unknown.
 void task_set_name(uint32_t task_id, const char *name);
 // Human-readable task name, or "" if unset. Never returns NULL.
 const char *task_get_name(const TCB *task);
+
+// What a task may know about itself. Everything here lives in the TCB, which is
+// kernel memory, so an unprivileged task reads it through SYS_task_info: the
+// fields are COPIED into the caller's own struct (the name too — never the
+// kernel pointer task_get_name returns).
+#define V_TASK_NAME_MAX 16
+typedef struct {
+  uint32_t id;         // task id (monotonic; never reused)
+  uint32_t priority;   // current priority, after any inheritance
+  uint32_t stack_size; // bytes reserved for this task's stack
+  char name[V_TASK_NAME_MAX]; // NUL-terminated, truncated if longer
+} v_task_info_t;
+
+// --- Spawning from a task (M3) ------------------------------------------------
+// A task may create tasks of its own, and owns their lifecycle: only the parent
+// may end a child (see task_exit_request). A child is ALWAYS unprivileged and
+// may not outrank its parent, so spawning grants nothing the parent did not
+// already have.
+#define V_TASK_EPERM (-1)   // not yours to do (priority escalation, not parent)
+#define V_TASK_ENOMEM (-12) // no stack available
+#define V_TASK_EAGAIN (-11) // this task already has VAIOS_TASK_MAX_CHILDREN
+#define V_TASK_EINVAL (-22) // bad descriptor
+typedef struct {
+  void (*entry)(void *);  // must point into flash: RAM is execute-never
+  void *arg;              // OPAQUE to the child: a pointer into the parent's
+                          // block is NOT readable by it (separate MPU region).
+                          // Pass an integer or a handle, not a pointer.
+  uint32_t stack_size;    // bytes, <= VAIOS_TASK_SPAWN_STACK_MAX
+  uint32_t priority;      // <= the spawning task's own priority
+  const char *name;       // optional flash literal, or NULL
+} v_task_spawn_t;
+// Create a child task. Returns its id (> 0), or V_TASK_E* on refusal.
+int v_task_spawn(const v_task_spawn_t *cfg);
+// End a task this one spawned: VA_PASS, V_TASK_EPERM if it is not yours,
+// V_TASK_EINVAL if there is no such live task. A task ends ITSELF with
+// task_exit() instead; nothing else may end it. When a task goes, the tasks it
+// spawned go too, at any depth — its owner is gone, so nobody is left who may
+// end them.
+int v_task_kill(uint32_t child_id);
+
+// Fill `out` with the CALLING task's own info. VA_PASS, or VA_FAIL when there
+// is no current task. Self only: an id-taking form would let any task
+// enumerate the task table.
+int v_task_info(v_task_info_t *out);
 // Look up a task's name by id, or "" if the id is unknown/unset. Never returns
 // NULL. Lets callers (e.g. a telemetry request handler) resolve names on demand
 // without holding a TCB pointer.
@@ -121,11 +252,29 @@ void load_next_task_from_isr(void); // ISR-safe trigger to switch
 void task_yield(void);              // Voluntary yield (port.c)
 void task_change_priority(TCB *task, uint32_t new_priority);
 __attribute__((noreturn)) void task_exit(void);
+// Privileged terminate-self body (runs from the SYS_exit dispatch, or directly
+// when the flip is off). Returns; task_exit is the noreturn entry point.
+void v_task_exit_impl(void);
+// Syscall-boundary pointer validation (5c): is [p, p+len) within the current
+// task's own block? v_strnlen_user bounds a user C string to the block. Always
+// available (pure); the syscall dispatch only calls them under the flip.
+int v_access_ok(const void *p, uint32_t len, int write);
+long v_strnlen_user(const char *s, uint32_t max);
 
 //-----------------------------------------------------------------------------
 // Idle Task
 //-----------------------------------------------------------------------------
 void idle_task_function(void *arg);
+
+//-----------------------------------------------------------------------------
+// Blocking-wait timeout sentinel
+//-----------------------------------------------------------------------------
+// Pass as the ticks_to_wait of a blocking wait (v_semaphore_take, v_mutex_lock,
+// v_sem_take, ...) to block until signalled with no timeout. Ordinary timeouts
+// are a `now + ticks` deadline, so a literal 0xFFFFFFFF would overflow into the
+// past and expire immediately; the kernel special-cases this value to park the
+// waiter with no deadline instead.
+#define V_WAIT_FOREVER 0xFFFFFFFFu
 
 //-----------------------------------------------------------------------------
 // Delayed Task Management
@@ -194,7 +343,7 @@ extern TCB *current_task;
 // Delay helpers (map to ticks; define MS_TO_TICKS in config.h if desired)
 #ifndef MS_TO_TICKS
 #define MS_TO_TICKS(ms)                                                        \
-  ((ms * 1000 )/ SYSTICK_PERIOD) // systick in us
+  ((ms * 1000) / TICK_PERIOD_US) // tick period in us
 #endif
 
 #define TASK_DELAY_MS(ms) task_delay(MS_TO_TICKS(ms))

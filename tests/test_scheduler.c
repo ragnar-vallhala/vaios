@@ -119,6 +119,65 @@ static void test_task_create_oom(void) {
   TEST_ASSERT_EQ(id, 0u);
 }
 
+/* task_create rejects any stack_size that is not a power of two (>= 128 B) and
+ * fails loudly — no silent rounding. The size must map 1:1 onto a single
+ * power-of-two MPU region for stack protection, so an off-size request must not
+ * create a task. Rejection happens before any allocation, so no heap leaks and
+ * task_count / the ready lists stay untouched. */
+/* A stack too small to hold the initial context frame (and zero) is invalid on
+ * every build, MPU or not. Rejected with no side effects. */
+static void test_task_create_rejects_undersized_stack(void) {
+  full_reset();
+  scheduler_init();
+
+  uint32_t count_before = task_count;
+  uint32_t heap_before = v_get_heap_allocation_count();
+
+  /* All below VAIOS_ARCH_MIN_STACK (128 on this port). */
+  static const uint32_t too_small[] = {0u, 1u, 64u, 127u};
+  for (unsigned i = 0; i < sizeof(too_small) / sizeof(too_small[0]); i++) {
+    uint32_t id = task_create(dummy_task, NULL, too_small[i], 3);
+    TEST_ASSERT_EQ(id, 0u); /* creation refused */
+  }
+
+  /* No side effects from any rejected call. */
+  TEST_ASSERT_EQ(task_count, count_before);
+  TEST_ASSERT_EQ(v_get_heap_allocation_count(), heap_before); /* no leak */
+  TEST_ASSERT_NULL(ready_lists[3]); /* nothing queued at the target priority */
+}
+
+/* The power-of-two requirement is an MPU-region constraint, not a universal one.
+ * Non-power-of-two sizes at/above the minimum are rejected only when per-task MPU
+ * regions are on; without them they are valid. This binary's config decides. */
+static void test_task_create_non_power_of_two_stack(void) {
+  full_reset();
+  scheduler_init();
+
+  static const uint32_t np2[] = {200u, 700u, 1000u, 1536u};
+  for (unsigned i = 0; i < sizeof(np2) / sizeof(np2[0]); i++) {
+    uint32_t id = task_create(dummy_task, NULL, np2[i], 3);
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+    TEST_ASSERT_EQ(id, 0u);      /* not a valid MPU region size */
+#else
+    TEST_ASSERT_EQ(id != 0u, 1); /* accepted: no per-task MPU region here */
+#endif
+  }
+}
+
+/* Exact powers of two >= 128 B are accepted, including the 128 B minimum. */
+static void test_task_create_accepts_power_of_two(void) {
+  full_reset();
+  scheduler_init();
+
+  static const uint32_t good[] = {128u, 256u, 512u, 1024u, 2048u, 8192u};
+  for (unsigned i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+    /* Priority 1..MAX_PRIORITY; distinct so we can spot-check queuing. */
+    uint32_t prio = 1u + (i % (uint32_t)MAX_PRIORITY);
+    uint32_t id = task_create(dummy_task, NULL, good[i], prio);
+    TEST_ASSERT(id != 0u); /* accepted */
+  }
+}
+
 /* Multiple tasks created at different priorities */
 static void test_task_create_multi_priority(void) {
   full_reset();
@@ -334,6 +393,227 @@ static void test_task_naming(void) {
   TEST_ASSERT_EQ(strcmp(task_get_name_by_id(0xDEADBEEF), ""), 0);
 }
 
+/* v_task_spawn: a task creating tasks, and the rules that make it safe to let
+ * an unprivileged caller do it — a child never outranks its parent, the fan-out
+ * is bounded, and ownership is recorded so only the parent can end it (M3b). */
+static void test_task_spawn_rules(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t pid = task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  TEST_ASSERT_EQ(current_task->task_id, pid);
+
+  /* A child at or below the parent's priority is fine, and is recorded as the
+   * parent's. */
+  v_task_spawn_t cfg = {.entry = dummy_task, .arg = (void *)7,
+                        .stack_size = 256, .priority = 2, .name = "worker"};
+  int cid = v_task_spawn(&cfg);
+  TEST_ASSERT(cid > 0);
+  TCB *child = ready_lists[2]; /* only task at that priority */
+  TEST_ASSERT_NOT_NULL(child);
+  TEST_ASSERT_EQ(child->task_id, (uint32_t)cid);
+  TEST_ASSERT_EQ(child->parent_id, pid);
+  TEST_ASSERT_EQ(child->priority, 2u);
+  TEST_ASSERT_EQ(strcmp(task_get_name(child), "worker"), 0);
+  /* (That the child is unprivileged is task_create's invariant — privileged
+   * is only a field when MPU separation is compiled in, and the on-target
+   * scenario asserts nPRIV=1 for every spawned task.) */
+
+  /* Outranking the parent is refused: spawning must not buy scheduling weight. */
+  cfg.priority = 4;
+  TEST_ASSERT_EQ(v_task_spawn(&cfg), V_TASK_EPERM);
+  cfg.priority = 3; /* equal is allowed */
+  int same = v_task_spawn(&cfg);
+  TEST_ASSERT(same > 0);
+
+  /* Bad descriptors. */
+  TEST_ASSERT_EQ(v_task_spawn(NULL), V_TASK_EINVAL);
+  v_task_spawn_t bad = cfg;
+  bad.entry = NULL;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+  bad = cfg;
+  bad.stack_size = 0;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+  bad = cfg;
+  bad.stack_size = VAIOS_TASK_SPAWN_STACK_MAX + 1u;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+  bad = cfg;
+  bad.priority = MAX_PRIORITY + 1u;
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+
+  /* Fan-out is bounded: a spawn loop cannot exhaust the heap. Two children
+   * exist already, so the rest of the allowance goes here. */
+  cfg.priority = 1;
+  for (int i = 2; i < VAIOS_TASK_MAX_CHILDREN; i++)
+    TEST_ASSERT(v_task_spawn(&cfg) > 0);
+  TEST_ASSERT_EQ(v_task_spawn(&cfg), V_TASK_EAGAIN);
+}
+
+/* A task created by privileged init has no parent, so nobody but itself may end
+ * it — the id 0 is not a task and cannot be impersonated. */
+static void test_task_spawn_init_tasks_have_no_parent(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t a = task_create(dummy_task, NULL, 256, 2);
+  TCB *t = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(t);
+  TEST_ASSERT_EQ(t->task_id, a);
+  TEST_ASSERT_EQ(t->parent_id, 0u);
+}
+
+/* v_task_kill: ownership is the whole permission model. A task may end what it
+ * spawned and nothing else — not a sibling, not its own parent, not a task
+ * privileged init created, and not a stale id. */
+static void test_task_kill_permissions(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t init_task = task_create_named(dummy_task, NULL, 256, 1, "from_init");
+  uint32_t pid = task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  TEST_ASSERT_EQ(current_task->task_id, pid);
+
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "mine"};
+  int mine = v_task_spawn(&cfg);
+  TEST_ASSERT(mine > 0);
+
+  /* Not ours: a task init created, and a bogus id. */
+  TEST_ASSERT_EQ(v_task_kill(init_task), V_TASK_EPERM);
+  TEST_ASSERT_EQ(v_task_kill(0), V_TASK_EINVAL);
+  TEST_ASSERT_EQ(v_task_kill(0xDEADBEEF), V_TASK_EINVAL);
+  /* Not even ourselves: a task exits itself, it does not kill itself. */
+  TEST_ASSERT_EQ(v_task_kill(pid), V_TASK_EPERM);
+
+  /* Ours: allowed, and it really is terminated. */
+  TEST_ASSERT_EQ(v_task_kill((uint32_t)mine), 1);
+  TEST_ASSERT_EQ(v_task_kill((uint32_t)mine), V_TASK_EINVAL); /* already gone */
+
+  /* A sibling may not end its sibling: both are the parent's, neither is the
+   * other's. Run as the first child and try to kill the second. */
+  int a = v_task_spawn(&cfg);
+  int b = v_task_spawn(&cfg);
+  TEST_ASSERT(a > 0 && b > 0);
+  TCB *ta = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(ta);
+  current_task = ta; /* pretend a sibling is running */
+  uint32_t other = (ta->task_id == (uint32_t)a) ? (uint32_t)b : (uint32_t)a;
+  TEST_ASSERT_EQ(v_task_kill(other), V_TASK_EPERM);
+  /* ...and a child may not end its parent. */
+  TEST_ASSERT_EQ(v_task_kill(pid), V_TASK_EPERM);
+}
+
+/* A task's children die with it, at any depth: the owner is gone, so nobody is
+ * left who may end them. */
+static void test_task_kill_cascades(void) {
+  full_reset();
+  scheduler_init();
+  (void)task_create_named(dummy_task, NULL, 512, 3, "root");
+  current_task = ready_lists[3];
+
+  /* root -> kid -> grandkid, each spawned by the one above it. */
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "kid"};
+  int kid = v_task_spawn(&cfg);
+  TEST_ASSERT(kid > 0);
+  TCB *tkid = ready_lists[2];
+  TEST_ASSERT_EQ(tkid->task_id, (uint32_t)kid);
+
+  current_task = tkid; /* the kid spawns its own worker */
+  cfg.priority = 1;
+  cfg.name = "grandkid";
+  int grandkid = v_task_spawn(&cfg);
+  TEST_ASSERT(grandkid > 0);
+  TCB *tgk = ready_lists[1];
+  TEST_ASSERT_EQ(tgk->task_id, (uint32_t)grandkid);
+  TEST_ASSERT_EQ(tgk->parent_id, (uint32_t)kid);
+
+  /* root ends the kid: the grandkid must go too, though root never knew it. */
+  current_task = ready_lists[3];
+  TEST_ASSERT_EQ(v_task_kill((uint32_t)kid), 1);
+  TEST_ASSERT_EQ(tkid->status, TASK_TERMINATED);
+  TEST_ASSERT_EQ(tgk->status, TASK_TERMINATED);
+
+  /* A task created by init is nobody's child and survives the sweep. */
+  uint32_t independent = task_create_named(dummy_task, NULL, 256, 1, "indep");
+  TCB *ti = NULL;
+  for (TCB *t = ready_lists[1]; t; t = t->next)
+    if (t->task_id == independent)
+      ti = t;
+  TEST_ASSERT_NOT_NULL(ti);
+  TEST_ASSERT(ti->status != TASK_TERMINATED);
+}
+
+/* Exiting cascades exactly like being killed: the rule is about the owner being
+ * gone, not about how it went. */
+static void test_task_exit_cascades(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t pid = task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "worker"};
+  int w1 = v_task_spawn(&cfg);
+  int w2 = v_task_spawn(&cfg);
+  TEST_ASSERT(w1 > 0 && w2 > 0);
+  TCB *t1 = ready_lists[2], *t2 = t1 ? t1->next : NULL;
+  TEST_ASSERT_NOT_NULL(t1);
+  TEST_ASSERT_NOT_NULL(t2);
+
+  task_exit_request(pid); /* the parent goes */
+  TEST_ASSERT_EQ(t1->status, TASK_TERMINATED);
+  TEST_ASSERT_EQ(t2->status, TASK_TERMINATED);
+}
+
+/* ...including when the parent exits itself. This is the SYS_exit body, a
+ * different path from task_exit_request, and it must cascade the same way. */
+static void test_task_self_exit_cascades(void) {
+  full_reset();
+  scheduler_init();
+  (void)task_create_named(dummy_task, NULL, 512, 3, "parent");
+  current_task = ready_lists[3];
+  v_task_spawn_t cfg = {.entry = dummy_task, .stack_size = 256, .priority = 2,
+                        .name = "worker"};
+  TEST_ASSERT(v_task_spawn(&cfg) > 0);
+  TCB *worker = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(worker);
+
+  v_task_exit_impl(); /* the parent ends itself */
+  TEST_ASSERT_EQ(current_task->status, TASK_TERMINATED);
+  TEST_ASSERT_EQ(worker->status, TASK_TERMINATED);
+}
+
+/* v_task_info: the caller's own id, priority, stack size and NAME — the name
+ * copied into the caller's struct, never the kernel pointer. */
+static void test_task_info_self(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t id = task_create_named(dummy_task, NULL, 256, 2, "rate_ctl");
+  TEST_ASSERT(id != 0u);
+  current_task = ready_lists[2];
+  TEST_ASSERT_NOT_NULL(current_task);
+
+  v_task_info_t info;
+  memset(&info, 0xAA, sizeof info);
+  TEST_ASSERT_EQ(v_task_info(&info), 1);
+  TEST_ASSERT_EQ(info.id, id);
+  TEST_ASSERT_EQ(info.priority, 2u);
+  TEST_ASSERT_EQ(info.stack_size, current_task->stack_size);
+  TEST_ASSERT_EQ(strcmp(info.name, "rate_ctl"), 0);
+  /* The struct holds a copy: it must not alias the TCB's flash pointer. */
+  TEST_ASSERT((const char *)info.name != task_get_name(current_task));
+
+  /* A name longer than the field truncates instead of overrunning. */
+  task_set_name(id, "a_very_long_task_name_indeed");
+  TEST_ASSERT_EQ(v_task_info(&info), 1);
+  TEST_ASSERT_EQ(strlen(info.name), (size_t)(V_TASK_NAME_MAX - 1));
+  TEST_ASSERT_EQ(strncmp(info.name, "a_very_long_tas", 15), 0);
+
+  /* Guards. */
+  TEST_ASSERT_EQ(v_task_info(NULL), 0);
+  current_task = NULL;
+  TEST_ASSERT_EQ(v_task_info(&info), 0);
+}
+
 /* task_delay_until: drift-free periodic delay. Blocks until the ABSOLUTE tick
  * *last_wake + period (set as the task's deadline) and advances *last_wake;
  * returns false without blocking when the deadline already passed (overrun). */
@@ -381,28 +661,122 @@ static void test_task_delay_until(void) {
 }
 
 /* -------------------------------------------------------------------------
+ * task_block / task_exit_request / v_task_exit_impl + run-time getters
+ * (previously 0-call in coverage)
+ * ---------------------------------------------------------------------- */
+extern uint32_t get_task_run_time(TCB *task);
+extern void reset_task_run_time(TCB *task);
+extern void reset_idle_task_timer(void);
+
+static void test_task_run_time_getset(void) {
+  TCB t = {0};
+  t.ticks_run = 42;
+  TEST_ASSERT_EQ(get_task_run_time(&t), 42u);
+  reset_task_run_time(&t);
+  TEST_ASSERT_EQ(get_task_run_time(&t), 0u);
+  TEST_ASSERT_EQ(get_task_run_time(NULL), 0u); /* NULL-safe */
+  reset_task_run_time(NULL);                   /* no crash */
+  TEST_ASSERT(1);
+}
+
+static void test_idle_tick_getset(void) {
+  full_reset();
+  scheduler_init();
+  idle_task->ticks_run = 7;
+  TEST_ASSERT_EQ(get_idle_tick_count(), 7u);
+  reset_idle_task_timer();
+  TEST_ASSERT_EQ(get_idle_tick_count(), 0u);
+}
+
+static void test_task_block_blocks_current(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t id = task_create(dummy_task, NULL, 512, 1);
+  TEST_ASSERT(id != 0);
+  TCB *t = ready_lists[1];
+  TEST_ASSERT_NOT_NULL(t);
+  current_task = t;
+  task_block();
+  TEST_ASSERT_EQ(t->status, TASK_BLOCKED);
+  task_block(); /* already blocked -> no-op */
+  TEST_ASSERT_EQ(t->status, TASK_BLOCKED);
+}
+
+static void test_task_block_idle_is_noop(void) {
+  full_reset();
+  scheduler_init();
+  current_task = idle_task;
+  Task_Status before = current_task->status;
+  task_block();
+  TEST_ASSERT_EQ(current_task->status, before); /* idle cannot block */
+}
+
+static void test_task_exit_request_terminates(void) {
+  full_reset();
+  scheduler_init();
+  uint32_t id = task_create(dummy_task, NULL, 512, 1);
+  TCB *t = ready_lists[1];
+  TEST_ASSERT_NOT_NULL(t);
+  task_exit_request(id);
+  TEST_ASSERT_EQ(t->status, TASK_TERMINATED);
+  task_exit_request(id);     /* already terminated -> no-op */
+  TEST_ASSERT_EQ(t->status, TASK_TERMINATED);
+  task_exit_request(999999); /* unknown id -> no crash */
+  TEST_ASSERT(1);
+}
+
+static void test_v_task_exit_impl_terminates_current(void) {
+  full_reset();
+  scheduler_init();
+  TCB t = {0};
+  t.magic = TCB_MAGIC;
+  current_task = &t;
+  v_task_exit_impl(); /* Stage-5 SYS_exit body */
+  TEST_ASSERT_EQ(t.status, TASK_TERMINATED);
+}
+
+/* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_scheduler_tests(void) {
-  TEST_SUITE_BEGIN("Scheduler");
-  TEST_RUN(test_task_delay_until);
-  TEST_RUN(test_task_naming);
-  TEST_RUN(test_task_snapshot_list_covers_all_once);
-  TEST_RUN(test_scheduler_init_creates_idle);
-  TEST_RUN(test_scheduler_init_current_is_idle);
-  TEST_RUN(test_scheduler_init_bitmap);
-  TEST_RUN(test_task_create_returns_id);
-  TEST_RUN(test_task_create_increments_count);
-  TEST_RUN(test_task_create_in_ready_list);
-  TEST_RUN(test_task_create_oom);
-  TEST_RUN(test_task_create_multi_priority);
-  TEST_RUN(test_wake_up_delayed_tasks);
-  TEST_RUN(test_delayed_add_remove);
-  TEST_RUN(test_context_switch_count_zero);
-  TEST_RUN(test_get_next_task_picks_highest_priority);
-  TEST_RUN(test_get_next_task_round_robin_same_priority);
-  TEST_RUN(test_get_next_task_returns_idle_when_no_tasks);
-  TEST_RUN(test_get_next_task_bumps_switch_count);
-  TEST_RUN(test_set_next_task_updates_current);
-  TEST_SUITE_END();
-}
+static const test_case_t scheduler_cases[] = {
+    TEST_CASE(test_task_run_time_getset),
+    TEST_CASE(test_idle_tick_getset),
+    TEST_CASE(test_task_block_blocks_current),
+    TEST_CASE(test_task_block_idle_is_noop),
+    TEST_CASE(test_task_exit_request_terminates),
+    TEST_CASE(test_v_task_exit_impl_terminates_current),
+    TEST_CASE(test_task_spawn_rules),
+    TEST_CASE(test_task_kill_permissions),
+    TEST_CASE(test_task_kill_cascades),
+    TEST_CASE(test_task_exit_cascades),
+    TEST_CASE(test_task_self_exit_cascades),
+    TEST_CASE(test_task_spawn_init_tasks_have_no_parent),
+    TEST_CASE(test_task_info_self),
+    TEST_CASE(test_task_delay_until),
+    TEST_CASE(test_task_naming),
+    TEST_CASE(test_task_snapshot_list_covers_all_once),
+    TEST_CASE(test_scheduler_init_creates_idle),
+    TEST_CASE(test_scheduler_init_current_is_idle),
+    TEST_CASE(test_scheduler_init_bitmap),
+    TEST_CASE(test_task_create_returns_id),
+    TEST_CASE(test_task_create_increments_count),
+    TEST_CASE(test_task_create_in_ready_list),
+    TEST_CASE(test_task_create_oom),
+    TEST_CASE(test_task_create_rejects_undersized_stack),
+    TEST_CASE(test_task_create_non_power_of_two_stack),
+    TEST_CASE(test_task_create_accepts_power_of_two),
+    TEST_CASE(test_task_create_multi_priority),
+    TEST_CASE(test_wake_up_delayed_tasks),
+    TEST_CASE(test_delayed_add_remove),
+    TEST_CASE(test_context_switch_count_zero),
+    TEST_CASE(test_get_next_task_picks_highest_priority),
+    TEST_CASE(test_get_next_task_round_robin_same_priority),
+    TEST_CASE(test_get_next_task_returns_idle_when_no_tasks),
+    TEST_CASE(test_get_next_task_bumps_switch_count),
+    TEST_CASE(test_set_next_task_updates_current),
+};
+const test_suite_t scheduler_suite = {
+    .name = "Scheduler",
+    .cases = scheduler_cases,
+    .count = TEST_COUNT(scheduler_cases),
+};

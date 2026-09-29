@@ -2,10 +2,10 @@
 #define VAIOS_H
 #include <stdint.h>
 typedef struct {
-  uint8_t internal_clock_setup; // 0: if vaios default clock setup is used else
-                                // 1 if user setups own clock
-  uint8_t internal_sd_card_setup; // 0: if vaios default sd card setup is
-                                  // used else 1 if user setups own sd card
+  uint8_t internal_clock_setup;   // 1: vaios runs its internal clock (PLL) setup;
+                                  // 0: skip it (caller already configured the clock)
+  uint8_t internal_sd_card_setup; // 1: vaios runs its internal SD-card setup;
+                                  // 0: skip it (caller already configured the SD card)
 } vaios_init_config_t;
 void v_init(vaios_init_config_t *cfg);
 void v_system_init(vaios_init_config_t *cfg);

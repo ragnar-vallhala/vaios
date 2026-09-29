@@ -2,6 +2,12 @@ build*/
 .cache
 compile_commands.json
 logs
+
+# Generated Kconfig config. The build's .config lives in build*/ (already
+# ignored); this catches a stray repo-root .config (e.g. from running
+# tools/kconfig.py by hand) and any Python bytecode.
+/.config
+__pycache__/
 build_tests
 build_bench
 build_hw_tests

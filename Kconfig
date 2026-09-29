@@ -1,0 +1,592 @@
+# vim: ft=kconfig
+#
+# vaios configuration. Symbol names match the macros the kernel already uses
+# (HEAP_SIZE, MAX_TASK_PRIORITY, VAIOS_MODULE_*, ...) so the generated
+# vaios_autoconf.h is a drop-in for the retired include/vaios_config_default.h.
+# A few composite macros (MAX_SYSCALL_INTERRUPT_PRIORITY, the heap-algo selector,
+# PANIC) are derived from these scalars in include/vaios_config_derived.h.
+#
+# When NAVHAL is enabled the NavHAL Kconfig tree is sourced in below, so one
+# menuconfig / one .config covers both the kernel and the HAL driver set. See
+# docs/plan/KCONFIG_CONFIG_SYSTEM_PLAN.md.
+mainmenu "vaios Configuration"
+
+menu "Version"
+config VAIOS_VERSION_MAJOR
+    int "Major version"
+    default 0
+config VAIOS_VERSION_MINOR
+    int "Minor version"
+    default 2
+config VAIOS_VERSION_PATCH
+    int "Patch version"
+    default 0
+config VAIOS_VERSION
+    string "Version string"
+    default "0.2.0"
+config AUTHOR
+    string "Author"
+    default "ASHUTOSH VISHWAKARMA"
+endmenu
+
+menu "Platform / Init"
+
+# Target port. The kernel gates on the CAPABILITY symbols below (does this build
+# have an MPU? interrupt priorities? which way does the stack grow?), never on
+# an arch name -- so adding a port means adding a choice member here, not
+# editing kernel/. VAIOS_-prefixed to avoid colliding with NavHAL's own ARCH_*
+# choice, which is sourced into the same .config when NAVHAL=ON.
+choice
+    prompt "Target architecture"
+    # Follow NavHAL's arch when its tree is sourced (single source of truth);
+    # fall through to Cortex-M4 for standalone/QEMU builds. The host test build
+    # overrides this to VAIOS_ARCH_HOST via tests/host.defconfig.
+    default VAIOS_ARCH_CORTEX_M4 if ARCH_CORTEX_M4
+    default VAIOS_ARCH_AVR if ARCH_AVR8
+    default VAIOS_ARCH_CORTEX_M4
+    help
+      Selects the portable/<arch>/ backend the kernel builds against.
+
+config VAIOS_ARCH_CORTEX_M4
+    bool "ARM Cortex-M4"
+    select VAIOS_ARCH_HAS_MPU
+    select VAIOS_ARCH_HAS_IRQ_PRIORITY
+    select VAIOS_ARCH_STACK_DESCENDING
+
+config VAIOS_ARCH_HOST
+    bool "Host (POSIX -- test and static-analysis builds)"
+    # The host RUN port provides a software MPU (mprotect guard pages + a SIGSEGV
+    # -> fault translator behind the v_port_mpu_* facade), so it advertises an MPU
+    # like the target. It models Cortex-M semantics, hence a descending stack.
+    select VAIOS_ARCH_STACK_DESCENDING
+    select VAIOS_ARCH_HAS_MPU
+
+config VAIOS_ARCH_AVR
+    bool "AVR (8-bit)"
+endchoice
+
+# Capability symbols -- set only via `select` on the arch above, never shown to
+# the user. Kernel code reads these (VAIOS_ARCH_HAS_MPU, ...) instead of an arch
+# macro; a new port declares what it can do by selecting the matching bits.
+config VAIOS_ARCH_HAS_MPU
+    bool
+config VAIOS_ARCH_HAS_IRQ_PRIORITY
+    bool
+config VAIOS_ARCH_STACK_DESCENDING
+    bool
+
+# Port-specific symbols (e.g. NVIC_PRIO_BITS) live with the port. Each port's
+# symbols are gated on the capability its arch selects, so only the active port's
+# are visible.
+rsource "portable/armv7e-m/Kconfig"
+rsource "portable/host/Kconfig"
+
+# Generic knobs, named for the concept rather than the ARM peripheral that
+# happens to implement it on this port: a kernel tick has a period and a console
+# has a baud rate on any target.
+config TICK_PERIOD_US
+    int "Kernel tick period (microseconds)"
+    default 1000
+config CONSOLE_BAUDRATE
+    int "Console baud rate"
+    default 115200
+config UART_LOGGING_ENABLE
+    bool "Route logging to the UART console"
+    default y
+config LOGGING_ENABLED
+    bool "Enable the logging subsystem"
+    default y
+endmenu
+
+menu "Interrupts / Critical sections"
+config VAIOS_MAX_SYSCALL_PRIO_LEVEL
+    int "Highest priority LEVEL that may call kernel APIs (0..MAX_TASK_PRIORITY)"
+    default 7
+    help
+      The base priority level from which MAX_SYSCALL_INTERRUPT_PRIORITY is
+      derived (as LEVEL << (8 - NVIC_PRIO_BITS), see vaios_config_derived.h).
+      IRQs more urgent than this are never masked by a kernel critical section
+      and MUST NOT call any vaios API.
+config VAIOS_USE_BASEPRI
+    bool "Use BASEPRI for critical sections (else global cpsid i)"
+    default y
+    help
+      When set, v_enter_critical/v_exit_critical mask only IRQs at or below
+      MAX_SYSCALL_INTERRUPT_PRIORITY, keeping hard-real-time IRQs (motor PWM,
+      IMU EXTI) unmaskable. When clear, fall back to global interrupt disable.
+config VAIOS_FROMISR_PRIO_CHECK
+    bool "Assert *_from_isr callers are within the maskable IRQ band"
+    default y
+    help
+      A *_from_isr call from an IRQ more urgent than
+      MAX_SYSCALL_INTERRUPT_PRIORITY can corrupt the scheduler; when set the
+      API v_panics with a clear message instead. Drop for size-critical builds.
+endmenu
+
+menu "Kernel modules"
+config VAIOS_MODULE_TERMINAL
+    bool "Interactive command terminal"
+    default y
+config VAIOS_MODULE_VFS
+    bool "Virtual file system (FatFs/SDIO, needs NavHAL)"
+    default n
+config VAIOS_MODULE_SEMIHOSTING
+    bool "Semihosting debug I/O"
+    default y
+config VAIOS_MODULE_FIFO
+    bool "SPSC/MPMC FIFO data structures"
+    default y
+config VAIOS_MODULE_PERF
+    bool "Kernel performance counters"
+    default y
+config VAIOS_MODULE_BUS
+    bool "Bus IPC subsystem (in progress: block pool only)"
+    default n
+    help
+      Payload-agnostic publish/subscribe over a fixed block pool; see
+      docs/plans/bus-subsystem.md. Off by default until the data path lands.
+endmenu
+
+menu "Scheduling"
+config MAX_TASK_PRIORITY
+    int "Highest usable task priority"
+    default 7
+config IDLE_TASK_PRIORITY
+    int "Idle task priority"
+    default 0
+config IDLE_TASK_STACK_SIZE
+    int "Idle task stack size (bytes)"
+    default 512
+config TIME_SLICE
+    int "Round-robin time slice (ticks)"
+    default 2
+config MAIN_STACK_SIZE
+    int "Main/MSP stack size (bytes)"
+    default 1024
+config STACK_ALIGN_SIZE
+    int "Task stack alignment (bytes)"
+    default 8
+config TASK_STACK_WATERMARK_ENABLE
+    bool "Software stack-overflow watermark check"
+    default y
+config TASK_STACK_OVERFLOW_THRESHOLD
+    int "Stack-overflow guard threshold (bytes)"
+    default 64
+endmenu
+
+menu "Memory / Heap"
+config HEAP_SIZE
+    hex "Kernel heap size (bytes)"
+    # The heap starts after .bss, so it has to fit in whatever RAM is left.
+    # Examples that carry a lot of statics (an SD example's buffers and worker
+    # slots) do not leave 88 KB on a 96 KB part —
+    # v_heap_memory_init panics instead of clearing past the end of SRAM, and
+    # this default is what keeps that from happening on a default build. The
+    # benchmark example is its own CMake target with no Kconfig choice, so it
+    # still needs CONFIG_HEAP_SIZE set by hand (docs/benchmark/bus-ipc.md).
+    default 0x8000 if EXAMPLE_SD_USER
+    default 0x16000
+config HEAP_WATERMARK_ENABLE
+    bool "Panic when heap usage crosses the watermark"
+    default y
+config HEAP_WATERMARK_THRESHOLD
+    int "Heap watermark headroom (bytes)"
+    default 1024
+config DMA_MIN_THRESHOLD
+    int "Minimum transfer size to use DMA (bytes)"
+    default 16
+choice
+    prompt "Heap allocator"
+    default VAIOS_HEAP_ALGO_SEGLIST
+    help
+      Both allocators sit behind the same public API; exactly one is compiled.
+      The fixed index macros VAIOS_HEAP_SEGLIST/TLSF and the selector
+      VAIOS_HEAP_ALGO are built from this choice in vaios_config_derived.h and
+      key the seglist.c / tlsf.c bodies.
+config VAIOS_HEAP_ALGO_SEGLIST
+    bool "Segregated fit (smallest, historical default)"
+config VAIOS_HEAP_ALGO_TLSF
+    bool "TLSF (O(1) worst-case malloc + free, bounded fragmentation)"
+endchoice
+
+config VAIOS_TASK_HEAP
+    bool "Per-task heap (malloc/free out of the task's own region)"
+    default n
+    help
+      Phase 3, Stage 4: a task's stack block doubles as its heap. The stack grows
+      down from the top; malloc grows a heap up from just above the stack guard,
+      the two sharing the free middle (bidirectional). This gives tasks the
+      familiar malloc/free/calloc/realloc backed by their OWN region — the kernel
+      keeps v_malloc/v_free for its own allocations. malloc returns NULL when the
+      heap would meet the live stack (sizing the region is the caller's job). The
+      substrate the unprivileged flip (Stage 5) makes the task's writable heap.
+endmenu
+
+menu "Memory protection (MPU)"
+config VAIOS_MPU_ENABLE
+    bool "Enable the ARMv7-M MPU (hardware memory protection)"
+    depends on VAIOS_ARCH_HAS_MPU
+    default n
+    help
+      Program the MPU (via NavHAL hal_mpu) for hardware memory protection.
+      Requires a target with an MPU (checked at runtime with hal_mpu_present);
+      no effect on QEMU/host builds. Off until the region programming is
+      Renode-validated. See docs/plan/MPU_CACHE_INTEGRATION_PLAN.md.
+config VAIOS_MPU_STACK_GUARD
+    bool "Per-task stack-overflow guard region"
+    depends on VAIOS_MPU_ENABLE
+    default y
+    help
+      Place a no-access MPU region at the low end of each task stack so an
+      overflow traps into MemManage_Handler at the faulting store instead of
+      silently corrupting the neighbouring block. The stack base is aligned to
+      the guard size via v_memalign. Falls back to the software watermark on
+      MPU-less targets.
+config VAIOS_MPU_GUARD_SIZE
+    int "Stack guard region size (bytes, power of two >= 32)"
+    depends on VAIOS_MPU_STACK_GUARD
+    default 32
+config VAIOS_MPU_STATIC_PROTECT
+    bool "Static kernel/peripheral protection (Phase 2)"
+    depends on VAIOS_MPU_ENABLE
+    default y
+    help
+      Phase 2: program a static background MPU map that bites even while tasks
+      are still privileged (PRIVDEFENA's privileged default is otherwise RWX
+      everywhere). Safe core: SRAM execute-never (W^X, catches execute-from-RAM)
+      and peripherals privileged-only device+XN. The per-task stack guard moves
+      to the top region so it still wins on overlap. On by default when the MPU
+      is enabled (hardware fault-injection validated on the Nucleo-F401RE). See
+      docs/plan/MPU_CACHE_INTEGRATION_PLAN.md Phase 2.
+config VAIOS_MPU_FLASH_RO
+    bool "Mark flash read-only (catch code/const corruption)"
+    depends on VAIOS_MPU_STATIC_PROTECT
+    default n
+    help
+      Add a read-only region over flash. HAZARD: on-chip flash programming
+      writes the 0x08xxxxxx space directly, so this is incompatible with
+      hal_flash's key/value store — enable only when the KV store is unused (or
+      carve its sectors out via a subregion-disable mask).
+config VAIOS_MPU_NULL_GUARD
+    bool "NULL / low-alias no-access trap (catch NULL derefs)"
+    depends on VAIOS_MPU_STATIC_PROTECT
+    default y
+    help
+      Add a no-access region at [0, 1 MB) to trap NULL and near-NULL derefs.
+      v_port_mpu_init relocates SCB->VTOR to the flash vector table (0x08000000)
+      before arming this region, so exception vector fetches do not alias into
+      it. Hardware-validated on the Nucleo-F401RE (boots with the guard armed; a
+      NULL write traps with MMFSR DACCVIOL at addr 0x0).
+config VAIOS_MPU_USER_SEPARATION
+    bool "Unprivileged tasks + per-task MPU isolation (Phase 3, Stage 5)"
+    depends on VAIOS_SYSCALL_SVC && VAIOS_MPU_STATIC_PROTECT
+    default n
+    help
+      Phase 3, Stage 5 — the unprivileged flip: run tasks with CONTROL.nPRIV=1,
+      grant each task an MPU region over only its own block, validate user
+      pointers at the syscall boundary, and gate the raw-handle (non-fd) IPC
+      syscalls to privileged callers. See docs/plan/PHASE3_STAGE5_UNPRIV_PLAN.md.
+
+      WORK IN PROGRESS — being built up sub-stage by sub-stage. Currently
+      implemented behind this symbol: the per-task heap allocator
+      (malloc/free/calloc/realloc) routes through SVC so it keeps working once a
+      task can no longer reach current_task directly. The MPU region set and the
+      nPRIV flip itself land in follow-up commits. Off until complete.
+endmenu
+
+menu "Kernel/user separation (Phase 3)"
+config VAIOS_SYSCALL_SVC
+    bool "Route kernel entry through SVC syscalls"
+    depends on VAIOS_MPU_ENABLE
+    default n
+    help
+      Phase 3, Stage 1: generalise SVCall_Handler into a syscall dispatch and
+      route selected kernel entry points (task_yield, task_delay) through
+      `svc 1` instead of calling the kernel directly. Tasks stay PRIVILEGED, so
+      this only validates the SVC mechanism/ABI (number in r12, args in r0-r3,
+      negative-errno in r0) with zero isolation risk; the unprivileged flip and
+      pointer validation land in later stages. Off by default.
+config VAIOS_DEVFS
+    bool "Everything-is-a-file device model (fd table + /dev)"
+    depends on VAIOS_SYSCALL_SVC
+    default n
+    help
+      Phase 3, Stage 2: a per-task file-descriptor table over a small object
+      model (v_file_ops: read/write/close). Devices are /dev nodes backed by a
+      driver op-table; open/read/write/close are syscalls. Wires /dev/console
+      and routes printf() through write(). Kernel printk() stays a separate,
+      direct, privileged path. Tasks stay privileged in this stage.
+config VAIOS_MAX_FDS
+    int "File descriptors per task"
+    depends on VAIOS_DEVFS
+    default 8
+config VAIOS_DEBUG_IN_SLEEP
+    bool "Keep the debug interface alive while the core sleeps"
+    default n
+    help
+      Set DBGMCU_CR's DBG_SLEEP/DBG_STOP/DBG_STANDBY so SWD keeps bus access
+      once the idle task starts sleeping. Without it a debugger loses the target
+      the moment the system goes idle (the probe reads a chip ID of 0), which
+      makes reading anything out of a RUNNING system impossible. Costs the debug
+      block staying clocked, so it is off by default and belongs in debug and
+      hardware-test builds.
+
+config VAIOS_CLOCK_HSE
+    bool "Run the PLL from an external crystal (HSE) instead of the internal RC"
+    default n
+    help
+      v_system_init's internal clock setup drives the PLL from HSI, which is
+      accurate to about 1%. That is fine for the core and for SDIO, but NOT for
+      USB: hal_usb_cdc_init refuses to run on anything but a 48 MHz PLL Q derived
+      from a crystal, rather than enumerate unreliably. Turn this on for boards
+      that have an HSE source (a fitted crystal, or the ST-Link's 8 MHz MCO in
+      bypass), which is what NavHAL's CDC console route needs.
+
+      The PLL M divider is derived from VAIOS_CLOCK_HSE_HZ so the VCO input lands
+      at 1 MHz, matching the HSI path (16 MHz / 16) — so N/P/Q, and therefore
+      SYSCLK and the 48 MHz USB/SDIO clock, are unchanged.
+
+config VAIOS_CLOCK_HSE_HZ
+    int "HSE frequency in Hz"
+    depends on VAIOS_CLOCK_HSE
+    default 8000000
+    help
+      Must be a whole number of MHz: the PLL M divider is HSE_HZ / 1000000.
+      8 MHz on an ST Nucleo (MCO from the ST-Link), 8 or 25 MHz on most custom
+      boards.
+
+# Where the console goes is NOT a vaios setting. NavHAL owns that choice
+# (CONSOLE_ROUTE_UART / CONSOLE_ROUTE_CDC under "Console"), because the console
+# is a board property and NavHAL is where boards are described. vaios used to
+# carry VAIOS_CONSOLE_USB_CDC alongside it: two switches for one decision, both
+# in this same menuconfig, with nothing making them agree — set NavHAL's to CDC
+# and vaios still wrote to the UART. port_hw.c now reads NavHAL's flag.
+#
+# vaios keeps its own dispatch rather than calling hal_console_*, because the
+# buffered logger needs the DMA write that hal_console does not offer. Two
+# implementations of one decision is fine; two decisions was the bug.
+
+config VAIOS_CONSOLE_TO_KMSG
+    bool "Mirror console writes into the /dev/kmsg ring"
+    depends on VAIOS_DEVFS
+    default n
+    help
+      Console writes normally go straight to the UART. With this on they are
+      also appended to the kernel log ring, which makes them readable through
+      /dev/kmsg and — the reason it exists — recoverable from RAM over SWD when
+      the board's debug probe has no serial port, or after a fault has taken the
+      console with it. Costs one memcpy per write chunk.
+
+config VAIOS_IPC_FD
+    bool "fd-typed IPC (named semaphores on the fd table)"
+    depends on VAIOS_DEVFS
+    default n
+    help
+      Phase 3, Stage 3: IPC objects live on the per-task fd table. A named
+      semaphore is opened with v_sem_open("/sem/name", flags) -> a per-task fd;
+      v_sem_take(fd)/v_sem_give(fd) are typed syscalls that resolve fd -> object;
+      close(fd) drops the reference (object destroyed at refcount 0). This
+      removes the raw kernel pointer from user handles and gives per-task
+      capability isolation. The pointer-based v_semaphore_* API still exists.
+config VAIOS_TASK_SPAWN_STACK_MAX
+    int "Largest stack a task may request when spawning (bytes)"
+    default 4096
+    help
+      Upper bound on v_task_spawn's stack_size. A task spawns from the global
+      heap, so without a cap one task can exhaust the heap and take the system
+      with it. Privileged init is not bound by this (task_create takes any size).
+config VAIOS_TASK_MAX_CHILDREN
+    int "Live children one task may have at once"
+    default 4
+    help
+      v_task_spawn refuses past this with -EAGAIN. Counts children currently
+      alive; a child that exits gives its slot back. Bounds the fan-out of a
+      spawn loop, together with VAIOS_TASK_SPAWN_STACK_MAX.
+
+config VAIOS_SDIO_4BIT
+    bool "Use the SD card's 4-bit data bus"
+    default y
+    help
+      Drive the card over DAT0..DAT3 instead of DAT0 alone. Four times the
+      bandwidth, and it needs all four data lines wired and pulled up: a board with
+      one of DAT1..DAT3 unwired, or an open solder joint on it, initialises fine
+      (CMD is a separate line) and then fails every data transfer, which looks like
+      a dead card. Turn this off to find out — if 1-bit works, the wiring is the
+      problem. A pull-up test is not enough to clear the wiring: a series resistor
+      can hold the MCU side of an open joint high. Check that each line goes LOW
+      during a transfer.
+
+config VAIOS_VFS_IO_SLOTS
+    int "In-flight file requests a system may have (I/O worker)"
+    depends on VAIOS_DEVFS
+    default 2
+    help
+      Request slots for the VFS I/O worker: one per task waiting on a file
+      operation. Each holds a copied path and a VAIOS_VFS_IO_BUF bounce buffer in
+      static kernel RAM.
+config VAIOS_VFS_IO_BUF
+    int "Bytes a single file request may carry (bounce buffer)"
+    depends on VAIOS_DEVFS
+    default 512
+    help
+      Payload a read or write moves per request; the task-facing wrappers loop in
+      chunks of this size, so kernel memory stays fixed however much a task asks
+      for. One sector (512) is the natural value.
+
+config VAIOS_VFS_MAX_OPEN
+    int "Files+directories a system may have open through the VFS mount"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_file_open("/mnt/...") handles across all tasks, in static kernel
+      RAM. Each holds one vfs_fd_t or vfs_dir_t.
+
+config VAIOS_QUEUE_MAX_OPEN
+    int "Queue handles a system may have open (v_queue_open)"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_queue_open() handles across all tasks, in static kernel RAM. Like
+      VAIOS_BUS_MAX_OPEN, this bounds the fd layer, not the queues themselves.
+
+config VAIOS_BUS_MAX_CALLBACKS
+    int "Bus IPC callback subscriptions (system-wide)"
+    depends on VAIOS_MODULE_BUS
+    default 4
+    help
+      Callback subscriptions registered with v_bus_subscribe_cb, in static
+      kernel RAM. Each holds one subscription; the payload buffer is the
+      caller's, so this costs no heap.
+
+      Unrelated to VAIOS_BUS_MAX_OPEN: that bounds the fd layer that
+      unprivileged tasks use. Callbacks are privileged only — the worker would
+      otherwise call user code from kernel context — so they do not go through
+      an fd at all. A task that wants callback semantics blocks in a thread of
+      its own (v_bus_recv_wait).
+
+config VAIOS_BUS_MAX_OPEN
+    int "Bus IPC user handles (system-wide)"
+    depends on VAIOS_DEVFS
+    default 8 if EXAMPLE_BUS_USER || EXAMPLE_FLIGHT_USER
+    default 4
+    help
+      Open v_bus_open() handles across all tasks. Each carries a
+      subscription in static kernel RAM.
+config VAIOS_PBUS_MAX_LOCKERS
+    int "Peripheral-bus v_pbus_lock slots (system-wide)"
+    default 4
+    help
+      Tasks that can be waiting on or holding a v_pbus_lock at once. Each
+      slot is a kernel-owned queue node + semaphore, so a task killed while
+      waiting leaves nothing dangling on its freed stack.
+config VAIOS_PBUS_MAX_OPEN
+    int "Peripheral-bus user handles (system-wide)"
+    depends on VAIOS_DEVFS
+    default 4
+    help
+      Open v_pbus_open() handles across all tasks. Each carries two
+      VAIOS_PBUS_XFER_MAX bounce buffers in static kernel RAM.
+config VAIOS_PBUS_XFER_MAX
+    int "Peripheral-bus user transfer: max bytes each way"
+    depends on VAIOS_DEVFS
+    default 64
+    help
+      User v_pbus_xfer() payloads are copied through kernel buffers of this
+      size, so a bus DMA never targets task memory.
+endmenu
+
+menu "IPC"
+config MAX_SEMAPHORE_COUNT
+    hex "Maximum counting-semaphore value"
+    default 0xFFFFFFFF
+config STATIC_SEMAPHORE_SIZE
+    int "Static semaphore storage size (bytes)"
+    default 32
+config MAX_PI_DEPTH
+    int "Maximum priority-inheritance chain depth"
+    default 4
+endmenu
+
+menu "Logging"
+config COLOR_LOGGING
+    bool "ANSI colour in log output"
+    default y
+config BUFFERED_LOGGING
+    bool "Buffer log messages (else synchronous)"
+    default y
+config LOG_BUFFER_SIZE
+    int "Log ring-buffer entry count"
+    default 32
+config LOG_MSG_MAX_LEN
+    int "Max log message length (bytes)"
+    default 96
+    help
+      The formatted message, NOT counting the "[INFO 42] " prefix (up to 47
+      bytes) or the CRLF. A longer message is cut and marked with a trailing
+      '~' — see v_log. 64 was too small for ordinary banners: the heap line
+      lost the last three digits of its size and read as a plausible wrong
+      number, which is worse than an obviously cut one.
+
+      This is not a RAM cost — it is reserved headroom inside
+      LOG_BUFFER_STORAGE_SIZE, so raising it only means fewer messages batch
+      into one flush. Keep 47 + this + 4 under LOG_BUFFER_STORAGE_SIZE or a
+      single message can never fit and v_log will spin.
+config LOG_BUFFER_STORAGE_SIZE
+    int "Log buffer backing storage (bytes)"
+    default 256
+# Log-level thresholds, as the utils.h enum's numeric value
+# (LOG_DEBUG=0, LOG_INFO=1, LOG_WARN=2, LOG_ERROR=3). Used only in
+# `level >= THRESHOLD` comparisons, so the int is interchangeable with the enum.
+config MIN_LOG_LEVEL
+    int "Minimum runtime log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+    default 1
+    range 0 3
+config VAIOS_KERNEL_LOG_LEVEL
+    int "Kernel-internal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+    default 2
+    range 0 3
+config TERMINAL_LOG_LEVEL
+    int "Terminal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+    default 1
+    range 0 3
+endmenu
+
+menu "Terminal"
+depends on VAIOS_MODULE_TERMINAL
+config ENABLE_TERMINAL
+    bool "Enable the terminal at boot"
+    default y
+config ALLOWED_MODULES
+    string "Terminal-accessible modules (\"ALL\" or CSV)"
+    default "ALL"
+config CMD_BUFFER_SIZE
+    int "Command history buffer size"
+    default 10
+config CMD_MAX_LEN
+    int "Maximum command length (bytes)"
+    default 32
+config MAX_CMD_NUMBER
+    int "Maximum registered commands"
+    default 6
+config ESCAPE_SEQ_LEN
+    int "Escape-sequence buffer length"
+    default 2
+config TERMINAL_TASK_STACK_SIZE
+    int "Terminal task stack size (bytes)"
+    default 1024
+endmenu
+
+# Per-example feature overlay: EXAMPLE_<TOKEN> entries whose `select`s pull in
+# the Kconfig features a given example needs, activated by the generator's
+# --example-override (from -DVAIOS_EXAMPLE). rsource (not source) so the path
+# resolves against this Kconfig's dir, not $srctree (which points at NavHAL under
+# NAVHAL=ON).
+rsource "examples/Kconfig"
+
+# When building against NavHAL, pull its entire option tree into this same
+# menu/.config so there is a single source of truth. Driven by the NAVHAL_KCONFIG
+# env var, NOT an `if` block: kconfiglib processes `source` at parse time
+# regardless of `if` conditions, so a guard would still try (and fail) to read
+# NavHAL standalone. The build sets NAVHAL_KCONFIG + $srctree when NAVHAL=ON;
+# unset otherwise, and osource of the empty stub is a silent no-op.
+osource "$(NAVHAL_KCONFIG)"

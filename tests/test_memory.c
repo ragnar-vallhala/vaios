@@ -215,25 +215,169 @@ static void test_free_invalid_ptr(void) {
   TEST_ASSERT_NOT_NULL(p);
 }
 
+/* ---- v_memalign (aligned allocation backing MPU-guarded stacks) ---- */
+
+/* Every alignment (a power of two) yields a payload on that boundary, and the
+ * block is usable and freeable. */
+static void test_memalign_alignment(void) {
+  reset();
+  for (size_t align = 32; align <= 1024; align <<= 1) {
+    void *p = v_memalign(align, 200);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQ((uintptr_t)p & (align - 1), (uintptr_t)0);
+    /* Writable across the whole request, no corruption. */
+    for (int i = 0; i < 200; i++)
+      ((volatile uint8_t *)p)[i] = (uint8_t)i;
+    v_free(p);
+  }
+}
+
+/* Bad args: non-power-of-two alignment and zero size both return NULL. */
+static void test_memalign_bad_args(void) {
+  reset();
+  TEST_ASSERT_NULL(v_memalign(48, 100)); /* 48 is not a power of two */
+  TEST_ASSERT_NULL(v_memalign(0, 100));  /* 0 is not a power of two */
+  TEST_ASSERT_NULL(v_memalign(64, 0));   /* zero size */
+}
+
+/* align <= the 8-byte default falls back to v_malloc (still aligned enough). */
+static void test_memalign_small_align_falls_back(void) {
+  reset();
+  void *p = v_memalign(8, 64);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQ((uintptr_t)p & 7u, (uintptr_t)0);
+  v_free(p);
+}
+
+/* Alloc + free of an aligned block leaves the heap exactly as it was — the
+ * aligned block and its leading slack both coalesce back. */
+static void test_memalign_no_leak(void) {
+  reset();
+  uint32_t count0 = v_get_heap_allocation_count();
+  uint32_t used0 = v_get_heap_allocation_size();
+  void *p = v_memalign(256, 300);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT(v_get_heap_allocation_count() > count0);
+  v_free(p);
+  TEST_ASSERT_EQ(v_get_heap_allocation_count(), count0);
+  TEST_ASSERT_EQ(v_get_heap_allocation_size(), used0);
+}
+
+/* The slack carved off ahead of the aligned block is returned to the heap and
+ * can satisfy later allocations (it is not leaked). */
+static void test_memalign_leading_slack_reusable(void) {
+  reset();
+  /* Force a non-trivial leading gap: a small alloc so the next aligned block
+   * can't start at the heap head, then a large-alignment request. */
+  void *a = v_malloc(24);
+  TEST_ASSERT_NOT_NULL(a);
+  void *p = v_memalign(512, 512);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQ((uintptr_t)p & 511u, (uintptr_t)0);
+  /* A subsequent small alloc must still succeed (slack + remainder available). */
+  void *b = v_malloc(24);
+  TEST_ASSERT_NOT_NULL(b);
+  v_free(a);
+  v_free(b);
+  v_free(p);
+}
+
+/* Regression for the unsigned-underflow in v_memalign's leading-remainder loop.
+ * The bump condition was (uint32_t)(h - payload0) < VHEAP_MIN_PAYLOAD; when the
+ * first aligned header `h` fell below payload0 the subtraction wrapped to a huge
+ * value, the loop failed to bump `a`, and the aligned block was planted on top
+ * of the source block's own header — corrupting the heap. It fired for ~1 in 4
+ * source-block residues (e.g. blk ≡ 8 mod 32 for a 32-byte guard), which is why
+ * the host suite passed but MPU-guarded task stacks tripped "Invalid free or
+ * corrupted block" on target. Sweep every 8-byte residue via a filler alloc;
+ * each carve must be aligned and leave the heap exactly as it was. */
+static void test_memalign_leading_underflow_regression(void) {
+  for (size_t pad = 0; pad <= 56; pad += 8) {
+    reset();
+    void *filler = pad ? v_malloc(pad) : NULL;
+    if (pad)
+      TEST_ASSERT_NOT_NULL(filler);
+    uint32_t count0 = v_get_heap_allocation_count();
+    uint32_t used0 = v_get_heap_allocation_size();
+
+    void *p = v_memalign(32, 200);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQ((uintptr_t)p & 31u, (uintptr_t)0);
+    for (int i = 0; i < 200; i++) /* touch the whole payload */
+      ((volatile uint8_t *)p)[i] = 0xAB;
+    v_free(p);
+
+    /* Heap fully restored: the aligned block + leading slack coalesced back.
+     * Corruption would desync the counters or make v_free reject the block. */
+    TEST_ASSERT_EQ(v_get_heap_allocation_count(), count0);
+    TEST_ASSERT_EQ(v_get_heap_allocation_size(), used0);
+    if (filler)
+      v_free(filler);
+  }
+}
+
+/* #8: for align=64 a free-block header ≡ 8 mod 64 (payload0 ≡ 32 mod 64) made the
+ * old reservation (need + align + header) one MIN_PAYLOAD short, so v_memalign
+ * returned a block whose usable size was < the request and it overran the next
+ * block. (The align=32 sweep above misses it — d0 can't reach 32.) Sweep a
+ * leading shim so the header lands on every residue mod 64 — one hits the bad
+ * one regardless of heap base — and assert the returned block's own size is
+ * always >= the request. */
+static void test_memalign_underalloc_regression(void) {
+  const size_t ALIGN = 64, SZ = 64;
+  /* The bug bites only when the found block is JUST the old reservation
+   * (need + align + header) AND its header residue makes payload0 ≡ align/2 mod
+   * align. Build a tightly-sized free hole (payload == old reservation) pinned
+   * so it can't coalesce, and sweep a leading allocation so the hole's header
+   * lands on every residue mod align — one iteration hits the bad one. */
+  const size_t OLD_RESV = SZ + ALIGN + sizeof(Heap_Mem_Block); /* pre-fix size */
+  for (size_t shim = 0; shim <= 120; shim += 8) {
+    reset();
+    void *lead = v_malloc(256 + shim); /* shifts the hole's header mod align */
+    TEST_ASSERT_NOT_NULL(lead);
+    void *hole = v_malloc(OLD_RESV); /* the tight block memalign will pick */
+    TEST_ASSERT_NOT_NULL(hole);
+    void *pin = v_malloc(64); /* stops the hole coalescing into the tail */
+    TEST_ASSERT_NOT_NULL(pin);
+    v_free(hole); /* now a tightly-sized free hole */
+
+    void *p = v_memalign(ALIGN, SZ);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQ((uintptr_t)p & (ALIGN - 1), (uintptr_t)0);
+    Heap_Mem_Block *h =
+        (Heap_Mem_Block *)((uint8_t *)p - sizeof(Heap_Mem_Block));
+    TEST_ASSERT_EQ(h->magic_number, SANITY_MAGIC_NUMBER);
+    TEST_ASSERT(h->size >= SZ); /* under-allocation (finding #8) fails here */
+    for (size_t i = 0; i < SZ; i++) /* touch the whole requested payload */
+      ((volatile uint8_t *)p)[i] = 0xCD;
+    v_free(p);
+    v_free(lead);
+    v_free(pin);
+  }
+}
+
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
-void run_memory_tests(void) {
-  TEST_SUITE_BEGIN("Memory Allocator");
-  TEST_RUN(test_init_counters);
-  TEST_RUN(test_alloc_basic);
-  TEST_RUN(test_alloc_zero);
-  TEST_RUN(test_alloc_no_init);
-  TEST_RUN(test_alloc_alignment);
-  TEST_RUN(test_alloc_multiple);
-  TEST_RUN(test_alloc_counter);
-  TEST_RUN(test_free_counter);
-  TEST_RUN(test_free_null);
-  TEST_RUN(test_alloc_after_free);
-  TEST_RUN(test_block_splitting);
-  TEST_RUN(test_merge_next);
-  TEST_RUN(test_merge_prev);
-  TEST_RUN(test_heap_exhaustion);
-  TEST_RUN(test_free_invalid_ptr);
-  TEST_SUITE_END();
-}
+static const test_case_t memory_cases[] = {
+    TEST_CASE(test_init_counters),   TEST_CASE(test_alloc_basic),
+    TEST_CASE(test_alloc_zero),      TEST_CASE(test_alloc_no_init),
+    TEST_CASE(test_alloc_alignment), TEST_CASE(test_alloc_multiple),
+    TEST_CASE(test_alloc_counter),   TEST_CASE(test_free_counter),
+    TEST_CASE(test_free_null),       TEST_CASE(test_alloc_after_free),
+    TEST_CASE(test_block_splitting), TEST_CASE(test_merge_next),
+    TEST_CASE(test_merge_prev),      TEST_CASE(test_heap_exhaustion),
+    TEST_CASE(test_free_invalid_ptr),
+    TEST_CASE(test_memalign_alignment),
+    TEST_CASE(test_memalign_bad_args),
+    TEST_CASE(test_memalign_small_align_falls_back),
+    TEST_CASE(test_memalign_no_leak),
+    TEST_CASE(test_memalign_leading_slack_reusable),
+    TEST_CASE(test_memalign_leading_underflow_regression),
+    TEST_CASE(test_memalign_underalloc_regression),
+};
+const test_suite_t memory_suite = {
+    .name = "Memory Allocator",
+    .cases = memory_cases,
+    .count = TEST_COUNT(memory_cases),
+};

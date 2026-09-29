@@ -1,4 +1,8 @@
 [submodule "extern/NavHAL"]
 	path = extern/NavHAL
 	url = https://github.com/ragnar-vallhala/NavHAL.git
-	branch = stable
+	branch = main
+[submodule "extern/vtest"]
+	path = extern/vtest
+	url = https://github.com/ragnar-vallhala/vtest.git
+	branch = main

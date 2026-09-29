@@ -1,0 +1,26 @@
+# cppcheck suppression baseline for the vaios kernel.
+# Each entry is a CONFIRMED false positive — cppcheck can't model the invariant
+# that makes the code correct. Anything not listed here is expected to be zero
+# and gates tools/run_static_analysis.sh. Keep this list short and justified; do
+# not add real defects here. Format: <errorId>:<file> (see `cppcheck --errorlist`).
+# NOTE: cppcheck rejects a bare "#" line — every comment line needs text.
+
+# structure.c: the division is inside `if (elem_size > 0 && ...)`, so elem_size
+# is provably non-zero at the division. cppcheck reports it because it also
+# considers the branch where the guard is assumed non-redundant.
+zerodivcond:kernel/structure.c
+
+# task.c: get_next_task() is the scheduler core, only ever entered with a live
+# current_task (the idle task is always current once the scheduler starts). The
+# later `if (current_task && ...)` guards a different concern (re-queueing a
+# still-RUNNING task), not reachability of the deref above it.
+nullPointerRedundantCheck:kernel/task.c
+
+# utils.c v_log(): the real leak (an unconditional va_start when LOGGING_ENABLED
+# was compiled out) is FIXED — va_start now lives inside the logging guard and
+# every compiled exit calls va_end. Forcing each real config
+# (-DLOGGING_ENABLED=0/1 x -DBUFFERED_LOGGING=0/1) reports clean; the residual
+# finding only appears in cppcheck's unforced sweep, which invents an impossible
+# value
+# for the LOGGING_ENABLED / BUFFERED_LOGGING bools where neither branch compiles.
+va_end_missing:kernel/utils.c

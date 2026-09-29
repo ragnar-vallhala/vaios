@@ -1,0 +1,173 @@
+# Per-example feature config (Tier 1). Mirrors NavHAL's samples/Kconfig.
+#
+# The example being built is passed to the Kconfig generator via
+# --example-override (from -DVAIOS_EXAMPLE, see the top-level CMakeLists), which
+# activates the matching `config EXAMPLE_<TOKEN>` below; its `select`s then pull
+# in exactly the Kconfig features that example needs. The effect is layered
+# transiently on top of the base .config and never written back.
+#
+# Only examples that need NON-DEFAULT features have an entry here — every other
+# example builds fine against the base .config, so the override is a silent
+# no-op for it. <TOKEN> is the -DVAIOS_EXAMPLE=<TOKEN> string (see
+# examples/CMakeLists.txt), uppercased.
+#
+# Note on `select`: fd IPC / devfs / SVC / the MPU form a `depends on` chain, and
+# Kconfig `select` does NOT pull a target's own dependencies. So each entry
+# selects the WHOLE closure it needs (the same way a NavHAL sample selects its
+# full driver set), not just the leaf symbol.
+
+choice
+	prompt "Example application (config overlay)"
+	default EXAMPLE_NONE
+	help
+	  Auto-driven by the build from -DVAIOS_EXAMPLE via the generator's
+	  --example-override; you normally do not set this by hand. Examples with
+	  no extra feature needs stay on EXAMPLE_NONE.
+
+config EXAMPLE_NONE
+	bool "None / example needs no extra config"
+
+config EXAMPLE_TASK_HEAP_TEST
+	bool "task_heap_test"
+	select VAIOS_TASK_HEAP
+
+config EXAMPLE_MPU_USER_DEMO
+	bool "mpu_user_demo"
+	# Stage 5: the unprivileged flip. Needs the isolation stack plus fd I/O and
+	# the per-task heap so a confined task can still do console output + malloc.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_TASK_HEAP
+	select VAIOS_MPU_USER_SEPARATION
+
+config EXAMPLE_SD_USER
+	bool "sd_user"
+	# An unprivileged task using the SD card through the VFS mount (M5's
+	# on-target gate), plus a higher-priority task measuring what a synchronous
+	# filesystem syscall does to its cadence (decision D3). Hardware only:
+	# Renode's STM32F4 has no card.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_MODULE_VFS
+
+config EXAMPLE_FLIGHT_USER
+	bool "flight_user"
+	# The release gate for unprivileged operation (roadmap M7): a flight-shaped
+	# app whose every application task is unprivileged — bus, queue, spawn,
+	# cadence, self-info, perf — with privileged code only in init and the ISR.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_MODULE_BUS
+	select VAIOS_MODULE_PERF
+
+config EXAMPLE_BUS_USER
+	bool "bus_user"
+	# Unprivileged tasks on the Bus IPC through the fd syscalls (v_bus_open /
+	# v_bus_send / v_bus_recv), including the pointer-validation refusals.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_MODULE_BUS
+
+config EXAMPLE_PBUS_USER
+	bool "pbus_user"
+	# Unprivileged tasks doing peripheral-bus transfers through the fd +
+	# transfer syscalls (v_pbus_open / v_pbus_xfer), completed from a TIM3 IRQ.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MPU_USER_SEPARATION
+
+config EXAMPLE_STAGE5_LIFECYCLE
+	bool "stage5_lifecycle"
+	# On-target task-teardown regression (mutex-held-on-exit, blocked-task
+	# termination) under the real scheduler. Plain kernel config — no MPU/SVC
+	# flip needed; raw mutexes/semaphores + task_exit_request.
+
+config EXAMPLE_STAGE5_FDIPC
+	bool "stage5_fdipc"
+	# On-target fd-typed IPC regression (over-long name, fd-mutex owner re-lock,
+	# named-object slot reclaim on exit) under the real scheduler + SVC path.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_IPC_FD
+
+config EXAMPLE_COVERAGE_SCHED
+	bool "coverage_sched"
+	# Scheduler-exercising on-target gcov runner (build with -DVAIOS_GCOV=ON).
+	# Drives the SVC syscall + context-switch paths (port.c / syscall.c) that the
+	# no-scheduler unit runner leaves at 0%. Privileged tasks: MPU enabled + SVC
+	# syscalls (the same closure the fd-IPC examples use), but neither the static
+	# SRAM protect region nor the unprivileged flip — the flip faults by design
+	# and so cannot dump.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_TASK_HEAP
+
+config EXAMPLE_FD_IPC_TEST
+	bool "fd_ipc_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_IPC_FD
+
+config EXAMPLE_FD_WAIT_TEST
+	bool "fd_wait_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_IPC_FD
+
+config EXAMPLE_DEVFS_TEST
+	bool "devfs_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+
+config EXAMPLE_KMSG_TEST
+	bool "kmsg_test"
+	select VAIOS_MPU_ENABLE
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+
+config EXAMPLE_HOST_MPU_ISOLATION
+	bool "host_mpu_isolation"
+	# Host software-MPU per-task isolation demo: A writes into B's closed stack
+	# and faults. Needs the whole Phase-3 closure (select pulls no deps of its
+	# own): SVC path + static protect + the unprivileged/per-task separation.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_MPU_USER_SEPARATION
+
+config EXAMPLE_HOST_USER_RO
+	bool "host_user_ro"
+	# Host check that unprivileged syscalls accept read-only pointers into the
+	# executable's rodata and refuse writes there. Isolation closure + devfs.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_DEVFS
+
+config EXAMPLE_MPU_FAULT
+	bool "mpu_fault"
+	select VAIOS_MPU_ENABLE
+
+config EXAMPLE_STACK_OVERFLOW
+	bool "stack_overflow"
+	select VAIOS_MPU_ENABLE
+
+endchoice

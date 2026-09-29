@@ -1,0 +1,11 @@
+# vaios default configuration (defconfig).
+#
+# Seeded into <build>/.config on first configure. An empty body means "all
+# Kconfig defaults", which reproduces the historical include/vaios_config_
+# default.h values exactly. Customise interactively with:
+#
+#     python3 tools/kconfig.py --menuconfig --config <build>/.config
+#
+# then re-run cmake to regenerate <build>/vaios_autoconf.h. Non-default choices
+# persist in the build-dir .config; commit a curated defconfig to change the
+# shipped baseline.

@@ -18,6 +18,9 @@ typedef struct {
   _wait_q *tail; // For mutexes
   atomic_t count;
   atomic_t limit;
+#if VAIOS_IPC_FD
+  v_wnode *observers; // multi-fd waiters (v_wait) to wake when count goes > 0
+#endif
 } sema_t;
 
 typedef struct rmutex {
@@ -68,6 +71,35 @@ MutexHandle_t v_mutex_create_recursive_static(StaticSemaphore_t *pxBuffer);
 int v_semaphore_take(SemaphoreHandle_t sem, uint32_t ticks_to_wait);
 int v_semaphore_give(SemaphoreHandle_t sem);
 
+#if VAIOS_IPC_FD
+// fd-typed named semaphores (Phase 3, Stage 3). A named sem lives in the kernel
+// and is referenced by a per-task fd. v_sem_open find-or-creates by name and
+// returns an fd (or < 0); v_sem_take/give resolve fd -> object; close(fd) drops
+// the reference (object destroyed at refcount 0). Binary semaphores for now.
+#define V_IPC_CREATE 0x1 // create the named object if it does not exist
+int v_sem_open(const char *name, int flags);
+int v_sem_take(int fd, uint32_t ticks_to_wait);
+int v_sem_give(int fd);
+
+// fd-typed named mutexes (priority-inheriting). Same open-by-name model.
+int v_mtx_open(const char *name, int flags);
+int v_mtx_lock(int fd, uint32_t ticks_to_wait);
+int v_mtx_unlock(int fd);
+
+// Readiness probe + multi-fd wait. v_sem_poll returns 1 if a take on that fd
+// would succeed now, 0 if it would block, negative on a bad fd (non-consuming).
+// v_wait blocks until any of nfds sem fds is ready or the timeout elapses,
+// returning the index into fds[] of a ready descriptor, or -1 on timeout.
+int v_sem_poll(int fd);
+int v_wait(const int *fds, int nfds, uint32_t ticks);
+
+// Syscall bodies behind v_wait (dispatched from the SVCall handler, not called
+// directly by tasks). SYS_wait arms observers + blocks; SYS_wait_disarm unlinks
+// and returns the ready fds[] index.
+int32_t v_wait_block_impl(const int *fds, int nfds, uint32_t ticks);
+int32_t v_wait_disarm_impl(void);
+#endif
+
 // ISR-safe give
 int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
                               int *pxHigherPriorityTaskWoken);
@@ -88,6 +120,16 @@ int v_mutex_unlock(MutexHandle_t mtx);
 // Recursive Mutex operations
 int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait);
 int v_mutex_unlock_recursive(MutexHandle_t mtx);
+
+//-----------------------------------------------------------------------------
+// Task teardown
+//-----------------------------------------------------------------------------
+// Release everything a terminating task holds or waits on (held mutexes handed
+// off to their waiters, wait-queue / multi-wait memberships unlinked) so no
+// later give/unlock/wake dereferences its freed TCB. Called from the task exit
+// paths (kernel/task.c) with the scheduler critical section already held.
+struct Task_Control_Block;
+void v_ipc_task_teardown(struct Task_Control_Block *t);
 
 //-----------------------------------------------------------------------------
 // Return Codes

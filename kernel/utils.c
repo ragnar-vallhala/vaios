@@ -1,8 +1,10 @@
 #include "utils.h"
 #include "atomic.h"
+#include "vfile.h" // v_file_write (task printf routing), VAIOS_DEVFS
 #include "memory.h"
 #include "perf_hooks.h"
 #include "port.h"
+#include "syscall.h" // SVC trap wrappers (VAIOS_SYSCALL_SVC)
 #include "task.h"
 #include <stdarg.h>
 #include <stddef.h>
@@ -84,8 +86,56 @@ float v_atof(const char *s) {
 
   return res * (float)sign;
 }
+#if VAIOS_DEVFS
+// --- Kernel log ring for /dev/kmsg ------------------------------------------
+// The kernel printk path (v_print / direct_dma_print) mirrors its console
+// output into this ring; a task drains it by read()ing /dev/kmsg. Single
+// logical reader (drain-on-read); oldest bytes are overwritten when full.
+#ifndef KMSG_RING_SIZE
+#define KMSG_RING_SIZE 1024
+#endif
+static char kmsg_ring[KMSG_RING_SIZE];
+static volatile uint32_t kmsg_head, kmsg_tail;
+
+void v_kmsg_append(const char *buf, uint32_t len) {
+  uint32_t st = ENTER_CRITICAL_FROM_ISR();
+  for (uint32_t i = 0; i < len; i++) {
+    kmsg_ring[kmsg_head % KMSG_RING_SIZE] = buf[i];
+    kmsg_head++;
+    if (kmsg_head - kmsg_tail > KMSG_RING_SIZE)
+      kmsg_tail = kmsg_head - KMSG_RING_SIZE; // overwrite oldest
+  }
+  EXIT_CRITICAL_FROM_ISR(st);
+}
+
+int v_kmsg_read(char *out, uint32_t len) {
+  uint32_t st = ENTER_CRITICAL_FROM_ISR();
+  uint32_t n = 0;
+  while (n < len && kmsg_tail != kmsg_head)
+    out[n++] = kmsg_ring[kmsg_tail++ % KMSG_RING_SIZE];
+  EXIT_CRITICAL_FROM_ISR(st);
+  return (int)n;
+}
+
+// Task-facing printf: format, then write to stdout (fd 1) via the file syscall.
+// Distinct from the kernel printk path (print/print_fmt), which writes directly.
+int v_printf(const char *fmt, ...) {
+  char buf[128];
+  va_list args;
+  va_start(args, fmt);
+  int n = vaprint_fmt_buf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  if (n > 0)
+    v_file_write(1, buf, (uint32_t)n);
+  return n;
+}
+#endif // VAIOS_DEVFS
+
 // Use safely only if DMA is enabled and you know what you are doing
 void direct_dma_print(const uint8_t *bytes, uint32_t len) {
+#if VAIOS_DEVFS
+  v_kmsg_append((const char *)bytes, len); // capture kernel log for /dev/kmsg
+#endif
   v_port_hw_console_write_dma(bytes, len);
 }
 
@@ -96,8 +146,17 @@ void dma_tx_complete_callback(void) {
 #endif
 }
 
-// Basic print function (routed to the console by the port facade)
-void v_print(const char *str) { v_port_hw_console_write_string(str); }
+// Basic print function — the kernel printk path (direct, privileged). Also
+// mirrors its output into the /dev/kmsg ring.
+void v_print(const char *str) {
+#if VAIOS_DEVFS
+  uint32_t n = 0;
+  while (str[n])
+    n++;
+  v_kmsg_append(str, n);
+#endif
+  v_port_hw_console_write_string(str);
+}
 
 // Basic print function (to UART or semihosting)
 void print(const char *str) { v_print(str); }
@@ -187,8 +246,37 @@ static void v_panic_vprintf(const char *fmt, va_list args) {
       const char *s = panic_val_buf;
       while (*s)
         PANIC_PUT(*s++);
+    } else if (*p == 'p') {
+      // pointer — full width (uintptr_t), 0x-prefixed. 32-bit on ARM, 64 on host.
+      // Same -fanalyzer false positive as "%s" below: it pairs a %u caller's
+      // argument with this branch because it can't read the format string.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-va-arg-type-mismatch"
+#endif
+      uintptr_t v = (uintptr_t)va_arg(args, void *);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+      utoa_simple(v, panic_val_buf, 16);
+      PANIC_PUT('0');
+      PANIC_PUT('x');
+      const char *s = panic_val_buf;
+      while (*s)
+        PANIC_PUT(*s++);
     } else if (*p == 's') {
+      // Best-effort panic formatter: -fanalyzer traces a call path where a
+      // caller's argument type doesn't match "%s". A mistyped panic argument
+      // only garbles the already-fatal message; the NULL guard below keeps it
+      // from faulting. Not worth constraining every panic call site over.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-va-arg-type-mismatch"
+#endif
       const char *s = va_arg(args, const char *);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
       while (s && *s)
         PANIC_PUT(*s++);
     } else {
@@ -364,6 +452,14 @@ void vaprint_fmt(const char *fmt, va_list args) {
       PUT_STR_BUF(buffer);
       break;
     }
+    case 'p': { // pointer — full width (uintptr_t), 0x-prefixed
+      uintptr_t v = (uintptr_t)va_arg(args, void *);
+      utoa_simple(v, buffer, 16);
+      PUT_CHAR_BUF('0');
+      PUT_CHAR_BUF('x');
+      PUT_STR_BUF(buffer);
+      break;
+    }
     case 'c': {
       char c = (char)va_arg(args, int);
       PUT_CHAR_BUF(c);
@@ -529,6 +625,17 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
         out[pos++] = buffer[i];
       break;
     }
+    case 'p': { // pointer — full width (uintptr_t), 0x-prefixed
+      uintptr_t v = (uintptr_t)va_arg(args, void *);
+      utoa_simple(v, buffer, 16);
+      if (pos < out_size - 1)
+        out[pos++] = '0';
+      if (pos < out_size - 1)
+        out[pos++] = 'x';
+      for (int i = 0; buffer[i] && pos < out_size - 1; i++)
+        out[pos++] = buffer[i];
+      break;
+    }
     case 'c': {
       char c = (char)va_arg(args, int);
       if (pos < out_size - 1)
@@ -645,22 +752,24 @@ void v_log(Log_Type type, const char *msg, ...) {
   if (scheduler_running && current_task && current_task->magic == TCB_MAGIC) {
     uint32_t psp = v_port_get_psp();
     // 300 bytes is safe for most panics, but let's be even safer with 320
-    if (psp != 0 && psp < (uint32_t)current_task->mem_block + 320) {
+    if (psp != 0 && psp < (uint32_t)(uintptr_t)current_task->mem_block + 320) {
       v_panic(__FILE__, __LINE__,
               "Stack overflow detected in task %u during log! SP: 0x%x, Limit: "
               "0x%x",
               (unsigned)current_task->task_id, (unsigned)psp,
-              (unsigned)((uint32_t)current_task->mem_block + 320));
+              (unsigned)((uint32_t)(uintptr_t)current_task->mem_block + 320));
     }
   }
 
   if (type < MIN_LOG_LEVEL || !module_allowed(msg))
     return;
 
+#if LOGGING_ENABLED == 1
+  // Opened inside the logging guard so it is always paired with a va_end below;
+  // when logging is compiled out the variadic args are simply never read.
   va_list args;
   va_start(args, msg);
 
-#if LOGGING_ENABLED == 1
 #if BUFFERED_LOGGING == 1
   const char *typeName;
   const char *typeColor;
@@ -739,13 +848,14 @@ void v_log(Log_Type type, const char *msg, ...) {
   // Drop message if we are in a critical section/ISR and buffer is near full
   // to avoid deadlocking on DMA synchronization.
   extern volatile uint32_t critical_nesting;
-  uint32_t is_in_isr = (*(volatile uint32_t *)0xE000ED04) & 0x1FF;
+  int is_in_isr = v_port_hw_in_isr();
 
   // Wait/Flush loop
   while (1) {
     ENTER_CRITICAL();
     // Conservatively check if we have enough room (Prefix + MAX_MSG + Suffix)
-    if (log_buffer_storage_writing_head + prefix_len + LOG_MSG_MAX_LEN + 3 <=
+    // prefix + message + '~' + CRLF + NUL
+    if (log_buffer_storage_writing_head + prefix_len + LOG_MSG_MAX_LEN + 4 <=
         LOG_BUFFER_STORAGE_SIZE) {
       break;
     }
@@ -761,13 +871,23 @@ void v_log(Log_Type type, const char *msg, ...) {
     if (atomic_get(&log_buffer_storage_read_lock) ||
         log_buffer_size_to_read > 0) {
       EXIT_CRITICAL();
+      // Once tasks run, the flush in flight may belong to a LOWER-priority task
+      // (the idle task flushes every pass). On a non-DMA console that flush is
+      // a synchronous v_print, so busy-spinning here starves its owner: a
+      // priority inversion that only broke on the spin guard (~seconds) and then
+      // force-cleared the lock mid-print. Sleep a tick instead so it can finish.
+      extern uint8_t scheduler_running;
+      int can_sleep = scheduler_running && !is_in_isr;
+      uint32_t guard_max = can_sleep ? 1000u : 10000000u;
       uint32_t spin_guard = 0;
       while ((atomic_get(&log_buffer_storage_read_lock) ||
               log_buffer_size_to_read > 0) &&
-             spin_guard++ < 10000000u) {
+             spin_guard++ < guard_max) {
         v_log_flush();
+        if (can_sleep)
+          task_delay(1);
       }
-      if (spin_guard >= 10000000u) {
+      if (spin_guard >= guard_max) {
         atomic_set(&log_buffer_storage_read_lock, 0);
         log_buffer_size_to_read = 0;
       }
@@ -799,6 +919,12 @@ void v_log(Log_Type type, const char *msg, ...) {
                       LOG_MSG_MAX_LEN, msg, args);
   log_buffer_storage_writing_head += msg_len;
 
+  // vaprint_fmt_buf stops one short of the buffer and says nothing, so a cut
+  // message reads as a whole one — "size 0x8000" arrives as "size 0x8", which
+  // is not obviously wrong, just wrong. Mark it.
+  if (msg_len == LOG_MSG_MAX_LEN - 1)
+    log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '~';
+
   // 3. Add suffix
   log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\r';
   log_buffer_storage_current_writing[log_buffer_storage_writing_head++] = '\n';
@@ -806,7 +932,15 @@ void v_log(Log_Type type, const char *msg, ...) {
 
   EXIT_CRITICAL();
   va_end(args);
-#elif BUFFERED_LOGGING == 0
+
+  // Nothing flushes this buffer until something calls v_log_flush, and the only
+  // callers run under the scheduler. So before scheduler_start — clock, SD,
+  // filesystem and MPU bring-up, and every `log an error then while(1)` path in
+  // there — a log would be written into RAM and never seen: a board that looks
+  // dead with no message. Flush inline while nothing else can.
+  if (!scheduler_running)
+    v_log_flush();
+#else // unbuffered — the only other value of the BUFFERED_LOGGING bool
   const char *typeName;
   const char *typeColor;
   switch (type) {
@@ -844,6 +978,7 @@ void v_log(Log_Type type, const char *msg, ...) {
   print_fmt("%s[%s %u]%s ", typeColor, typeName, v_get_ticks(), COLOR_RESET);
   vaprint_fmt(msg, args);
   print_fmt("\r\n");
+  va_end(args);
 #endif // BUFFERED_LOGGING
 #endif // LOGGING_ENABLED
 }
@@ -875,7 +1010,7 @@ void v_log_flush(void) {
     atomic_set(&log_buffer_storage_read_lock, 1);
     EXIT_CRITICAL();
 
-#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
+#if VAIOS_PORT_CONSOLE_DMA
     direct_dma_print((const uint8_t *)log_buffer_storage_current_reading,
                      log_buffer_size_to_read);
     // Note: read_lock is released by dma_tx_complete_callback
@@ -897,19 +1032,11 @@ void v_log_flush(void) {
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
-#ifdef NAVHAL
-// Defined in NavHAL's timebase.c. In SUBMODULE builds NavHAL compiles out its
-// own SysTick_Handler and cedes the vector to us, so its millisecond timebase
-// (which backs every hal_delay_*()) only advances if we drive it from here.
-void hal_timebase_tick(void);
-#endif
-
-void SysTick_Handler(void) {
+// SysTick body. The ARM vector handler (portable/armv7e-m/port_hw.c) and its
+// NavHAL timebase poke wrap this; the kernel keeps only the arch-neutral work.
+void v_kernel_tick(void) {
   PERF_ISR_SYSTICK_BEGIN();
   systick_count++;
-#ifdef NAVHAL
-  hal_timebase_tick();
-#endif
   int preempted = 0;
   if (scheduler_running) {
     // Drain any tasks whose absolute wakeup tick is now due. This runs
@@ -922,7 +1049,16 @@ void SysTick_Handler(void) {
   PERF_ISR_SYSTICK_END(preempted);
 }
 
-uint32_t v_get_ticks(void) { return systick_count; }
+uint32_t v_get_ticks(void) {
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_SYSCALL_SVC
+  // systick_count is kernel memory, so an unprivileged task has to ask. The
+  // privilege test (one MRS) keeps the kernel, ISRs and privileged tasks on the
+  // direct read — this is a hot function.
+  if (v_in_thread_mode() && !v_port_is_privileged())
+    return (uint32_t)v_svc0(SYS_ticks);
+#endif
+  return systick_count;
+}
 
 void *v_memset(void *s, int c, unsigned int n) {
   return memset(s, c, n);

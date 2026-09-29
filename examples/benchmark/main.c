@@ -24,9 +24,6 @@
 #include "vaios.h"
 
 #ifdef NAVHAL
-#ifndef CORTEX_M4
-#define CORTEX_M4
-#endif
 #include "common/hal_gpio.h"
 #include "common/hal_pwm.h"
 #include "navhal.h" /* hal_fpu_enable, GPIO, PWM */
@@ -140,6 +137,10 @@ static void benchmark_runner(void *arg) {
   v_delay(50);
 
   /* ---- Run all benchmark categories -------------------------------- */
+  /* -DVAIOS_BENCH_ONLY_BUS runs just the Bus IPC suite (B8). The full set takes
+   * far longer than an emulator run is worth, and the bus numbers are the ones
+   * the plan asks to be committed. */
+#ifndef VAIOS_BENCH_ONLY_BUS
   bench_fpu_run();
   v_delay(20);
 
@@ -156,6 +157,11 @@ static void benchmark_runner(void *arg) {
   v_delay(20);
 
   bench_stress_run();
+#endif /* !VAIOS_BENCH_ONLY_BUS */
+
+#if VAIOS_MODULE_BUS
+  bench_bus_run();
+#endif
   v_delay(20);
 
   /* ---- Print final summary ----------------------------------------- */
@@ -187,15 +193,15 @@ int main(void) {
    *
    * Must be called BEFORE v_init() so that systick_init() and uart2_init()
    * derive their reload / BRR divisors from the live APB clocks. */
-  hal_pll_config_t pll_cfg = {
-      .input_src = HAL_CLOCK_SOURCE_HSI,
-      .pll_m = 16,
-      .pll_n = 336,
-      .pll_p = 4,
-      .pll_q = 7,
+  hal_clock_config_t clk_cfg = {
+      .source = HAL_CLOCK_SOURCE_PLL,
+      .pll = {.input_src = HAL_CLOCK_SOURCE_HSI,
+              .pll_m = 16,
+              .pll_n = 336,
+              .pll_p = 4,
+              .pll_q = 7},
   };
-  hal_clock_config_t clk_cfg = {.source = HAL_CLOCK_SOURCE_PLL};
-  hal_clock_init(&clk_cfg, &pll_cfg);
+  hal_clock_init(&clk_cfg);
 #endif
 
   /* 1. Core VAIOS init (uses live APB clocks for UART + SysTick).
@@ -219,7 +225,7 @@ int main(void) {
   }
 
   /* 5. Spawn runner at high priority so it always gets cpu first */
-  task_create(benchmark_runner, NULL, 6144, MAX_PRIORITY);
+  task_create(benchmark_runner, NULL, 8192, MAX_PRIORITY);
 
 #ifdef NAVHAL
   /* PWM heartbeat on PB10: breathes 0→100% duty cycle every ~4 s.
