@@ -90,6 +90,10 @@ void v_port_hw_cpu_idle(void);
 int v_port_hw_in_isr(void);
 uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
+/* No DMA console here — write_dma completes before it returns, so the buffered
+ * logger releases its own read lock. See portable/armv7e-m/port.h. */
+#define VAIOS_PORT_CONSOLE_DMA 0
+
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);

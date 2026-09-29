@@ -206,6 +206,28 @@ uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out);
 void v_port_hw_debug_init(void);
 
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
+/* Does the console's write_dma actually start an asynchronous transfer, or
+ * does it complete before it returns? The buffered logger needs to know which,
+ * because on the asynchronous path its read lock is released by the completion
+ * callback and on the synchronous one it must release the lock itself.
+ *
+ * This replaces `defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)`. Those
+ * were NavHAL's pre-Kconfig feature flags -- its own api_standardization.md
+ * lists them as "ad-hoc; disconnected from Kconfig CONFIG_*" -- and
+ * _UART_BACKEND_DMA is now defined nowhere at all, so that condition was
+ * always false and the DMA console path had never once compiled in. The
+ * logger fell through to the blocking write, which is why nothing looked
+ * wrong. NAVHAL_HAS_UART_DMA is the flag NavHAL actually generates.
+ *
+ * The CDC route is excluded: hal_usb_cdc_write copies into the peripheral FIFO
+ * and returns, so there is no completion callback to wait for. */
+#if defined(NAVHAL) && NAVHAL_HAS_UART_DMA &&                                  \
+    !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC && (BUFFERED_LOGGING == 1)
+#define VAIOS_PORT_CONSOLE_DMA 1
+#else
+#define VAIOS_PORT_CONSOLE_DMA 0
+#endif
+
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);

@@ -1010,7 +1010,7 @@ void v_log_flush(void) {
     atomic_set(&log_buffer_storage_read_lock, 1);
     EXIT_CRITICAL();
 
-#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
+#if VAIOS_PORT_CONSOLE_DMA
     direct_dma_print((const uint8_t *)log_buffer_storage_current_reading,
                      log_buffer_size_to_read);
     // Note: read_lock is released by dma_tx_complete_callback

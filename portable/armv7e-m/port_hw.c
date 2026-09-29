@@ -205,14 +205,16 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
   // anywhere else.
   hal_uart_config_t uart_cfg = {.baudrate = baudrate};
   hal_uart_init(BOARD_CONSOLE_UART, &uart_cfg);
-#if defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA) &&                     \
-    (BUFFERED_LOGGING == 1)
+#if VAIOS_PORT_CONSOLE_DMA
   if (dma_tx_done_cb) {
-    // The one board fact still named here: DMA1 stream 6 is USART2_TX on an
-    // F4, and no board describes its console's DMA stream yet. Correct while
-    // the console is USART2 on an F4; a board that answers otherwise needs a
-    // BOARD_CONSOLE_UART_DMA_IRQ from NavHAL before this line can follow it.
-    hal_interrupt_attach_callback(DMA1_Stream6_IRQn, dma_tx_done_cb);
+    // Ask the UART driver which stream it bound, rather than naming one. The
+    // answer is not a constant: several requests have a second stream (the
+    // driver notes USART6_TX is 6 or 7) and hal_uart_dma_set_binding can move
+    // it, so DMA1_Stream6_IRQn was right only for USART2 on an F4 that nothing
+    // had rebound. This follows whatever the console UART actually got.
+    hal_dma_binding_t tx;
+    if (hal_uart_dma_get_binding(BOARD_CONSOLE_UART, true, &tx) == HAL_OK)
+      hal_interrupt_attach_callback(tx.irq, dma_tx_done_cb);
   }
 #else
   (void)dma_tx_done_cb;
@@ -228,7 +230,7 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
   // CDC has no DMA path of its own; the driver's write already copies into the
   // peripheral FIFO, so the buffered logger's "DMA" write is a plain write.
   hal_usb_cdc_write(bytes, (uint16_t)len);
-#elif defined(NAVHAL) && defined(_DMA_ENABLED) && defined(_UART_BACKEND_DMA)
+#elif VAIOS_PORT_CONSOLE_DMA
   hal_uart_write_dma(BOARD_CONSOLE_UART, bytes, len);
 #else
   (void)bytes;
@@ -516,14 +518,21 @@ void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
  * ------------------------------------------------------------------------- */
 
 void v_port_hw_cycle_counter_init(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_CYCLE_COUNTER
   hal_cycle_counter_init();
 #endif
 }
 
 uint32_t v_port_hw_cycle_counter_read(void) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_HAS_CYCLE_COUNTER
   return hal_cycle_counter_get();
+#elif defined(NAVHAL)
+  /* The core has a DWT — every ARMv7E-M part does — but this config left the
+   * driver out (CONFIG_DRV_DWT), so there is nothing to read. hal_dwt.h still
+   * declares the functions and only the bodies are gated, so this used to
+   * compile and then fail at link. Zero means v_perf reports no cycles rather
+   * than a wrong number; turn CONFIG_DRV_DWT on to get real ones. */
+  return 0;
 #else
   /* No DWT CYCCNT on the QEMU model, but semihosting SYS_ELAPSED exposes the
    * emulator's virtual clock — a real, high-resolution monotonic source. Map
