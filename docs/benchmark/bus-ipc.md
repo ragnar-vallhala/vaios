@@ -16,7 +16,7 @@ ad-hoc script, so a future change can be compared against the same four cases.
 **The max is the point.** A mean tells you throughput; the worst case tells you
 whether a 1 kHz control loop makes its deadline.
 
-## Results — STM32F401RE, 84 MHz, 2026-09-29
+## Results — NAVIXSM-F401RE (Cortex-M4), 84 MHz, 2026-09-29
 
 200 round trips per case, DWT cycle counter, hard-float, `-O2`, NavHAL 0.3.8,
 ART accelerator **on** (`FLASH_ACR = 0x702`: 2 wait states, prefetch, I-cache and
@@ -74,6 +74,76 @@ Neither table is comparable to the ad-hoc figures taken while the zero-copy and
 pipe paths were being written: that harness measured different call sequences,
 and the publish path has since gained the B7 statistics counters.
 
+## Results — Nucleo-F767ZI (Cortex-M7), 84 MHz, 2026-09-29
+
+The same four cases on an M7, for the comparison the table above could not make.
+Same harness, same 200 round trips, same DWT counter.
+
+**The clock is the same 84 MHz**, not the F767's 216 MHz maximum — that is what
+NavHAL's default configuration gives this board, and it is read out of the
+SysTick reload (`0x1481f` → 83999+1 → 84.000 MHz at a 1000 µs tick), not
+assumed. One cycle is 11.90 ns on both parts. So this is an architecture
+comparison at matched clock, not a "which board is faster" one, which is the
+more useful question anyway.
+
+L1 caches and branch prediction are on: `CCR = 0x00070200`, bits 16/17/18, read
+off the running board.
+
+| Case | min | mean | max | mean µs | max µs | mean vs M4 |
+|---|---|---|---|---|---|---|
+| pipe publish+pop | 316 | 327 | 402 | 3.9 | 4.8 | −24% |
+| zero-copy reserve+peek | 497 | 513 | 1108 | 6.1 | 13.2 | −15% |
+| copy publish+pop | 567 | 591 | 1189 | 7.0 | 14.2 | −17% |
+| copy under a full pool | 714 | 743 | 1340 | 8.8 | 16.0 | −14% |
+
+### What these say
+
+**The M7 buys 14–24% at the same clock**, in the same order the ART did on the
+M4: the pipe gains most and the full pool least. Both accelerate the same thing
+— getting instructions and data to the core — so the case with the least memory
+traffic keeps gaining the most.
+
+**Eviction still costs ~150 cycles, on either core.** The increment from `copy`
+to `copy under a full pool` is +149 cycles on the M4 and +152 on the M7 — the
+same absolute cost, despite everything else getting 14–24% cheaper. Neither the
+ART nor the M7's caches touch it, which says `alloc_msg`'s reclaim loop is
+bound by dependent loads walking the free list, not by fetch. That is also the
+clearest statement yet that the loop needs no rework: the one critical section
+that grows with pool pressure costs about 150 cycles wherever you run it.
+
+**The M7 is faster but less repeatable.** Two runs from reset on the F401 with
+ART returned byte-identical numbers, maxima included. On the M7 they do not:
+
+    run 1   copy 567/591/1189   zc 497/513/1108   pipe 316/327/402   pool 714/743/1340
+    run 2   copy 566/586/1173   zc 497/515/1165   pipe 315/328/402   pool 719/743/1344
+
+Means agree within about 1%, but no column is exactly reproducible, because a
+cache's contents depend on everything that ran before. For a control loop that
+is the real trade: the M7 gives you a lower worst case and a slightly fuzzier
+one. Quote the max, not the mean.
+
+**Budget:** worst case 16.0 µs, 1.6% of a 1 kHz period, against 1.9% on the M4.
+
+### Reproducing it
+
+The stock F767 defconfig is not enough — it leaves out the DWT the benchmark
+reads and builds soft-float, which would confound the comparison with an ABI
+change. Copy it and add:
+
+```sh
+cp extern/NavHAL/cmake/defconfigs/cortex-m7_stm32f7_nucleo_f767zi.defconfig f767_bench.config
+printf 'CONFIG_DRV_DWT=y\nCONFIG_USE_FPU=y\nCONFIG_DRV_FPU=y\n' >> f767_bench.config
+cmake -S . -B build_bench7 -DNAVHAL=ON -DEXAMPLES=ON \
+      -DVAIOS_EXAMPLE=BENCHMARK -DVAIOS_MODULE_BUS=ON -DVAIOS_BENCH_ONLY_BUS=ON \
+      -DNAVHAL_CONFIG_FILE="$PWD/f767_bench.config"
+cmake --build build_bench7 -j
+```
+
+No `CONFIG_HEAP_SIZE` override is needed: the F767's 512 KB of SRAM takes the
+default heap that the F401's 96 KB could not. Flash and read exactly as above,
+with `USB_LOC` naming the F767's probe — `probe_target_from_build` picks
+`target/stm32f7x.cfg` from the build, so nothing else changes.
+
 ## Running it
 
 ```sh
@@ -127,8 +197,3 @@ like it "didn't start":
 
 An earlier version of this document blamed Renode for the benchmark not starting.
 That was wrong: it was failing the same way everywhere, and nothing could say so.
-
-## Still to do
-
-- Take the same four cases on an M7 part (F767) for comparison, where the cache
-  and the wider bus change the shape.
