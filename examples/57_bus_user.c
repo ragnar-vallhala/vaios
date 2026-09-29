@@ -125,6 +125,13 @@ static int check_efault(int wfd, int rfd) {
     say("[busu] flash rx.buf rc=%d (want %d)\r\n", rc, EFAULT_RC);
     bad = 1;
   }
+  // Stats are read-only, but they still write a struct into the caller's
+  // memory, so the destination is checked like any other out-pointer.
+  rc = v_bus_fd_stats(wfd, (v_bus_topic_stats_t *)KERNEL_SRAM);
+  if (rc != EFAULT_RC) {
+    say("[busu] kernel stats out rc=%d (want %d)\r\n", rc, EFAULT_RC);
+    bad = 1;
+  }
   // None of the refusals broke the handles: a real send still works.
   if (v_bus_send(wfd, &v, sizeof v) != VA_PASS) {
     say("[busu] send after refusals failed\r\n", 0, 0);
@@ -244,6 +251,30 @@ static void producer(void *arg) {
     if ((i & 7u) == 0)
       v_delay(1);
   }
+  // Topic counters through our own write handle (B7 via SYS_bus_stats). The
+  // point is that an unprivileged publisher can see whether the pool has been
+  // refusing it: `published` must have counted the stream we just sent, and
+  // the send loop above retried until each one landed, so nothing was dropped
+  // on our account.
+  if (!bad) {
+    v_bus_topic_stats_t st;
+    int rc = v_bus_fd_stats(q, &st);
+    if (rc != VA_PASS || st.published < MSGS) {
+      say("[busu] P stats rc=%d published=%d\r\n", rc, (int)st.published);
+      bad = 1;
+    }
+    // A closed handle is not a handle. Reading through one must be refused
+    // rather than quietly answering about whatever reuses the slot.
+    int tmp = v_bus_open("sensor.q", V_BUS_RD);
+    if (tmp >= 0) {
+      v_file_close(tmp);
+      if (v_bus_fd_stats(tmp, &st) != V_BUS_EINVAL) {
+        say("[busu] P stats on closed fd\r\n", 0, 0);
+        bad = 1;
+      }
+    }
+  }
+
   // The clock and the drift-free cadence, from unprivileged code: both are
   // kernel globals reached through SYS_ticks / SYS_delay_until, so before those
   // existed this faulted.
