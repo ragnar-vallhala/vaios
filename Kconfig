@@ -17,13 +17,13 @@ config VAIOS_VERSION_MAJOR
     default 0
 config VAIOS_VERSION_MINOR
     int "Minor version"
-    default 1
+    default 2
 config VAIOS_VERSION_PATCH
     int "Patch version"
-    default 1
+    default 0
 config VAIOS_VERSION
     string "Version string"
-    default "0.1.0"
+    default "0.2.0"
 config AUTHOR
     string "Author"
     default "ASHUTOSH VISHWAKARMA"
