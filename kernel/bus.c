@@ -1044,6 +1044,117 @@ int v_bus_stats(const v_bus_t *bus, v_bus_stats_t *out) {
   return VA_PASS;
 }
 
+// --- Callback notification (B6) -----------------------------------------------
+// The plan called for "a dedicated high-priority bus worker task, blocked on a
+// notification semaphore, playing the SWI role" — vaios has no softirq, only
+// PendSV. This is that, minus the kernel creating the task: the caller runs
+// v_bus_worker_step from a task of its own, exactly as it runs
+// v_vfs_worker_step, because the priority of deferred work relative to control
+// is a flight decision.
+//
+// The wake path needs no new code in publish. Each callback subscription arms
+// the SAME semaphore as its `notify`, so the existing notify_sub() — already
+// called on every publish, ISR path included — signals the worker. One shared
+// binary semaphore banks one wake for any number of subscriptions, which is
+// enough: the worker drains every slot each time it runs, so a wake it did not
+// get individually is a wake it does not need.
+
+typedef struct {
+  v_bus_sub_t sub;
+  v_bus_cb_t cb;
+  void *arg;
+  void *buf;
+  uint16_t cap;
+  uint8_t used;
+} bus_cb_slot_t;
+
+static bus_cb_slot_t bus_cb_slots[VAIOS_BUS_MAX_CALLBACKS];
+static StaticSemaphore_t bus_cb_sem_store;
+static SemaphoreHandle_t bus_cb_sem;
+
+int v_bus_subscribe_cb(v_bus_topic_t *topic, v_bus_cb_t cb, void *arg,
+                       void *buf, uint16_t cap) {
+  if (!topic || !cb || !buf || cap == 0)
+    return V_BUS_EINVAL;
+  if (!bus_cb_sem) {
+    bus_cb_sem = v_semaphore_create_binary_static(&bus_cb_sem_store);
+    if (!bus_cb_sem)
+      return V_BUS_EBUSY;
+  }
+  for (int i = 0; i < VAIOS_BUS_MAX_CALLBACKS; i++) {
+    bus_cb_slot_t *s = &bus_cb_slots[i];
+    if (s->used)
+      continue;
+    s->cb = cb;
+    s->arg = arg;
+    s->buf = buf;
+    s->cap = cap;
+    int r = v_bus_subscribe(topic, &s->sub);
+    if (r != VA_PASS)
+      return r;
+    // Publish signals this, through the notify_sub() the publish path already
+    // does. Set after subscribing so no signal can arrive at a half-built slot.
+    s->sub.notify = bus_cb_sem;
+    s->used = 1;
+    return i;
+  }
+  return V_BUS_EBUSY; // VAIOS_BUS_MAX_CALLBACKS
+}
+
+int v_bus_unsubscribe_cb(int slot) {
+  if (slot < 0 || slot >= VAIOS_BUS_MAX_CALLBACKS)
+    return V_BUS_EINVAL;
+  bus_cb_slot_t *s = &bus_cb_slots[slot];
+  if (!s->used)
+    return VA_PASS; // safe to call twice
+  // Clear the signal target before unsubscribing, so nothing reaches a slot
+  // that is half removed — the same ordering bus_fd_close() uses.
+  s->sub.notify = 0;
+  v_bus_unsubscribe(&s->sub);
+  s->used = 0;
+  s->cb = 0;
+  return VA_PASS;
+}
+
+int v_bus_worker_step(uint32_t ticks) {
+  if (!bus_cb_sem)
+    return 0; // nothing has ever registered; nothing to wait for
+  // The signal is a hint, not a promise (§6.4): a binary semaphore banks one
+  // wake for any number of publishes, and a message can be evicted between the
+  // signal and this running. So the return is ignored and every slot is
+  // checked — a wake with nothing to show costs one walk, never a lost message.
+  (void)v_semaphore_take(bus_cb_sem, ticks);
+
+  int dispatched = 0;
+  int stalled = 0;
+  for (int i = 0; i < VAIOS_BUS_MAX_CALLBACKS; i++) {
+    bus_cb_slot_t *s = &bus_cb_slots[i];
+    if (!s->used)
+      continue;
+    for (;;) {
+      uint16_t len = 0;
+      uint32_t missed = 0;
+      int r = v_bus_pop(&s->sub, s->buf, s->cap, &len, &missed);
+      if (r == VA_PASS) {
+        s->cb(s->buf, len, missed, s->arg);
+        dispatched++;
+        continue;
+      }
+      // Anything else ends this slot's turn. V_BUS_EMSGSIZE specifically means
+      // the message is wider than the buffer this subscription was registered
+      // with; v_bus_pop leaves it unread, so retrying would spin forever on it
+      // and the subscription is stuck until someone gives it a bigger buffer.
+      // Report it rather than loop: a silent stall is the worst version of this.
+      if (r == V_BUS_EMSGSIZE)
+        stalled = 1;
+      break;
+    }
+  }
+  if (stalled)
+    return V_BUS_EMSGSIZE;
+  return dispatched;
+}
+
 // --- User access: topics on the fd table (VAIOS_DEVFS) ------------------------
 // A task can't touch the bus itself (kernel memory, BASEPRI critical sections),
 // so it opens a topic by name and goes through syscalls. Each open holds a

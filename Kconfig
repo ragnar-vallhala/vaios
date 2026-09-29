@@ -449,6 +449,21 @@ config VAIOS_QUEUE_MAX_OPEN
       Open v_queue_open() handles across all tasks, in static kernel RAM. Like
       VAIOS_BUS_MAX_OPEN, this bounds the fd layer, not the queues themselves.
 
+config VAIOS_BUS_MAX_CALLBACKS
+    int "Bus IPC callback subscriptions (system-wide)"
+    depends on VAIOS_MODULE_BUS
+    default 4
+    help
+      Callback subscriptions registered with v_bus_subscribe_cb, in static
+      kernel RAM. Each holds one subscription; the payload buffer is the
+      caller's, so this costs no heap.
+
+      Unrelated to VAIOS_BUS_MAX_OPEN: that bounds the fd layer that
+      unprivileged tasks use. Callbacks are privileged only — the worker would
+      otherwise call user code from kernel context — so they do not go through
+      an fd at all. A task that wants callback semantics blocks in a thread of
+      its own (v_bus_recv_wait).
+
 config VAIOS_BUS_MAX_OPEN
     int "Bus IPC user handles (system-wide)"
     depends on VAIOS_DEVFS

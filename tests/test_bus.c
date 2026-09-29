@@ -1251,6 +1251,133 @@ static void test_bus_fuzz_pipes(void) {
   TEST_ASSERT(stale > 0); /* the seqlock path really ran */
 }
 
+
+/* --- B6 callback notification ------------------------------------------------
+ * The worker is privileged and dispatches into caller-supplied buffers, so the
+ * things worth pinning are: it delivers what was published, it stops when a
+ * subscription is dropped, and an undersized buffer reports instead of
+ * spinning (v_bus_pop leaves an oversized message unread, so a naive
+ * drain-until-empty loop would never terminate). */
+static v_bus_topic_t cbt;
+static uint8_t cb_buf[BS];
+static int cb_calls;
+static uint16_t cb_last_len;
+static uint8_t cb_last_first;
+static void *cb_last_arg;
+
+static void cb_record(const void *payload, uint16_t len, uint32_t missed,
+                      void *arg) {
+  (void)missed;
+  cb_calls++;
+  cb_last_len = len;
+  cb_last_first = ((const uint8_t *)payload)[0];
+  cb_last_arg = arg;
+}
+
+static void cb_reset_counters(void) {
+  cb_calls = 0;
+  cb_last_len = 0;
+  cb_last_first = 0;
+  cb_last_arg = 0;
+}
+
+static void test_bus_cb_validates(void) {
+  reset();
+  v_bus_topic_declare(&bus, &cbt, "cb", NULL);
+  TEST_ASSERT_EQ(v_bus_subscribe_cb(NULL, cb_record, 0, cb_buf, sizeof cb_buf),
+                 V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_subscribe_cb(&cbt, NULL, 0, cb_buf, sizeof cb_buf),
+                 V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_subscribe_cb(&cbt, cb_record, 0, NULL, sizeof cb_buf),
+                 V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_subscribe_cb(&cbt, cb_record, 0, cb_buf, 0),
+                 V_BUS_EINVAL);
+  /* An out-of-range slot is refused; an unused one is a no-op, twice. */
+  TEST_ASSERT_EQ(v_bus_unsubscribe_cb(-1), V_BUS_EINVAL);
+  TEST_ASSERT_EQ(v_bus_unsubscribe_cb(0), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_unsubscribe_cb(0), VA_PASS);
+}
+
+static void test_bus_cb_dispatches_published(void) {
+  reset();
+  cb_reset_counters();
+  v_bus_topic_declare(&bus, &cbt, "cb", NULL);
+  int marker = 0;
+  int slot = v_bus_subscribe_cb(&cbt, cb_record, &marker, cb_buf, sizeof cb_buf);
+  TEST_ASSERT(slot >= 0);
+
+  uint8_t msg[2] = {0xA5, 0x11};
+  TEST_ASSERT_EQ(v_bus_publish(&cbt, msg, sizeof msg), VA_PASS);
+  msg[0] = 0xB6;
+  TEST_ASSERT_EQ(v_bus_publish(&cbt, msg, sizeof msg), VA_PASS);
+
+  /* ticks 0: the worker must not depend on the semaphore to find work — the
+   * signal is a hint, and it drains every slot regardless. */
+  int n = v_bus_worker_step(0);
+  TEST_ASSERT_EQ(n, 2);
+  TEST_ASSERT_EQ(cb_calls, 2);
+  TEST_ASSERT_EQ(cb_last_len, (uint16_t)sizeof msg);
+  TEST_ASSERT_EQ(cb_last_first, 0xB6u); /* the second one, in order */
+  TEST_ASSERT(cb_last_arg == &marker);
+
+  /* Nothing left: a second turn dispatches nothing rather than repeating. */
+  TEST_ASSERT_EQ(v_bus_worker_step(0), 0);
+  TEST_ASSERT_EQ(cb_calls, 2);
+  TEST_ASSERT_EQ(v_bus_unsubscribe_cb(slot), VA_PASS);
+}
+
+static void test_bus_cb_unsubscribe_stops_delivery(void) {
+  reset();
+  cb_reset_counters();
+  v_bus_topic_declare(&bus, &cbt, "cb", NULL);
+  int slot = v_bus_subscribe_cb(&cbt, cb_record, 0, cb_buf, sizeof cb_buf);
+  TEST_ASSERT(slot >= 0);
+  TEST_ASSERT_EQ(v_bus_unsubscribe_cb(slot), VA_PASS);
+
+  uint8_t msg[2] = {1, 2};
+  TEST_ASSERT_EQ(v_bus_publish(&cbt, msg, sizeof msg), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_worker_step(0), 0);
+  TEST_ASSERT_EQ(cb_calls, 0);
+  /* And the message held no subscriber, so its blocks went straight back. */
+  TEST_ASSERT_EQ(v_bus_free_blocks(&bus), BC);
+}
+
+static void test_bus_cb_undersized_buffer_reports(void) {
+  reset();
+  cb_reset_counters();
+  v_bus_topic_declare(&bus, &cbt, "cb", NULL);
+  static uint8_t tiny[2];
+  int slot = v_bus_subscribe_cb(&cbt, cb_record, 0, tiny, sizeof tiny);
+  TEST_ASSERT(slot >= 0);
+
+  uint8_t big[8] = {9};
+  TEST_ASSERT_EQ(v_bus_publish(&cbt, big, sizeof big), VA_PASS);
+  /* v_bus_pop leaves it unread, so this must report rather than spin. */
+  TEST_ASSERT_EQ(v_bus_worker_step(0), V_BUS_EMSGSIZE);
+  TEST_ASSERT_EQ(cb_calls, 0);
+  /* Still stuck on the same message, still reporting: a stall stays loud. */
+  TEST_ASSERT_EQ(v_bus_worker_step(0), V_BUS_EMSGSIZE);
+  TEST_ASSERT_EQ(v_bus_unsubscribe_cb(slot), VA_PASS);
+}
+
+static void test_bus_cb_slots_are_bounded(void) {
+  reset();
+  v_bus_topic_declare(&bus, &cbt, "cb", NULL);
+  int slots[VAIOS_BUS_MAX_CALLBACKS];
+  for (int i = 0; i < VAIOS_BUS_MAX_CALLBACKS; i++) {
+    slots[i] = v_bus_subscribe_cb(&cbt, cb_record, 0, cb_buf, sizeof cb_buf);
+    TEST_ASSERT(slots[i] >= 0);
+  }
+  TEST_ASSERT_EQ(v_bus_subscribe_cb(&cbt, cb_record, 0, cb_buf, sizeof cb_buf),
+                 V_BUS_EBUSY);
+  for (int i = 0; i < VAIOS_BUS_MAX_CALLBACKS; i++)
+    TEST_ASSERT_EQ(v_bus_unsubscribe_cb(slots[i]), VA_PASS);
+  /* Freed slots are reusable, or the bound would be a one-way ratchet. */
+  int again = v_bus_subscribe_cb(&cbt, cb_record, 0, cb_buf, sizeof cb_buf);
+  TEST_ASSERT(again >= 0);
+  TEST_ASSERT_EQ(v_bus_unsubscribe_cb(again), VA_PASS);
+}
+
 static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_init_validates),
     TEST_CASE(test_bus_alloc_all_or_nothing),
@@ -1288,6 +1415,11 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_pipe_overwrite_seqlock),
     TEST_CASE(test_bus_pipe_cancel_and_late_reader),
     TEST_CASE(test_bus_fuzz_pipes),
+    TEST_CASE(test_bus_cb_validates),
+    TEST_CASE(test_bus_cb_dispatches_published),
+    TEST_CASE(test_bus_cb_unsubscribe_stops_delivery),
+    TEST_CASE(test_bus_cb_undersized_buffer_reports),
+    TEST_CASE(test_bus_cb_slots_are_bounded),
 };
 
 const test_suite_t bus_suite = {

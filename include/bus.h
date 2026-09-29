@@ -326,6 +326,57 @@ int v_bus_snapshot_pump(v_bus_snap_t *snap, uint32_t max);
 int v_bus_snapshot_stop(v_bus_snap_t *snap);
 #endif
 
+// --- Callback notification (B6) -----------------------------------------------
+// The third notification mode, after poll (v_bus_pop) and block
+// (v_bus_recv_wait). A publish signals a worker task, which wakes and hands
+// each waiting message to the callback that asked for it.
+//
+// PRIVILEGED ONLY, deliberately. The worker runs in kernel context, so a
+// user-supplied callback here would be user code running privileged — the one
+// thing MPU user separation exists to prevent. An unprivileged task that wants
+// callback semantics blocks in a thread of its own; that is the same shape,
+// paid for with a task instead of a privilege hole.
+//
+// Callbacks are NOTIFICATION-ONLY. They run at the worker's priority, so heavy
+// work there is jitter everywhere. Signal a semaphore, set a flag, publish
+// onward — do not compute.
+// How many callback subscriptions exist system-wide. Here rather than private
+// to bus.c so a caller can size its own slot array against the same bound.
+#ifndef VAIOS_BUS_MAX_CALLBACKS
+#define VAIOS_BUS_MAX_CALLBACKS 4
+#endif
+
+typedef void (*v_bus_cb_t)(const void *payload, uint16_t len, uint32_t missed,
+                           void *arg);
+
+// Subscribe `cb` to `topic`, delivering into `buf` (`cap` bytes) — caller
+// storage, so this costs no heap and the buffer's lifetime is yours. Returns a
+// slot id (>= 0) to pass to v_bus_unsubscribe_cb, or V_BUS_EINVAL /
+// V_BUS_EBUSY (no free slot: VAIOS_BUS_MAX_CALLBACKS).
+//
+// `cap` must fit the largest message the topic publishes. A message too big to
+// copy out stays unread by design (v_bus_pop leaves it), so an undersized
+// buffer stalls THIS subscription — v_bus_worker_step returns V_BUS_EMSGSIZE
+// rather than spinning, so the mistake is loud instead of silent.
+int v_bus_subscribe_cb(v_bus_topic_t *topic, v_bus_cb_t cb, void *arg,
+                       void *buf, uint16_t cap);
+// Drop a callback subscription. Safe to call twice.
+int v_bus_unsubscribe_cb(int slot);
+
+// Run the callback worker. Call it from a task of your own, at a priority you
+// choose — "when do callbacks run relative to control" is a flight decision,
+// not the kernel's, the same argument v_vfs_worker_step makes:
+//
+//   static void bus_cb_task(void *arg) {
+//     for (;;) v_bus_worker_step(100);
+//   }
+//   task_create_privileged(bus_cb_task, NULL, 1024, 2, "buscb");
+//
+// Waits up to `ticks` for a publish, then drains every subscription that has
+// messages. Returns how many callbacks it invoked (>= 0), or V_BUS_EMSGSIZE if
+// some subscription's buffer is too small for its next message.
+int v_bus_worker_step(uint32_t ticks);
+
 // --- Statistics (B7) ----------------------------------------------------------
 // Explicit getters, never internals. A snapshot is per-counter best-effort: the
 // bus promises each value is a real one it held, not that the set is coherent
