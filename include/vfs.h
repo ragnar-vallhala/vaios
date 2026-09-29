@@ -156,6 +156,17 @@ int v_vfs_makedir(const char *path, uint32_t ticks);
 int v_vfs_remove(const char *path, uint32_t ticks);
 int v_vfs_diropen(const char *path, uint32_t ticks);
 int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks);
+// Size of an open file, in bytes (>= 0), or an error. Unlike the privileged
+// vfs_size — which is lseek-to-END and leaves the cursor there — this restores
+// the caller's position: asking how big a file is is not asking to move your
+// own read pointer. v_vfs_info gives the same number by PATH, for a file you
+// have not opened.
+long v_vfs_size(int fd, uint32_t ticks);
+// Reserve `size` bytes for `path` up front. Worth doing for a log file before
+// flight: growing a file writes FAT entries as it goes, so the cost lands in
+// whatever loop happens to be writing when the file crosses a cluster. Paying
+// it once at init makes the write cost flat. VA_PASS, or an error.
+int v_vfs_preallocate(const char *path, uint32_t size, uint32_t ticks);
 
 /* Release any request slot a dying task still owns. Called by the task teardown
  * path, like v_ipc_task_teardown and v_pbus_task_teardown. */

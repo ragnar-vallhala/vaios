@@ -368,6 +368,8 @@ typedef enum {
   VFS_OP_REMOVE,
   VFS_OP_DIROPEN,
   VFS_OP_DIRNEXT,
+  VFS_OP_SIZE,
+  VFS_OP_PREALLOC,
 } vfs_op_t;
 
 typedef struct {
@@ -452,7 +454,7 @@ int v_vfs_submit(const v_vfs_desc_t *d) {
 
   int need_path = d->op == VFS_OP_OPEN || d->op == VFS_OP_STAT ||
                   d->op == VFS_OP_MKDIR || d->op == VFS_OP_REMOVE ||
-                  d->op == VFS_OP_DIROPEN;
+                  d->op == VFS_OP_DIROPEN || d->op == VFS_OP_PREALLOC;
   if (need_path && vfs_copy_path(r, d->path) != VA_PASS) {
     r->used = 0;
     return V_VFS_EINVAL;
@@ -558,6 +560,29 @@ int v_vfs_worker_step(uint32_t ticks) {
     break;
   case VFS_OP_FLUSH:
     res = vfs_fd_flush_internal(r->fd);
+    break;
+  case VFS_OP_SIZE: {
+    /* Note this does NOT leave the cursor at the end, unlike the privileged
+       vfs_size (which is lseek-to-END and whose test pins that). A task asking
+       how big a file is has not asked to move its own read position, and
+       finding out that it had would be a bad afternoon. Save, measure,
+       restore. */
+    long cur = vfs_fd_seek_internal(r->fd, 0, VFS_SEEK_CUR);
+    if (cur < 0) {
+      res = (int32_t)cur;
+      break;
+    }
+    long end = vfs_fd_seek_internal(r->fd, 0, VFS_SEEK_END);
+    if (end < 0) {
+      res = (int32_t)end;
+      break;
+    }
+    long back = vfs_fd_seek_internal(r->fd, cur, VFS_SEEK_SET);
+    res = back < 0 ? (int32_t)back : (int32_t)end;
+    break;
+  }
+  case VFS_OP_PREALLOC:
+    res = vfs_preallocate(vfs_strip_prefix(r->path), r->len);
     break;
   case VFS_OP_STAT: {
     vfs_stat_t st;
@@ -734,6 +759,14 @@ int v_vfs_remove(const char *path, uint32_t ticks) {
 }
 int v_vfs_diropen(const char *path, uint32_t ticks) {
   v_vfs_desc_t d = {.op = VFS_OP_DIROPEN, .path = path};
+  return vfs_do(&d, 0, 0, ticks);
+}
+long v_vfs_size(int fd, uint32_t ticks) {
+  v_vfs_desc_t d = {.op = VFS_OP_SIZE, .fd = fd};
+  return (long)vfs_do(&d, 0, 0, ticks);
+}
+int v_vfs_preallocate(const char *path, uint32_t size, uint32_t ticks) {
+  v_vfs_desc_t d = {.op = VFS_OP_PREALLOC, .path = path, .len = size};
   return vfs_do(&d, 0, 0, ticks);
 }
 int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks) {
