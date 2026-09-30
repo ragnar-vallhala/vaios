@@ -48,6 +48,12 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
 void v_port_hw_console_write_string(const char *str) { (void)str; }
 char v_port_hw_console_read_char(void) { return 0; }
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) { (void)rx_cb; }
+/* Returns 0 always: the shell tests drive shell_feed() directly, so the editor
+   is exercised without pretending there is a console here. */
+int v_port_hw_console_try_read(char *c) {
+  (void)c;
+  return 0;
+}
 
 int v_port_hw_sdio_init(void) { return -1; }
 int v_port_hw_sdio_card_present(void) { return 0; }

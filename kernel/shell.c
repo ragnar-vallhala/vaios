@@ -178,8 +178,14 @@ void shell_feed(char c) {
 
 int shell_poll(char *out, int cap) {
   uint8_t b;
+  char pc;
   if (!out || cap <= 0)
     return 0;
+  /* Routes that have no RX interrupt to hand us bytes (USB CDC) are polled into
+     the same fifo, so the editor below is identical on either route and there is
+     one place that knows how a line is edited. */
+  while (v_port_hw_console_try_read(&pc))
+    shell_feed(pc);
   while (spsc_read(&_in, &b, 1) == 1) {
     char c = (char)b;
 
