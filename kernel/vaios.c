@@ -89,8 +89,13 @@ void v_system_init(vaios_init_config_t *cfg) {
 /* Vestigial. The real entry point is scheduler_start() (task.h), which the
  * examples call directly; this predates it and does nothing. Kept because
  * vaios.h declares it and vayu's host simulator defines its own -- removing it
- * is an API change, not a cleanup. Note v_stop() is declared in vaios.h with no
- * definition here at all, so calling it would not link on a target build. */
+ * is an API change, not a cleanup.
+ *
+ * Its sibling v_stop() is gone: vaios.h declared it with no definition anywhere,
+ * so calling it compiled and then failed to link. Nothing called it, and the
+ * scheduler_state/SCHEDULER_STOPPED it was written against no longer exist --
+ * that state is a plain `scheduler_running` in task.c now. A header that
+ * promises an unlinkable function is worse than a missing feature. */
 void v_start(void) {}
 extern uint8_t scheduler_running;
 void v_delay(uint32_t ms) {
