@@ -124,8 +124,8 @@ config VAIOS_FROMISR_PRIO_CHECK
 endmenu
 
 menu "Kernel modules"
-config VAIOS_MODULE_TERMINAL
-    bool "Interactive command terminal"
+config VAIOS_MODULE_SHELL
+    bool "Interactive command shell"
     default y
 config VAIOS_MODULE_VFS
     bool "Virtual file system (FatFs/SDIO, needs NavHAL)"
@@ -545,19 +545,19 @@ config VAIOS_KERNEL_LOG_LEVEL
     int "Kernel-internal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
     default 2
     range 0 3
-config TERMINAL_LOG_LEVEL
-    int "Terminal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+config SHELL_LOG_LEVEL
+    int "Shell log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
     default 1
     range 0 3
 endmenu
 
-menu "Terminal"
-depends on VAIOS_MODULE_TERMINAL
-config ENABLE_TERMINAL
-    bool "Enable the terminal at boot"
+menu "Shell"
+depends on VAIOS_MODULE_SHELL
+config ENABLE_SHELL
+    bool "Enable the shell at boot"
     default y
 config ALLOWED_MODULES
-    string "Terminal-accessible modules (\"ALL\" or CSV)"
+    string "Shell-accessible modules (\"ALL\" or CSV)"
     default "ALL"
 config CMD_BUFFER_SIZE
     int "Command history buffer size"
@@ -571,8 +571,8 @@ config MAX_CMD_NUMBER
 config ESCAPE_SEQ_LEN
     int "Escape-sequence buffer length"
     default 2
-config TERMINAL_TASK_STACK_SIZE
-    int "Terminal task stack size (bytes)"
+config SHELL_TASK_STACK_SIZE
+    int "Shell task stack size (bytes)"
     default 1024
 endmenu
 

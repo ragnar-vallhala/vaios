@@ -6,8 +6,8 @@ FILE(GLOB_RECURSE VAIOS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.
 
 # Drop optional module sources when their CMake option is OFF (see top-level
 # CMakeLists.txt). Excluding the .c keeps it out of flash entirely.
-if(NOT VAIOS_MODULE_TERMINAL)
-  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "terminal\\.c$")
+if(NOT VAIOS_MODULE_SHELL)
+  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "shell\\.c$")
 endif()
 if(NOT VAIOS_MODULE_VFS)
   # Anchor to the filename (leading /) so this does not also drop devfs.c.
@@ -40,7 +40,7 @@ target_include_directories(vaios PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 # Surface each module switch to C code as a 1/0 macro so init calls and APIs
 # can be #if'd out to match the gated source list.
 target_compile_definitions(vaios PUBLIC
-  VAIOS_MODULE_TERMINAL=$<BOOL:${VAIOS_MODULE_TERMINAL}>
+  VAIOS_MODULE_SHELL=$<BOOL:${VAIOS_MODULE_SHELL}>
   VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>
   VAIOS_MODULE_SEMIHOSTING=$<BOOL:${VAIOS_MODULE_SEMIHOSTING}>
   VAIOS_MODULE_FIFO=$<BOOL:${VAIOS_MODULE_FIFO}>

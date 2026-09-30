@@ -101,7 +101,7 @@ set(VAIOS_EXAMPLE "" CACHE STRING "The example to build (e.g., FPU_USAGE, DMA_DU
 # to 0 so C code can #if out init calls and APIs. Defaults mirror
 # vaios_config_default.h. Override with -DVAIOS_MODULE_X=OFF.
 # ---------------------------------------------------------------------------
-option(VAIOS_MODULE_TERMINAL    "Build the interactive command terminal"   ON)
+option(VAIOS_MODULE_SHELL    "Build the interactive command terminal"   ON)
 option(VAIOS_MODULE_VFS         "Build the virtual file system (FatFs)"    OFF)
 option(VAIOS_MODULE_SEMIHOSTING "Build the semihosting debug I/O module"   ON)
 option(VAIOS_MODULE_FIFO        "Build the SPSC/MPMC FIFO data structures" ON)
@@ -109,8 +109,8 @@ option(VAIOS_MODULE_PERF        "Build the kernel performance counters"    ON)
 option(VAIOS_MODULE_BUS         "Build the Bus IPC subsystem (in progress)" OFF)
 
 # Dependency resolution (Kconfig-style 'select').
-if(VAIOS_MODULE_TERMINAL AND NOT VAIOS_MODULE_SEMIHOSTING)
-  message(WARNING "VAIOS_MODULE_TERMINAL needs semihosting (sh_readc) -- forcing VAIOS_MODULE_SEMIHOSTING ON.")
+if(VAIOS_MODULE_SHELL AND NOT VAIOS_MODULE_SEMIHOSTING)
+  message(WARNING "VAIOS_MODULE_SHELL needs semihosting (sh_readc) -- forcing VAIOS_MODULE_SEMIHOSTING ON.")
   set(VAIOS_MODULE_SEMIHOSTING ON CACHE BOOL "Build the semihosting debug I/O module" FORCE)
 endif()
 if(NOT NAVHAL AND NOT VAIOS_MODULE_SEMIHOSTING)
@@ -149,7 +149,7 @@ add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
 # portable/ must agree with the kernel target about whether the module exists.
 add_compile_definitions(VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>)
 
-message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_TERMINAL} vfs=${VAIOS_MODULE_VFS} "
+message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_SHELL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
                "perf=${VAIOS_MODULE_PERF} bus=${VAIOS_MODULE_BUS}")
 

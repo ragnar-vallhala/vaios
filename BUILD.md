@@ -104,7 +104,7 @@ BLOCKING           HEAP_ALLOCATOR     PRIORITY_INVERSION
 DMA_DUMP           IPC_TEST           RACE_CONDITION
 MEM_LEAK           MULTI_TASK         RACE_MUTEX_GUARD
 SD_WRITE_TEST      STACK_OVERFLOW     STARVATION
-SWITCHING          TERMINAL           UART
+SWITCHING          SHELL              UART
 UNIT_TESTS         VFS_CONCURRENT     VFS_PERF
 ```
 
@@ -142,7 +142,7 @@ bash tools/run_tests.sh --verbose
 Builds into `build_tests/` and runs two binaries:
 
 - `vaios_tests` — memory, task, scheduler, IPC, structure, VFS, vaios,
-  terminal, perf
+  shell, perf
 - `vaios_utils_tests` — the formatter, isolated to avoid symbol collisions
 
 Exit code is non-zero on any failure.
@@ -312,7 +312,7 @@ top-level `CMakeLists.txt`.
 | `VAIOS_EXAMPLE` | `""` | Which example to build (e.g. `FIFO_TEST`) — **required** to emit `examples/main` |
 | `VAIOS_CONFIG_FILE` | `""` | Path to a user `vaios_config.h` override |
 | `VAIOS_FPU` | ON | Use the hardware FPU |
-| `VAIOS_MODULE_TERMINAL` | ON | Interactive command terminal |
+| `VAIOS_MODULE_SHELL` | ON | Interactive command shell |
 | `VAIOS_MODULE_VFS` | OFF | VFS / FatFs layer (auto-forced ON by VFS examples) |
 | `VAIOS_MODULE_SEMIHOSTING` | ON | Semihosting debug I/O |
 | `VAIOS_MODULE_FIFO` | ON | SPSC/MPMC FIFO data structures |

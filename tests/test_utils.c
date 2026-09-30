@@ -5,7 +5,7 @@
  * print_fmt_buf is the printf-into-buffer entry point used by everything
  * from v_log to v_panic; the static itoa_simple / utoa_simple integer
  * formatters are exercised indirectly through the %d/%u/%x format
- * specifiers. v_atof is the string-to-float helper used by the terminal.
+ * specifiers. v_atof is the string-to-float helper used by the shell.
  */
 #include "framework.h"
 #include "utils.h"

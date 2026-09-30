@@ -29,7 +29,7 @@ extern const test_suite_t bus_suite;
 extern const test_suite_t structure_suite;
 extern const test_suite_t vfs_suite;
 extern const test_suite_t vaios_suite;
-extern const test_suite_t terminal_suite;
+extern const test_suite_t shell_suite;
 extern const test_suite_t perf_suite;
 extern const test_suite_t utils_suite;
 extern const test_suite_t uaccess_suite;

@@ -108,7 +108,7 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/structure.c"
     "${VAIOS_ROOT}/kernel/vfs.c"
     "${VAIOS_ROOT}/kernel/vaios.c"
-    "${VAIOS_ROOT}/kernel/terminal.c"
+    "${VAIOS_ROOT}/kernel/shell.c"
     "${VAIOS_ROOT}/kernel/perf.c"
     "${VAIOS_ROOT}/kernel/periph_bus.c"
     "${VAIOS_ROOT}/kernel/bus.c"
@@ -138,7 +138,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_structure.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vaios.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_shell.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_perf.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_uaccess.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_stage5_regress.c"  # expected-fail regressions
