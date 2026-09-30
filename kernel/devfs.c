@@ -75,6 +75,13 @@ void v_fd_table_init(TCB *t) {
     t->fds[i].priv = NULL;
   }
   // Pre-open stdin/stdout/stderr -> /dev/console (registered at boot).
+  //
+  // The `fd < VAIOS_MAX_FDS` half looks always-true, and CodeQL says so, because
+  // Kconfig now gives VAIOS_MAX_FDS `range 3 64` — three is the floor precisely
+  // so this loop always fits. It stays anyway: the host test binaries set the
+  // symbol with -DVAIOS_MAX_FDS=8 in tests/CMakeLists.txt, which is outside
+  // Kconfig and therefore outside that range, so the bound is not provably dead
+  // on every build path. It is one comparison against writing past t->fds[].
   dev_node_t *con = dev_find("/dev/console", NULL);
   if (con)
     for (int fd = 0; fd < 3 && fd < VAIOS_MAX_FDS; fd++) {

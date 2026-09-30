@@ -87,6 +87,32 @@ static void test_pf_multiple_args(void) {
   TEST_ASSERT(strcmp(buf, "a=1, b=-2") == 0);
 }
 
+/* A format string ending in a bare '%'. The parser consumes the '%' with an
+ * in-body p++ (the 15 cpp/loop-variable-changed alerts are all this cursor),
+ * and the specifier switch's default arm emits '%' followed by *p. If nothing
+ * stops it, *p there is the NUL and the loop's own p++ then steps PAST the
+ * terminator, reading whatever follows. The sentinel after the NUL is what
+ * makes that visible: it must never reach the output. */
+static void test_pf_trailing_percent_stops_at_nul(void) {
+  char fmt[8];
+  memcpy(fmt, "ab%\0Z!", 6);
+  fmt[6] = 0;
+  fmt[7] = 0;
+  char buf[32];
+  memset(buf, 0xAA, sizeof(buf));
+  int n = print_fmt_buf(buf, sizeof(buf), fmt);
+  /* "ab" plus whatever it decides a lone '%' means — but never 'Z' or '!', */
+  TEST_ASSERT_EQ(buf[0], 'a');
+  TEST_ASSERT_EQ(buf[1], 'b');
+  for (int i = 0; i < n; i++) {
+    TEST_ASSERT(buf[i] != 'Z');
+    TEST_ASSERT(buf[i] != '!');
+  }
+  /* and it must terminate rather than run on. */
+  TEST_ASSERT(n >= 2);
+  TEST_ASSERT(n <= 4);
+}
+
 static void test_pf_truncation_respects_buf_size(void) {
   /* Buffer too small for the formatted output. Implementation must NOT
    * write past out_size — verify the trailing canary byte. */
@@ -221,6 +247,7 @@ static const test_case_t utils_cases[] = {
     TEST_CASE(test_memcpy_zero_len),
     TEST_CASE(test_strcmp_equal_and_order),
     TEST_CASE(test_strncmp_bounded),
+    TEST_CASE(test_pf_trailing_percent_stops_at_nul),
 };
 const test_suite_t utils_suite = {
     .name = "utils (print_fmt_buf + v_atof)",

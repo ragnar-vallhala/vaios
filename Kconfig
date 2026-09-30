@@ -319,7 +319,19 @@ config VAIOS_DEVFS
 config VAIOS_MAX_FDS
     int "File descriptors per task"
     depends on VAIOS_DEVFS
+    range 3 64
     default 8
+    help
+      Entries in each task's fd table, which lives in the TCB — so this is two
+      pointers per entry per TASK, not per system.
+
+      The floor is 3, not 1: v_fd_table_init pre-opens stdin, stdout and stderr
+      onto /dev/console, so a smaller table cannot hold what every task starts
+      with. Before this range existed the pre-open loop carried a
+      `fd < VAIOS_MAX_FDS` guard to truncate instead, which read as dead code at
+      the default of 8 (CodeQL called the comparison always true) while being the
+      only thing standing between a 2-fd config and a write past the array. A
+      configuration that cannot work is better refused here than clamped there.
 config VAIOS_DEBUG_IN_SLEEP
     bool "Keep the debug interface alive while the core sleeps"
     default n
