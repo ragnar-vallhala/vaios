@@ -9,6 +9,5 @@ typedef struct {
 } vaios_init_config_t;
 void v_init(vaios_init_config_t *cfg);
 void v_system_init(vaios_init_config_t *cfg);
-void v_start(void);
 void v_delay(uint32_t ms);
 #endif // !VAIOS_H
