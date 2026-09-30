@@ -560,17 +560,46 @@ config ALLOWED_MODULES
     string "Shell-accessible modules (\"ALL\" or CSV)"
     default "ALL"
 config CMD_BUFFER_SIZE
-    int "Command history buffer size"
+    int "Command history depth (lines)"
+    range 1 64
     default 10
+    help
+      How many submitted lines the up/down arrows can walk back through. Costs
+      CMD_BUFFER_SIZE * CMD_MAX_LEN bytes of static kernel RAM.
+
+      This is a LINE COUNT, not a byte size. The lookup used to size its token
+      buffer by this symbol, which made any command name longer than
+      CMD_BUFFER_SIZE-1 characters impossible to find while registration
+      accepted it -- the two are unrelated quantities that happened to share a
+      name ending in _SIZE.
 config CMD_MAX_LEN
-    int "Maximum command length (bytes)"
-    default 32
+    int "Maximum command line length (bytes)"
+    range 16 256
+    default 64
+    help
+      The whole line, command and arguments together. 32 was tight once
+      arguments existed (`perf save /mnt/0:perf.csv` is 26).
 config MAX_CMD_NUMBER
     int "Maximum registered commands"
-    default 6
-config ESCAPE_SEQ_LEN
-    int "Escape-sequence buffer length"
-    default 2
+    range 4 64
+    default 16
+    help
+      Includes the built-ins (help, clear, version, history, and perf when
+      VAIOS_MODULE_PERF is on), so the default leaves room for a dozen of your
+      own. shell_register_command returns 1 once this is reached.
+config SHELL_INPUT_FIFO_SIZE
+    int "Shell input FIFO (bytes)"
+    range 16 512
+    default 64
+    help
+      The lock-free SPSC buffer between the console RX interrupt and the shell
+      task. It only has to absorb what arrives between two polls of the shell,
+      so it is small; a paste larger than this loses the tail rather than
+      making the ISR wait.
+config SHELL_MAX_ARGV
+    int "Maximum tokens per command line"
+    range 2 32
+    default 8
 config SHELL_TASK_STACK_SIZE
     int "Shell task stack size (bytes)"
     default 1024
