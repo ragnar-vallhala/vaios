@@ -83,6 +83,13 @@ void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
   (void)rx_cb; // no async stdin in this port
 }
 
+// No non-blocking stdin either: a reader on this port gets its bytes some other
+// way (the unit tests feed the shell directly).
+int v_port_hw_console_try_read(char *c) {
+  (void)c;
+  return 0;
+}
+
 // --- SDIO: none. -------------------------------------------------------------
 int v_port_hw_sdio_init(void) { return -1; }
 int v_port_hw_sdio_card_present(void) { return 0; }

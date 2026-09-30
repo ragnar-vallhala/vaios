@@ -288,12 +288,44 @@ char v_port_hw_console_read_char(void) {
 }
 
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
-#ifdef NAVHAL
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  /* No UART interrupt to attach: the console is the USB device port. Attaching
+     BOARD_CONSOLE_UART_IRQ here would enable an interrupt on a peripheral that
+     is not the console and leave the caller with no input at all -- which is
+     exactly what it used to do, visible as USART2's bit set in NVIC ISER1 on a
+     CDC build. Readers poll v_port_hw_console_try_read() instead. */
+  (void)rx_cb;
+#elif defined(NAVHAL)
   hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ, rx_cb);
   hal_interrupt_enable(BOARD_CONSOLE_UART_IRQ);
 #else
-  /* QEMU semihosting has no async RX IRQ; the terminal polls instead. */
+  /* QEMU semihosting has no async RX IRQ; the reader polls instead. */
   (void)rx_cb;
+#endif
+}
+
+/* Non-blocking single-byte read. 1 if a byte was taken into *c, 0 if none was
+ * waiting. This is the route-agnostic way in: an interrupt-driven console feeds
+ * its reader from the ISR and needs nothing here, while CDC has no RX interrupt
+ * of its own to hand over, so its reader polls. A caller that does both is
+ * correct on either route without knowing which it has. */
+int v_port_hw_console_try_read(char *c) {
+  if (!c)
+    return 0;
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  uint8_t b = 0;
+  if (hal_usb_cdc_read(&b, 1) == 0)
+    return 0;
+  *c = (char)b;
+  return 1;
+#elif defined(NAVHAL)
+  if (!hal_uart_available(BOARD_CONSOLE_UART))
+    return 0;
+  *c = hal_uart_read_char(BOARD_CONSOLE_UART);
+  return 1;
+#else
+  (void)c;
+  return 0; /* semihosting: no non-blocking read */
 #endif
 }
 

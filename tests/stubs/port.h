@@ -83,6 +83,9 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);
 void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
+/* Non-blocking console read: 1 if a byte was placed in *c, 0 if none waiting.
+ * The CDC route has no RX interrupt, so its readers poll this. */
+int v_port_hw_console_try_read(char *c);
 int v_port_hw_sdio_init(void);
 int v_port_hw_sdio_card_present(void);
 int v_port_hw_sdio_card_init(void);
