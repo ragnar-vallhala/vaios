@@ -2,30 +2,30 @@
 #include "port.h" // v_port_hw_console_* — all hardware access goes through here
 #include "perf.h"
 #include "task.h"
-#include "terminal.h"
+#include "shell.h"
 #include "utils.h"
 #include "vaios.h"
 #include "vaios_config.h"
 #include <stddef.h>
 
-static char _term_history[CMD_BUFFER_SIZE]
+static char _shell_history[CMD_BUFFER_SIZE]
                          [CMD_MAX_LEN]; // inclusive of escape seq
 static Command_t _commands[MAX_CMD_NUMBER];
 static int _cmd_count_idx = 0;
 static int _current_command_count_idx = 0;  // default keep 0
 static int _current_command_buffer_idx = 0; // default keep -1
 static int _command_exec_ready = 0;
-static int _initialized_terminal = 0;
+static int _initialized_shell = 0;
 static int _exit_requested = 0;
 static int _running_cmd_id = 0;
 static int _is_cmd_running = 0;
 
-#ifndef TERM_LOG
-#define TERM_LOG(fmt, ...)                                                     \
-  v_log(TERMINAL_LOG_LEVEL, "[TERM] " fmt, ##__VA_ARGS__)
+#ifndef SHELL_LOG
+#define SHELL_LOG(fmt, ...)                                                     \
+  v_log(SHELL_LOG_LEVEL, "[TERM] " fmt, ##__VA_ARGS__)
 #endif
 
-Command_t *terminal_find_command(const char *cmd) {
+Command_t *shell_find_command(const char *cmd) {
   char buf[CMD_BUFFER_SIZE];
   uint8_t pre_flag = 1;
   int w = 0; // write index — separate from the read index so skipped leading
@@ -52,14 +52,14 @@ Command_t *terminal_find_command(const char *cmd) {
 }
 
 static void vaios_self_check(void *args) {
-  TERM_LOG("VAIOS Version: %s", VAIOS_VERSION);
-  TERM_LOG("Developer by NAVROBOTEC PVT. LTD.");
-  TERM_LOG("Author: %s", AUTHOR);
+  SHELL_LOG("VAIOS Version: %s", VAIOS_VERSION);
+  SHELL_LOG("Developer by NAVROBOTEC PVT. LTD.");
+  SHELL_LOG("Author: %s", AUTHOR);
   return;
 }
 
 static void clear_shell(void *args) {
-  TERM_LOG("\033[2J\033[H");
+  SHELL_LOG("\033[2J\033[H");
   return;
 }
 
@@ -67,7 +67,7 @@ static void list_commands(void *args) {
 
   for (int i = 0; i < MAX_CMD_NUMBER; i++) {
     if (_commands[i].callback) {
-      TERM_LOG("%s", _commands[i].command);
+      SHELL_LOG("%s", _commands[i].command);
     }
   }
 }
@@ -80,7 +80,7 @@ static void list_commands(void *args) {
  * VAIOS_MODULE_VFS and a runtime mount check. */
 static const char *_perf_cmd_subarg(const char *cmd_str) {
   if (!cmd_str) return NULL;
-  /* Skip leading whitespace (terminal already trims, but be defensive). */
+  /* Skip leading whitespace (shell already trims, but be defensive). */
   while (*cmd_str == ' ') cmd_str++;
   /* Skip the command name itself. */
   while (*cmd_str && *cmd_str != ' ') cmd_str++;
@@ -125,32 +125,32 @@ static void perf_command(void *args) {
 #endif /* VAIOS_MODULE_PERF */
 
 static void _onRecieve(void) {
-  if (_initialized_terminal) {
+  if (_initialized_shell) {
     char c = v_port_hw_console_read_char();
 
-    _term_history[_current_command_count_idx][_current_command_buffer_idx++] =
+    _shell_history[_current_command_count_idx][_current_command_buffer_idx++] =
         c;
     if (c == '\b') {
       if (_current_command_buffer_idx > 0)
         _current_command_buffer_idx--;
-      _term_history[_current_command_count_idx][_current_command_buffer_idx] =
+      _shell_history[_current_command_count_idx][_current_command_buffer_idx] =
           '\0';
       if (_current_command_buffer_idx > 0)
         _current_command_buffer_idx--;
-      _term_history[_current_command_count_idx][_current_command_buffer_idx] =
+      _shell_history[_current_command_count_idx][_current_command_buffer_idx] =
           '\0';
     } else if (c == 0x03) {
       _exit_requested = 1;
-      _term_history[_current_command_count_idx][0] = '\0';
+      _shell_history[_current_command_count_idx][0] = '\0';
       _current_command_buffer_idx = 0;
-      TERM_LOG("^C");
+      SHELL_LOG("^C");
     }
     if (c == '\n') {
-      _term_history[_current_command_count_idx][_current_command_buffer_idx] =
+      _shell_history[_current_command_count_idx][_current_command_buffer_idx] =
           '\0';
-      const char *cmd = _term_history[_current_command_count_idx];
+      const char *cmd = _shell_history[_current_command_count_idx];
       if (v_strlen(cmd) >= ESCAPE_SEQ_LEN) {
-        _term_history[_current_command_count_idx]
+        _shell_history[_current_command_count_idx]
                      [_current_command_buffer_idx - ESCAPE_SEQ_LEN] = '\0';
         _command_exec_ready = 1;
       }
@@ -160,30 +160,30 @@ static void _onRecieve(void) {
       _current_command_buffer_idx = 0;
     }
   } else {
-    /* Drain the incoming character even when the terminal isn't ready. */
+    /* Drain the incoming character even when the shell is not ready. */
     (void)v_port_hw_console_read_char();
   }
 }
 
-void terminal_init(void) {
+void shell_init(void) {
   for (int i = 0; i < CMD_BUFFER_SIZE; i++) {
-    _term_history[i][0] = '\0';
+    _shell_history[i][0] = '\0';
   }
   for (int i = 0; i < MAX_CMD_NUMBER; i++) {
     _commands[i].callback = NULL;
   }
   _cmd_count_idx = 0;
-  register_command(vaios_self_check, "vaios");
-  register_command(clear_shell, "clear");
-  register_command(list_commands, "ls");
+  shell_register_command(vaios_self_check, "vaios");
+  shell_register_command(clear_shell, "clear");
+  shell_register_command(list_commands, "ls");
 #if VAIOS_MODULE_PERF
-  register_command(perf_command, "perf");
+  shell_register_command(perf_command, "perf");
 #endif
   v_port_hw_console_rx_irq_init(_onRecieve);
-  _initialized_terminal = 1;
+  _initialized_shell = 1;
 }
 
-int register_command(void (*callback)(void *), const char *command) {
+int shell_register_command(void (*callback)(void *), const char *command) {
   if (_cmd_count_idx >= MAX_CMD_NUMBER)
     return 1; // or handle error
   _commands[_cmd_count_idx].callback = callback;
@@ -192,7 +192,7 @@ int register_command(void (*callback)(void *), const char *command) {
   return 0;
 }
 
-void terminal_run(void *args) {
+void shell_run(void *args) {
   // Always run in task
   while (1) {
     if (_exit_requested) {
@@ -203,15 +203,15 @@ void terminal_run(void *args) {
     }
     if (_command_exec_ready) {
       const char *cmd_str =
-          _term_history[(_current_command_count_idx - 1 + CMD_BUFFER_SIZE) %
+          _shell_history[(_current_command_count_idx - 1 + CMD_BUFFER_SIZE) %
                         CMD_BUFFER_SIZE];
-      Command_t *cmd = terminal_find_command(cmd_str);
+      Command_t *cmd = shell_find_command(cmd_str);
       if (cmd) {
         _running_cmd_id = task_create(cmd->callback, (void *)cmd_str, 1024, 0);
         if (_running_cmd_id != 0)
           _is_cmd_running = 1;
       } else
-        v_log(TERMINAL_LOG_LEVEL, "[TERM] %s command not found", cmd_str);
+        v_log(SHELL_LOG_LEVEL, "[TERM] %s command not found", cmd_str);
       _command_exec_ready = 0;
     }
     v_delay(10);

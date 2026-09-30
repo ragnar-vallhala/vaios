@@ -479,7 +479,7 @@ void v_perf_init(void) {
 /* --------------------------------------------------------------------------
  * VFS-backed CSV dump (Phase 6b).
  *
- * The terminal `perf show` path stretches the UART (a full snapshot is a
+ * The shell `perf show` path stretches the UART (a full snapshot is a
  * few KB at 115200 baud ≈ 11 KB/s — measurable seconds of console wait
  * during which other output competes). Saving to SD via the VFS layer
  * drops the dump to a single buffered write at FatFs throughput.
@@ -490,7 +490,7 @@ void v_perf_init(void) {
  * print_fmt_buf is 32-bit-only.
  *
  * No runtime mount probe: vfs_open is the probe. If FatFs isn't mounted
- * (or the path is invalid) the open fails and we return -1 — the terminal
+ * (or the path is invalid) the open fails and we return -1 — the shell
  * surfaces a clear error.
  * -------------------------------------------------------------------------- */
 

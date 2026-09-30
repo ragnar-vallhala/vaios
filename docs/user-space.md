@@ -69,7 +69,7 @@ as that one task's own region — not a syscall.
 
 **Because the kernel would end up calling user code with privilege:**
 `v_pbus_submit` and the cyclic-job API (a job carries `start`/`done` function
-pointers), `terminal register_command`, the bus's callback notification mode. A
+pointers), `shell_register_command`, the bus's callback notification mode. A
 task that wants callback semantics blocks in a thread of its own.
 
 **Because the handle cannot be validated:** the raw-handle IPC API

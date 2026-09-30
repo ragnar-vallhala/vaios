@@ -54,7 +54,7 @@ cmake --build build --target flash    # if st-flash is installed and the board i
 
 Example names are the `VAIOS_EXAMPLE` branches in
 [`examples/CMakeLists.txt`](examples/CMakeLists.txt) — e.g. `FIFO_TEST`,
-`IPC_TEST`, `PRIORITY_INVERSION`, `HEAP_ALLOCATOR`, `MULTI_TASK`, `TERMINAL`,
+`IPC_TEST`, `PRIORITY_INVERSION`, `HEAP_ALLOCATOR`, `MULTI_TASK`, `SHELL`,
 `UART`, `BENCHMARK`. See the [README](README.md#build-and-flash-stm32-hardware)
 for the full flash + UART-capture flow and the build-option table.
 
