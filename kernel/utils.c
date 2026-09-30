@@ -26,7 +26,6 @@ void v_log_flush(void);
 
 // Double buffering for log messages
 #if LOGGING_ENABLED == 1
-// #error "Logging is enabled"
 static uint8_t log_buffer_storage1[LOG_BUFFER_STORAGE_SIZE];
 static uint8_t log_buffer_storage2[LOG_BUFFER_STORAGE_SIZE];
 static uint8_t *log_buffer_storage_current_writing = log_buffer_storage1;

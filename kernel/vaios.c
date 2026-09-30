@@ -40,7 +40,6 @@ void v_init(vaios_init_config_t *cfg) {
         CONSOLE_BAUDRATE);
 #endif
 }
-// extern void start_scheduler(void);
 
 void v_system_init(vaios_init_config_t *cfg) {
   /* 1. Core VAIOS Init (clocks, SysTick, console). */
@@ -87,10 +86,12 @@ void v_system_init(vaios_init_config_t *cfg) {
   }
 }
 
-void v_start(void) {
-  // start_scheduler();
-  // scheduler_state = SCHEDULER_RUNNING;
-}
+/* Vestigial. The real entry point is scheduler_start() (task.h), which the
+ * examples call directly; this predates it and does nothing. Kept because
+ * vaios.h declares it and vayu's host simulator defines its own -- removing it
+ * is an API change, not a cleanup. Note v_stop() is declared in vaios.h with no
+ * definition here at all, so calling it would not link on a target build. */
+void v_start(void) {}
 extern uint8_t scheduler_running;
 void v_delay(uint32_t ms) {
   uint32_t delay_ticks = (ms * 1000) / TICK_PERIOD_US;
@@ -115,4 +116,3 @@ void v_delay(uint32_t ms) {
   }
 }
 
-// void v_stop(void) { scheduler_state = SCHEDULER_STOPPED; }
