@@ -13,8 +13,13 @@
  *          shell, so anything long-running spawns a task and returns — `spin`
  *          below is the pattern.
  *
- * Talk to it with tools/terminal (the host TTY side) or any serial terminal at
- * CONSOLE_BAUDRATE. Type `help`.
+ * Talk to it with any serial terminal -- `tio /dev/ttyACM0` is the least
+ * trouble. Two settings matter whatever you use: LOCAL ECHO OFF, because the
+ * shell echoes what you type and you would otherwise see it twice; and Ctrl+C
+ * passed through rather than trapped, because the shell uses it to abandon a
+ * line. tio and screen do both by default; minicom needs its local echo turned
+ * off. Over USB CDC the baud is cosmetic (USB negotiates its own rate); it is
+ * CONSOLE_BAUDRATE that matters on the UART route. Type `help`.
  */
 #include "memory.h"
 #include "shell.h"
