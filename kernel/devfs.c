@@ -10,6 +10,7 @@
  * its body. Every task starts with fd 0/1/2 pre-opened to /dev/console.
  */
 
+#include "port.h" // v_port_hw_console_* — the console device's hardware side
 #include "vfile.h"
 
 #if VAIOS_DEVFS
@@ -210,12 +211,32 @@ static int console_write(void *priv, const void *buf, uint32_t len) {
   return (int)len;
 }
 
+/* --- console input ----------------------------------------------------------
+ * Non-blocking, so a reader never waits and never touches the hardware itself.
+ * That is what lets an UNPRIVILEGED task read the console: v_file_read(0, ...)
+ * returns whatever has arrived, 0 if nothing has.
+ *
+ * It used to read `len` characters with a BLOCKING per-character call, so
+ * read(0, buf, 64) waited for 64 keystrokes and, on the CDC route, busy-spun
+ * inside v_port_hw_console_read_char() while doing it. Nothing interactive can
+ * be built on that.
+ *
+ * Deliberately NOT buffered behind an spsc_fifo_t here, even though that is the
+ * tested ring this kernel uses elsewhere: structure.c pulls in mutexes,
+ * semaphores and the tick, and devfs.c is built in isolation by
+ * vaios_devfs_tests precisely so it does not need them. The port's try_read
+ * already serves both routes -- the UART's data register for one, the CDC
+ * driver's own buffer for the other -- so the ring would buy only burst
+ * absorption, which is a separate concern with its own todo.
+ */
 static int console_read(void *priv, void *buf, uint32_t len) {
   (void)priv;
-  char *p = (char *)buf;
-  for (uint32_t i = 0; i < len; i++)
-    p[i] = v_port_hw_console_read_char(); // blocking per char
-  return (int)len;
+  uint8_t *p = (uint8_t *)buf;
+  uint32_t got = 0;
+  char c;
+  while (got < len && v_port_hw_console_try_read(&c))
+    p[got++] = (uint8_t)c;
+  return (int)got;
 }
 
 static const v_file_ops console_ops = {

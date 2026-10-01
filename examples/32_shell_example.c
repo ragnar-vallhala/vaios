@@ -67,14 +67,26 @@ static int cmd_spin(int argc, char **argv) {
 int main(void) {
   vaios_init_config_t cfg = {.internal_clock_setup = 1,
                              .internal_sd_card_setup = 0};
-  v_init(&cfg); /* console first: shell_init arms the RX interrupt */
+  /* v_system_init, not v_init: it does the same clock/heap/scheduler bring-up
+     and then two things this example cannot do without.
+
+     v_devfs_init registers /dev/console, which v_fd_table_init needs in order
+     to pre-open fd 0/1/2 when a task is created -- and the shell's whole I/O
+     path is fd 1 for output and a non-blocking fd 0 for input. Without it the
+     shell runs and prints into a void: no node, no descriptors, every write
+     refused. That is exactly what happened before this line changed.
+
+     v_perf_init arms the DWT cycle counter, so `perf show` reports real numbers
+     instead of zeros. It read real numbers on the bench anyway, but only
+     because a debugger had been attached and left DEMCR.TRCENA set -- which is
+     not a thing to depend on. */
+  v_system_init(&cfg);
+
   shell_init();
   shell_register_command(cmd_echo, "echo", "print the arguments");
   shell_register_command(cmd_ticks, "ticks", "kernel tick count");
   shell_register_command(cmd_spin, "spin", "start a background task");
 
-  v_heap_memory_init();
-  scheduler_init();
   task_create(shell_run, NULL, SHELL_TASK_STACK_SIZE, 1);
   scheduler_start();
   while (1)

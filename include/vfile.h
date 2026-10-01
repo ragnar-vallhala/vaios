@@ -42,6 +42,7 @@ typedef struct {
 
 #if VAIOS_DEVFS
 
+
 struct Task_Control_Block;
 
 // Register a device node, e.g. "/dev/console". Returns 0 or a negative error.

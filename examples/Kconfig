@@ -136,6 +136,27 @@ config EXAMPLE_DEVFS_TEST
 	select VAIOS_SYSCALL_SVC
 	select VAIOS_DEVFS
 
+config EXAMPLE_SHELL
+	bool "shell"
+	# The shell does its I/O through file descriptors -- v_printf traps through
+	# write(1), input is a non-blocking read(0) on /dev/console -- so it needs
+	# the fd layer and the syscall boundary under it. Without this the example
+	# built with VAIOS_MODULE_SHELL=0 and produced a firmware with no shell in
+	# it, silently, because nothing declared what the example needs.
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_MODULE_SHELL
+	# NOT VAIOS_MPU_USER_SEPARATION yet, though that is where this is going.
+	# Turning it on faults immediately: the shell task writes _in_head, its own
+	# input-ring index, which is a static in kernel .bss, and an unprivileged
+	# task may not touch kernel memory. Measured, not guessed -- CFSR 0x82
+	# (DACCVIOL|MMARVALID) with MMFAR 0x2000044c, which resolves to _in_head.
+	#
+	# Routing the I/O through fds was necessary but not sufficient: the shell's
+	# STATE has to move out of kernel statics too, into the task's own stack or
+	# a per-task heap allocation, and the shared command registry has to be
+	# reachable some other way. See the vaios/shell todos.
+
 config EXAMPLE_KMSG_TEST
 	bool "kmsg_test"
 	select VAIOS_MPU_ENABLE
