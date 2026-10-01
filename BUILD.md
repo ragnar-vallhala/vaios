@@ -84,14 +84,47 @@ Convenience wrapper that does configure + build + objcopy + flash in one shot:
 tools/flash.sh FIFO_TEST     # builds in ./build and flashes
 ```
 
-### Read UART output
+### Read console output
 
-USART2 (115200 8N1) appears on the Nucleo's ST-Link VCP at `/dev/ttyACM0`:
+Where the console lands depends on the route the build chose:
+
+| Route | Where it appears |
+|---|---|
+| `CONSOLE_ROUTE_UART` (default) | the board's console UART, on a probe VCP or a USB-serial adapter |
+| `CONSOLE_ROUTE_CDC` | the board's own USB port, as a `/dev/ttyACM*` of its own |
+| no VCP and no CDC | nowhere — read the kernel log over SWD: `tools/pitl_run.sh --kmsg <build-dir>` |
+
+The NAVIXSM-F401RE has no VCP, so it is CDC or SWD there. A Nucleo has one.
+
+To just watch output:
 
 ```bash
 stty -F /dev/ttyACM0 115200 raw -echo
 cat /dev/ttyACM0
 ```
+
+### Attach a terminal (for the shell)
+
+Anything interactive — the shell especially — needs a real terminal. Use a host
+one; vaios used to carry its own under `tools/` and no longer does, because a TTY
+emulator is not this project's job.
+
+```bash
+tio /dev/ttyACM0                     # least trouble; quit with Ctrl-T q
+screen /dev/ttyACM0 115200           # quit with Ctrl-A k
+minicom -D /dev/ttyACM0 -b 115200    # turn Local Echo OFF in Ctrl-A E
+```
+
+Two settings matter whatever you pick, and both are about the shell:
+
+- **Local echo OFF.** The shell echoes what you type, so a terminal that also
+  echoes shows every keystroke twice.
+- **Ctrl+C passed through, not trapped.** The shell uses it to abandon the
+  current line; a terminal that catches it for itself puts that out of reach.
+
+`tio` and `screen` get both right by default. Over USB CDC the baud is cosmetic
+— USB negotiates its own rate — and only matters on the UART route, where it
+must match `CONSOLE_BAUDRATE`.
 
 ### Available examples
 

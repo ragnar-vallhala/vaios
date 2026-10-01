@@ -6,9 +6,10 @@
  * @file shell.h
  * @brief The on-target command shell.
  *
- * Not to be confused with tools/terminal.c, which is the host-side TTY emulator
- * you talk to it through. A terminal carries characters; a shell reads a line
- * and runs something.
+ * Not to be confused with a terminal, which is the host-side program you talk to
+ * it through (tio, screen, minicom). A terminal carries characters; a shell
+ * reads a line and runs something. vaios used to ship its own under tools/; a
+ * TTY emulator is an ordinary host tool and not this repo's job.
  *
  * The input path is split in two on purpose. shell_feed() is all the console RX
  * interrupt does — hand over one byte and return. Everything else, the line
