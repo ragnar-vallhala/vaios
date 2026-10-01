@@ -602,7 +602,22 @@ config SHELL_MAX_ARGV
     default 8
 config SHELL_TASK_STACK_SIZE
     int "Shell task stack size (bytes)"
-    default 1024
+    range 512 8192
+    default 2048
+    help
+      Measured on an F401 with `perf show`, the shell task's high-water mark was
+      948 bytes of a 1024-byte stack -- 93%, with 76 bytes spare. That is too
+      close to trust: shell_run holds the line buffer (CMD_MAX_LEN) and the argv
+      array on its own frame, the print path adds a 128-byte local on top, and a
+      command's own frame sits above all of it.
+
+      1024 was chosen when CMD_MAX_LEN was 32. Raising that to 64 took 32 bytes
+      straight off the headroom and the stack default did not follow, which is
+      how it ended up at 93%.
+
+      Raise it further if your commands recurse or format much; the task's
+      high-water is in `perf show` under [tasks], so this is measurable rather
+      than guessed.
 endmenu
 
 # Per-example feature overlay: EXAMPLE_<TOKEN> entries whose `select`s pull in
