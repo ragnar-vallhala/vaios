@@ -21,7 +21,18 @@
 
 /* Sizes live here, not private to shell.c, so a caller can size its own buffers
    against the same bounds -- a test that feeds the input FIFO needs to know how
-   big it is. Fallbacks cover a build whose Kconfig predates these symbols. */
+   big it is. The fallbacks matter more than they look: VAIOS_MODULE_SHELL now
+   depends on VAIOS_DEVFS, so a config with DEVFS off emits none of the shell
+   menu's symbols and these are all a build has. Kconfig wins where it speaks. */
+#ifndef CMD_MAX_LEN
+#define CMD_MAX_LEN 64 /* the whole line, command and arguments */
+#endif
+#ifndef CMD_BUFFER_SIZE
+#define CMD_BUFFER_SIZE 10 /* history DEPTH in lines, not a byte size */
+#endif
+#ifndef MAX_CMD_NUMBER
+#define MAX_CMD_NUMBER 16 /* registry slots, built-ins included */
+#endif
 #ifndef SHELL_INPUT_FIFO_SIZE
 #define SHELL_INPUT_FIFO_SIZE 64
 #endif

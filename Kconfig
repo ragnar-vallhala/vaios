@@ -126,7 +126,15 @@ endmenu
 menu "Kernel modules"
 config VAIOS_MODULE_SHELL
     bool "Interactive command shell"
+    depends on VAIOS_DEVFS
     default y
+    help
+      Needs VAIOS_DEVFS (and so VAIOS_SYSCALL_SVC) because the shell does its
+      I/O through file descriptors: v_printf traps through write(1) and input
+      comes from a non-blocking read(0) on /dev/console. That is what lets the
+      shell task run unprivileged, which is the point -- a shell that pokes the
+      console directly has to be privileged, and then every command it dispatches
+      runs with kernel authority.
 config VAIOS_MODULE_VFS
     bool "Virtual file system (FatFs/SDIO, needs NavHAL)"
     default n

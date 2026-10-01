@@ -21,12 +21,11 @@
  *    synchronous now, which is what a shell is; anything long-running should
  *    spawn its own task explicitly and say so.
  */
-#include "port.h" // v_port_hw_console_* — all hardware access goes through here
 #include "perf.h"
 #include "shell.h"
-#include "structure.h" // spsc_* — the ISR -> task byte channel
 #include "task.h"
 #include "utils.h"
+#include "vfile.h" // v_file_read — console input through fd 0
 #include "vaios.h"
 #include "vaios_config.h"
 #include <stddef.h>
@@ -44,10 +43,35 @@
 static Command_t _commands[MAX_CMD_NUMBER];
 static int _cmd_count = 0;
 
-/* --- input: one producer (the RX ISR), one consumer (the shell task) ------- */
+/* --- input staging ---------------------------------------------------------
+ * A plain byte ring, not the kernel's general-purpose FIFO. It was that FIFO while
+ * the producer was the RX interrupt and reuse cost nothing -- shell.c sits in
+ * the same library as structure.c. Now that input arrives batched from
+ * v_file_read(0, ...) the ring only exists so shell_feed() and the editor share
+ * one path, and structure.c would drag mutexes, semaphores and the tick into
+ * any test binary that wants the shell. Twelve lines beats that.
+ *
+ * Single producer, single consumer, and both are the shell task -- shell_feed
+ * is no longer called from an interrupt -- so there is nothing to lock. */
+static uint8_t _in_buf[SHELL_INPUT_FIFO_SIZE];
+static unsigned _in_head, _in_tail;
 
-static spsc_fifo_t _in;
-static uint8_t _in_store[SHELL_INPUT_FIFO_SIZE];
+static int in_push(uint8_t b) {
+  unsigned next = (_in_head + 1u) % SHELL_INPUT_FIFO_SIZE;
+  if (next == _in_tail)
+    return 0; /* full: drop, as the fifo did */
+  _in_buf[_in_head] = b;
+  _in_head = next;
+  return 1;
+}
+
+static int in_pop(uint8_t *out) {
+  if (_in_tail == _in_head)
+    return 0;
+  *out = _in_buf[_in_tail];
+  _in_tail = (_in_tail + 1u) % SHELL_INPUT_FIFO_SIZE;
+  return 1;
+}
 
 /* --- the line being edited, and the history ------------------------------- */
 
@@ -170,23 +194,28 @@ static void line_replace(const char *s) {
 /* --- input path ----------------------------------------------------------- */
 
 void shell_feed(char c) {
-  uint8_t b = (uint8_t)c;
-  /* One SPSC write, nothing else: this is called from the RX interrupt. A full
-     fifo drops the byte, which is the right trade against an ISR that edits. */
-  (void)spsc_write(&_in, &b, 1);
+  /* The single entry to the editor: shell_poll pushes what it read from fd 0
+     through here, and the tests inject at the same point. A full ring drops
+     the byte rather than blocking. */
+  (void)in_push((uint8_t)c);
 }
 
 int shell_poll(char *out, int cap) {
   uint8_t b;
-  char pc;
   if (!out || cap <= 0)
     return 0;
-  /* Routes that have no RX interrupt to hand us bytes (USB CDC) are polled into
-     the same fifo, so the editor below is identical on either route and there is
-     one place that knows how a line is edited. */
-  while (v_port_hw_console_try_read(&pc))
-    shell_feed(pc);
-  while (spsc_read(&_in, &b, 1) == 1) {
+  /* Input comes through fd 0, like any other task's would: /dev/console's read
+     is non-blocking and returns what has arrived. Nothing here touches a
+     peripheral, which is what lets the shell task run unprivileged.
+     shell_feed() stays the single entry to the editor, so the tests inject at
+     exactly the point the console does. */
+  {
+    char rx[16];
+    int n = v_file_read(0, rx, (uint32_t)sizeof rx);
+    for (int i = 0; i < n; i++)
+      shell_feed(rx[i]);
+  }
+  while (in_pop(&b)) {
     char c = (char)b;
 
     /* Arrow keys arrive as ESC '[' 'A'/'B'. Two states is the whole parser;
@@ -277,7 +306,7 @@ static int cmd_help(int argc, char **argv) {
   for (int i = 0; i < _cmd_count; i++) {
     if (!_commands[i].fn)
       continue;
-    /* No %-10s: print_fmt parses a '0' flag and a width, not '-', so a
+    /* No %-10s: the formatter parses a '0' flag and a width, not '-', so a
        left-justify would fall through to the default arm and emit "%-". */
     print_fmt("  %s", _commands[i].name);
     if (_commands[i].help)
@@ -349,13 +378,6 @@ static int cmd_perf(int argc, char **argv) {
 
 /* --- lifecycle ------------------------------------------------------------ */
 
-/* The console RX interrupt's whole job. v_port_hw_console_rx_irq_init takes a
-   void(void), so the read happens here and the byte goes straight into the
-   fifo -- two calls, no state, no string work in interrupt context. */
-static void shell_feed_isr(void) {
-  shell_feed(v_port_hw_console_read_char());
-}
-
 void shell_init(void) {
   _cmd_count = 0;
   for (int i = 0; i < MAX_CMD_NUMBER; i++)
@@ -366,7 +388,7 @@ void shell_init(void) {
   _hist_head = 0;
   _hist_pos = -1;
   _esc = 0;
-  spsc_init(&_in, _in_store, SHELL_INPUT_FIFO_SIZE, 1);
+  _in_head = _in_tail = 0;
 
   shell_register_command(cmd_help, "help", "list commands");
   shell_register_command(cmd_clear, "clear", "clear the screen");
@@ -377,7 +399,9 @@ void shell_init(void) {
 #endif
 
   _initialized_shell = 1;
-  v_port_hw_console_rx_irq_init(shell_feed_isr);
+  /* No RX interrupt to arm: the shell reads fd 0. Attaching one here used to
+     make the shell the only thing that could receive console input, and tied an
+     interrupt to one particular reader. */
 }
 
 void shell_run(void *args) {
