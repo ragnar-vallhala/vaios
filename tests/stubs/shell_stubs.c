@@ -14,6 +14,7 @@
 #include "task.h"
 #include "vfile.h"
 #include <stdarg.h>
+#include <string.h>
 #include <stdint.h>
 
 /* A real synthetic task with a real fd table, not a NULL current_task: the
@@ -36,7 +37,13 @@ int v_kmsg_read(char *out, uint32_t len) {
   return 0;
 }
 
-void print_fmt(const char *fmt, ...) { (void)fmt; }
+/* Counts prompts printed, which is the one piece of output a test needs: a
+   CRLF terminal must get one prompt per line, not two. */
+int g_stub_prompts;
+void print_fmt(const char *fmt, ...) {
+  if (strstr(fmt, "vaios> "))
+    g_stub_prompts++;
+}
 
 /* kernel/shell.c's perf command is compiled out here (VAIOS_MODULE_PERF=0), and
  * v_strcmp/v_strlen come from the utils stub alongside this. */

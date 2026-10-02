@@ -46,7 +46,6 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
   (void)len;
 }
 void v_port_hw_console_write_string(const char *str) { (void)str; }
-char v_port_hw_console_read_char(void) { return 0; }
 /* The console's RX interrupt, for tests: the sink devfs registered is kept so
  * a test can call it as the ISR would, and g_stub_console_rx_armed decides
  * whether the port claims to have an interrupt (default: no, the poll path). */

@@ -18,6 +18,8 @@
 #include "task.h"  /* V_WAIT_FOREVER, MS_TO_TICKS */
 #include "vfile.h" /* v_file_wait */
 
+extern int g_stub_prompts;
+
 static int dummy_cb(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -160,8 +162,16 @@ static void test_editor_accepts_cr_and_crlf(void) {
   feed("help\r\n");
   TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
-  /* The trailing LF must not submit a second, empty line. */
+  /* The trailing LF must not submit a second, empty line -- nor reprompt as
+     if one had been entered, which doubled the prompt on CRLF terminals. */
+  g_stub_prompts = 0;
   TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(g_stub_prompts, 0);
+
+  /* A bare LF on its own is still an empty line and reprompts. */
+  feed("\n");
+  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(g_stub_prompts, 1);
 }
 
 static void test_editor_incomplete_line_waits(void) {

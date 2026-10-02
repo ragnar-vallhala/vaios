@@ -75,10 +75,6 @@ void v_port_hw_console_write_string(const char *str) {
   fputs(str, stdout);
   fflush(stdout);
 }
-char v_port_hw_console_read_char(void) {
-  int c = getchar();
-  return (c == EOF) ? '\0' : (char)c;
-}
 int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
                                                 uint16_t len)) {
   (void)sink; // no async stdin in this port: the reader polls

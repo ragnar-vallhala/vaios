@@ -83,6 +83,7 @@ static int _hist_count = 0; /* lines stored, saturating at CMD_BUFFER_SIZE */
 static int _hist_head = 0;  /* next slot to write */
 static int _hist_pos = -1;  /* -1 = editing a fresh line; else steps back */
 static int _esc = 0;        /* 0 normal, 1 saw ESC, 2 saw ESC '[' */
+static int _prev_cr = 0;    /* last byte was CR: an LF now ends the same line */
 static int _initialized_shell = 0;
 
 /* Bounded copy. The kernel's string set has no v_strncpy, and this is the only
@@ -219,6 +220,15 @@ int shell_poll(char *out, int cap) {
   while (in_pop(&b)) {
     char c = (char)b;
 
+    /* The LF of a CRLF pair: the CR already submitted the line. Swallowed
+       here, before anything else sees it, or it reads as an empty line and
+       prints a second prompt after every command. */
+    if (c == '\n' && _prev_cr) {
+      _prev_cr = 0;
+      continue;
+    }
+    _prev_cr = (c == '\r');
+
     /* Arrow keys arrive as ESC '[' 'A'/'B'. Two states is the whole parser;
        anything else after ESC is swallowed rather than typed into the line. */
     if (_esc == 1) {
@@ -270,9 +280,6 @@ int shell_poll(char *out, int cap) {
        many bytes off the end -- so short commands never ran and the line ending
        was assumed rather than handled. An empty line just reprompts. */
     if (c == '\r' || c == '\n') {
-      if (c == '\n' && _len == 0 && _line[0] == '\0') {
-        /* swallow the LF of a CRLF pair: the CR already submitted */
-      }
       print_fmt("\r\n");
       _line[_len] = '\0';
       if (_len == 0) {
@@ -389,6 +396,7 @@ void shell_init(void) {
   _hist_head = 0;
   _hist_pos = -1;
   _esc = 0;
+  _prev_cr = 0;
   _in_head = _in_tail = 0;
 
   shell_register_command(cmd_help, "help", "list commands");

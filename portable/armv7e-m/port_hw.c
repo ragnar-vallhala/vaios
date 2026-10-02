@@ -272,21 +272,6 @@ void v_port_hw_console_write_string(const char *str) {
 #endif
 }
 
-char v_port_hw_console_read_char(void) {
-#ifdef NAVHAL
-#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
-  uint8_t c = 0;
-  while (hal_usb_cdc_read(&c, 1) == 0) // CDC reads never block; the console
-    ;                                  // contract here is blocking
-  return (char)c;
-#else
-  return hal_uart_read_char(BOARD_CONSOLE_UART);
-#endif
-#else
-  return sh_readc();
-#endif
-}
-
 #if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC &&                    \
     NAVHAL_CONFIG_DRV_DMA && NAVHAL_CONFIG_DRV_UART_DMA
 /* NavHAL defines the USARTx_IRQHandler vectors only inside its UART-DMA block,
