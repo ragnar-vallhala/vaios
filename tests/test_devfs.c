@@ -233,6 +233,18 @@ static void test_console_write_full_is_partial(void) {
   TEST_ASSERT_EQ(v_console_writer_step(0), 45);
 }
 
+/* A lone LF goes out as CRLF (a tty's ONLCR), so a file with LF endings does
+ * not staircase across the terminal; an existing CRLF is left alone. */
+static void test_console_lf_becomes_crlf(void) {
+  reset();
+  (void)v_console_writer_step(0);
+  g_stub_console_out_len = 0;
+  TEST_ASSERT_EQ(v_file_write(1, "a\nb\r\nc\n", 7), 7);
+  (void)v_console_writer_step(0);
+  TEST_ASSERT_EQ(g_stub_console_out_len, 9);
+  TEST_ASSERT_EQ(memcmp(g_stub_console_out, "a\r\nb\r\nc\r\n", 9), 0);
+}
+
 /* A device with no wait op cannot be waited on. */
 static void test_wait_unsupported(void) {
   reset();
@@ -248,6 +260,7 @@ static const test_case_t devfs_cases[] = {
     TEST_CASE(test_wait_unsupported),
     TEST_CASE(test_console_write_deferred_to_writer),
     TEST_CASE(test_console_write_full_is_partial),
+    TEST_CASE(test_console_lf_becomes_crlf),
     TEST_CASE(test_fd_table_preopens_console),
     TEST_CASE(test_open_known_device),
     TEST_CASE(test_open_unknown_returns_error),

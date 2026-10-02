@@ -247,22 +247,49 @@ static void console_emit(const char *p, uint32_t len) {
   }
 }
 
-// Returns how much was taken, which is less than `len` when the queue is full;
-// the caller retries the rest (v_printf does) rather than the syscall waiting.
+// Newlines: a lone '\n' goes out as "\r\n", as a Unix tty does (ONLCR) --
+// otherwise a file with LF endings printed by `cat` walks right across the
+// screen, each line starting under the end of the last. A '\n' that already
+// follows a '\r' passes as it is. con_last carries that across writes.
+static char con_last;
+
+// Returns how much of `buf` was taken, which is less than `len` when the queue
+// is full; the caller retries the rest (v_printf does) rather than the syscall
+// waiting for space. A '\n' is taken only with room for its '\r' too.
 static int console_write(void *priv, const void *buf, uint32_t len) {
   (void)priv;
   const char *p = (const char *)buf;
   if (!con_writer_seen) {
-    console_emit(p, len);
+    char tmp[64];
+    uint32_t t = 0;
+    for (uint32_t i = 0; i < len; i++) {
+      if (p[i] == '\n' && con_last != '\r')
+        tmp[t++] = '\r';
+      tmp[t++] = p[i];
+      con_last = p[i];
+      if (t >= sizeof tmp - 1) {
+        console_emit(tmp, t);
+        t = 0;
+      }
+    }
+    if (t)
+      console_emit(tmp, t);
     return (int)len;
   }
   uint32_t n = 0;
   for (; n < len; n++) {
-    uint16_t next = (uint16_t)((con_tx_head + 1u) % CONSOLE_TX_SIZE);
-    if (next == con_tx_tail)
+    uint32_t room = (uint32_t)((con_tx_tail + CONSOLE_TX_SIZE - con_tx_head - 1u) %
+                               CONSOLE_TX_SIZE);
+    int crlf = p[n] == '\n' && con_last != '\r';
+    if (room < (crlf ? 2u : 1u))
       break;
+    if (crlf) {
+      con_tx[con_tx_head] = '\r';
+      con_tx_head = (uint16_t)((con_tx_head + 1u) % CONSOLE_TX_SIZE);
+    }
     con_tx[con_tx_head] = p[n];
-    con_tx_head = next;
+    con_tx_head = (uint16_t)((con_tx_head + 1u) % CONSOLE_TX_SIZE);
+    con_last = p[n];
   }
   if (n) {
     int woke = 0;

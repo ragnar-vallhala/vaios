@@ -23,6 +23,11 @@ extern int g_stub_prompts;
 extern int32_t g_stub_banner_uptime;
 
 static shell_t g_sh;
+
+static void sh_copy_test(char *dst, const char *src) {
+  while ((*dst++ = *src++))
+    ;
+}
 static void shell_reset(void) { shell_init(&g_sh, NULL, 0); }
 
 static int dummy_cb(shell_t *sh, int argc, char **argv) {
@@ -214,6 +219,47 @@ static void test_inspection_builtins(void) {
   char l1[] = "ps", l2[] = "heap";
   TEST_ASSERT_EQ(shell_exec(&g_sh, l1), 0);
   TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 0);
+}
+
+/* cd and pwd: a working directory per shell, paths resolved against it, "."
+ * and ".." folded, never above the drive's root, and a cd to somewhere that
+ * is not a directory refused with the old one kept. */
+static void cd_to(const char *where) {
+  char l[CMD_MAX_LEN] = "cd ";
+  sh_copy_test(l + 3, where);
+  shell_exec(&g_sh, l);
+}
+static void test_cd_and_paths(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
+  cd_to("LOGS");
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
+  cd_to("A");
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS/A"), 0);
+  cd_to("../.././LOGS/./A/..");
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
+  cd_to("../../../..");                  /* never above the root */
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
+  cd_to("/mnt/0:LOGS");                  /* the mount prefix, drive-qualified */
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
+  cd_to("nope");                         /* refused: stays where it was */
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
+  char l[] = "cd";                       /* no argument: the card's root */
+  shell_exec(&g_sh, l);
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
+}
+
+/* mkdir resolves against the working directory too. */
+extern char g_stub_mkdir_path[64];
+static void test_mkdir_is_relative(void) {
+  shell_reset();
+  cd_to("LOGS");
+  char l[] = "mkdir run1";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_stub_mkdir_path, "0:/LOGS/run1"), 0);
+  char l2[] = "mkdir /top";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_stub_mkdir_path, "0:/top"), 0);
 }
 
 static void test_find_unknown_and_empty(void) {
@@ -503,6 +549,8 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_exec_routes_by_privilege),
     TEST_CASE(test_runtime_command_is_never_privileged),
     TEST_CASE(test_inspection_builtins),
+    TEST_CASE(test_cd_and_paths),
+    TEST_CASE(test_mkdir_is_relative),
     TEST_CASE(test_find_unknown_and_empty),
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),

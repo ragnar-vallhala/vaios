@@ -93,3 +93,53 @@ void v_banner_print(void (*put)(const char *line), uint32_t cpu_hz,
   put("vaios test\r\n");
 }
 uint32_t v_get_ticks(void) { return 0; }
+
+/* ps formats its numbers; nothing here reads the result, so a blank one does. */
+int print_fmt_buf(char *out, uint32_t out_size, const char *fmt, ...) {
+  (void)fmt;
+  if (out_size)
+    out[0] = '\0';
+  return 0;
+}
+
+/* A fake card for cd/pwd/mkdir/ls: these directories exist, nothing else. */
+#include "vfs.h"
+#include <string.h>
+static const char *const _dirs[] = {"0:/", "0:/LOGS", "0:/LOGS/A"};
+char g_stub_mkdir_path[64];
+int v_vfs_diropen(const char *path, uint32_t ticks) {
+  (void)ticks;
+  for (unsigned i = 0; i < sizeof _dirs / sizeof _dirs[0]; i++)
+    if (strcmp(path, _dirs[i]) == 0)
+      return 3;
+  return -5; /* FR_NO_PATH */
+}
+int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks) {
+  (void)fd;
+  (void)ent;
+  (void)ticks;
+  return 0;
+}
+int v_vfs_close(int fd, uint32_t ticks) {
+  (void)fd;
+  (void)ticks;
+  return 0;
+}
+int v_vfs_open(const char *path, int flags, uint32_t ticks) {
+  (void)path;
+  (void)flags;
+  (void)ticks;
+  return -4; /* FR_NO_FILE */
+}
+int v_vfs_read(int fd, void *buf, uint32_t len, uint32_t ticks) {
+  (void)fd;
+  (void)buf;
+  (void)len;
+  (void)ticks;
+  return 0;
+}
+int v_vfs_makedir(const char *path, uint32_t ticks) {
+  (void)ticks;
+  strncpy(g_stub_mkdir_path, path, sizeof g_stub_mkdir_path - 1);
+  return 0;
+}

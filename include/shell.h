@@ -115,6 +115,11 @@ struct shell {
   int esc;        /* 0 normal, 1 saw ESC, 2 saw ESC '[' */
   int prev_cr;    /* last byte was CR: an LF now ends the same line */
   int req_fd, done_fd; /* the helper's queues, opened on first use; -1 until */
+#if VAIOS_MODULE_VFS
+  /* This shell's working directory, as a FatFs path ("0:/logs"). The shell's
+     own, not FatFs's f_chdir, which is one global for every task. */
+  char cwd[CMD_MAX_LEN];
+#endif
 };
 
 /** @brief Reset @p sh: empty line, history and runtime registry, with

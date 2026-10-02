@@ -164,6 +164,9 @@ static int cmd_bus(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_VFS
 static int cmd_ls(shell_t *sh, int argc, char **argv);
 static int cmd_cat(shell_t *sh, int argc, char **argv);
+static int cmd_cd(shell_t *sh, int argc, char **argv);
+static int cmd_pwd(shell_t *sh, int argc, char **argv);
+static int cmd_mkdir(shell_t *sh, int argc, char **argv);
 #endif
 
 /* In flash. `perf` is privileged: it dumps through the kernel's own print path,
@@ -186,8 +189,11 @@ static const Command_t builtins[] = {
 #endif
 #if VAIOS_MODULE_VFS
     /* Not privileged: the task file API goes through the VFS worker. */
-    {cmd_ls, "ls", "[dir] list a directory (default /mnt/0:)", 0},
+    {cmd_ls, "ls", "[dir] list a directory (default: here)", 0},
     {cmd_cat, "cat", "<file> print a file", 0},
+    {cmd_cd, "cd", "[dir] change directory (default: the card's root)", 0},
+    {cmd_pwd, "pwd", "where you are", 0},
+    {cmd_mkdir, "mkdir", "<dir> make a directory", 0},
 #endif
 };
 static const int n_builtins = (int)(sizeof builtins / sizeof builtins[0]);
@@ -511,24 +517,61 @@ static int cmd_perf(shell_t *sh, int argc, char **argv) {
  * counters, the bus registry) and so are SHELL_CMD_PRIV; ls and cat use the
  * task file API and run in the shell. */
 
+/* One table cell: `s` padded to `w` columns, right-aligned for numbers. The
+   formatter has widths but no left-justify, so cells are built by hand. */
+static void cell(char **p, char *end, const char *s, int w, int right) {
+  int n = (int)v_strlen(s);
+  for (int k = 0; right && k < w - n && *p < end; k++)
+    *(*p)++ = ' ';
+  for (int k = 0; s[k] && *p < end; k++)
+    *(*p)++ = s[k];
+  for (int k = 0; !right && k < w - n && *p < end; k++)
+    *(*p)++ = ' ';
+  **p = '\0';
+}
+
 static int cmd_ps(shell_t *sh, int argc, char **argv) {
   (void)sh;
   (void)argc;
   (void)argv;
-  static const char *const st[] = {"rdy", "run", "blk", "dly", "term"};
+  static const char *const st[] = {"ready", "running", "blocked", "sleeping",
+                                   "exited"};
   TCB *t[16];
   int n = task_snapshot_list(t, 16);
-  v_printf("  id pri state name\r\n");
+  for (int a = 1; a < n; a++) /* by pid: the snapshot is in scheduler order */
+    for (int b = a; b > 0 && t[b - 1]->task_id > t[b]->task_id; b--) {
+      TCB *x = t[b];
+      t[b] = t[b - 1];
+      t[b - 1] = x;
+    }
+#if VAIOS_MODULE_PERF
+  v_printf("    PID  PRI  STATE     NAME            STACK  USE\r\n");
+#else
+  v_printf("    PID  PRI  STATE     NAME\r\n");
+#endif
   for (int i = 0; i < n; i++) {
+    char row[96], num[24], *p = row, *end = row + sizeof row - 1;
     unsigned s = (unsigned)t[i]->status;
-    v_printf("  %d  %d   %s   %s", (int)t[i]->task_id, (int)t[i]->priority,
-             st[s <= 4u ? s : 0u], task_get_name(t[i]));
+    const char *name = task_get_name(t[i]);
+    print_fmt_buf(num, sizeof num, "%d", (int)t[i]->task_id);
+    cell(&p, end, num, 7, 1);
+    print_fmt_buf(num, sizeof num, "%d", (int)t[i]->priority);
+    cell(&p, end, num, 5, 1);
+    cell(&p, end, "  ", 2, 0);
+    cell(&p, end, st[s <= 4u ? s : 0u], 10, 0);
+    cell(&p, end, name[0] ? name : "-", 10, 0);
 #if VAIOS_MODULE_PERF
     v_perf_task_t ps;
     v_perf_task_stats(t[i], &ps);
-    v_printf("  stack %d/%d", (int)ps.stack_peak, (int)ps.stack_size);
+    print_fmt_buf(num, sizeof num, "%d/%d", (int)ps.stack_peak,
+                  (int)ps.stack_size);
+    cell(&p, end, num, 11, 1);
+    print_fmt_buf(num, sizeof num, "%d%%",
+                  ps.stack_size ? (int)(ps.stack_peak * 100u / ps.stack_size)
+                                : 0);
+    cell(&p, end, num, 5, 1);
 #endif
-    v_printf("\r\n");
+    v_printf("%s\r\n", row);
   }
   return 0;
 }
@@ -567,9 +610,91 @@ static int cmd_bus(shell_t *sh, int argc, char **argv) {
 #if VAIOS_MODULE_VFS
 #define SHELL_IO_TICKS 500 /* how long a file call waits for the VFS worker */
 
+/* `arg` against the working directory, folded into `out` as a FatFs path.
+   Drive-qualified ("0:/a") or under the mount ("/mnt/0:a") is absolute; a
+   leading '/' is the current drive's root; anything else is relative. "." and
+   ".." fold, never climbing above the drive's root. 0, or -1 if it does not
+   fit. */
+static int sh_path(const shell_t *sh, const char *arg, char *out, int cap) {
+  char full[2 * CMD_MAX_LEN];
+  int n = 0;
+  if (!arg)
+    arg = "";
+  if (arg[0] == '/' && arg[1] == 'm' && arg[2] == 'n' && arg[3] == 't' &&
+      arg[4] == '/')
+    arg += 5; /* the VFS would strip it too */
+  const char *colon = arg;
+  while (*colon && *colon != ':' && *colon != '/')
+    colon++;
+  if (*colon == ':') { /* drive-qualified: absolute */
+    sh_copy(full, arg, (int)sizeof full);
+  } else {
+    const char *c = sh->cwd;
+    if (arg[0] == '/') /* the drive's root: just the cwd's drive */
+      while (*c && *c != ':' && n < (int)sizeof full - 1)
+        full[n++] = *c++;
+    else
+      while (*c && n < (int)sizeof full - 1)
+        full[n++] = *c++;
+    if (arg[0] == '/')
+      full[n++] = ':';
+    if (n < (int)sizeof full - 1)
+      full[n++] = '/';
+    sh_copy(full + n, arg, (int)sizeof full - n);
+  }
+
+  /* fold: out = drive, then "/component" per surviving component */
+  const char *p = full;
+  int o = 0;
+  while (*p && *p != ':' && o < cap - 1)
+    out[o++] = *p++;
+  if (*p != ':')
+    return -1; /* no drive: nothing to resolve against */
+  if (o >= cap - 1)
+    return -1;
+  out[o++] = *p++;
+  int root = o;
+  while (*p) {
+    while (*p == '/')
+      p++;
+    const char *b = p;
+    while (*p && *p != '/')
+      p++;
+    int len = (int)(p - b);
+    if (len == 0 || (len == 1 && b[0] == '.'))
+      continue;
+    if (len == 2 && b[0] == '.' && b[1] == '.') {
+      while (o > root && out[o - 1] != '/')
+        o--;
+      if (o > root)
+        o--; /* and the '/' before it */
+      continue;
+    }
+    if (o + 1 + len >= cap)
+      return -1;
+    out[o++] = '/';
+    for (int k = 0; k < len; k++)
+      out[o++] = b[k];
+  }
+  if (o == root) /* the root itself */
+    out[o++] = '/';
+  out[o] = '\0';
+  return 0;
+}
+
+/* Resolve argv's path or say why not. */
+static int sh_arg_path(const shell_t *sh, const char *cmd, const char *arg,
+                       char *out, int cap) {
+  if (sh_path(sh, arg, out, cap) == 0)
+    return 0;
+  v_printf("%s: %s: path too long\r\n", cmd, arg);
+  return -1;
+}
+
 static int cmd_ls(shell_t *sh, int argc, char **argv) {
-  (void)sh;
-  const char *path = argc > 1 ? argv[1] : "/mnt/0:";
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "ls", argc > 1 ? argv[1] : ".", path, sizeof path))
+    return 1;
   int d = v_vfs_diropen(path, SHELL_IO_TICKS);
   if (d < 0) {
     v_printf("ls: %s: error %d\r\n", path, d);
@@ -583,14 +708,16 @@ static int cmd_ls(shell_t *sh, int argc, char **argv) {
 }
 
 static int cmd_cat(shell_t *sh, int argc, char **argv) {
-  (void)sh;
   if (argc < 2) {
     v_printf("usage: cat <file>\r\n");
     return 1;
   }
-  int fd = v_vfs_open(argv[1], VFS_O_RDONLY, SHELL_IO_TICKS);
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "cat", argv[1], path, sizeof path))
+    return 1;
+  int fd = v_vfs_open(path, VFS_O_RDONLY, SHELL_IO_TICKS);
   if (fd < 0) {
-    v_printf("cat: %s: error %d\r\n", argv[1], fd);
+    v_printf("cat: %s: error %d\r\n", path, fd);
     return 1;
   }
   char buf[65];
@@ -602,6 +729,44 @@ static int cmd_cat(shell_t *sh, int argc, char **argv) {
   v_vfs_close(fd, SHELL_IO_TICKS);
   v_printf("\r\n");
   return n < 0 ? 1 : 0;
+}
+
+static int cmd_cd(shell_t *sh, int argc, char **argv) {
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "cd", argc > 1 ? argv[1] : "/", path, sizeof path))
+    return 1;
+  /* It has to be a directory that is there: one that opens as one. */
+  int d = v_vfs_diropen(path, SHELL_IO_TICKS);
+  if (d < 0) {
+    v_printf("cd: %s: no such directory\r\n", path);
+    return 1;
+  }
+  v_vfs_close(d, SHELL_IO_TICKS);
+  sh_copy(sh->cwd, path, CMD_MAX_LEN);
+  return 0;
+}
+
+static int cmd_pwd(shell_t *sh, int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  v_printf("%s\r\n", sh->cwd);
+  return 0;
+}
+
+static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: mkdir <dir>\r\n");
+    return 1;
+  }
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "mkdir", argv[1], path, sizeof path))
+    return 1;
+  int rc = v_vfs_makedir(path, SHELL_IO_TICKS);
+  if (rc < 0) {
+    v_printf("mkdir: %s: error %d\r\n", path, rc);
+    return 1;
+  }
+  return 0;
 }
 #endif
 
@@ -622,6 +787,9 @@ void shell_init(shell_t *sh, const Command_t *cmds, int count) {
   sh->esc = 0;
   sh->prev_cr = 0;
   sh->req_fd = sh->done_fd = -1;
+#if VAIOS_MODULE_VFS
+  sh_copy(sh->cwd, "0:/", CMD_MAX_LEN);
+#endif
 }
 
 /* --- privileged commands --------------------------------------------------

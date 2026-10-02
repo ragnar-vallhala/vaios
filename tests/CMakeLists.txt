@@ -271,7 +271,7 @@ add_executable(vaios_shell_tests
 )
 target_include_directories(vaios_shell_tests PRIVATE ${TEST_INCLUDE_DIRS})
 target_compile_definitions(vaios_shell_tests PRIVATE
-    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=0 VAIOS_MODULE_PERF=0)
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=1 VAIOS_MODULE_PERF=0)
 target_compile_options(vaios_shell_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -g -O0
