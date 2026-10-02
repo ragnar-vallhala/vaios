@@ -241,12 +241,24 @@ void v_port_hw_console_write_string(const char *str);
  * interrupt was armed, 0 if this port/route has none (the caller then polls
  * v_port_hw_console_try_read). `data` is valid only for the call. On a route
  * that can tell (USB CDC: the host raising DTR), a host ATTACHING arrives as
- * one form feed (^L) -- the byte a terminal sends to ask for a redraw. */
+ * one ENQ (0x05, "who are you"), which the shell answers with its banner. */
 int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
                                                 uint16_t len));
 /* Non-blocking console read: 1 if a byte was placed in *c, 0 if none waiting.
  * The CDC route has no RX interrupt, so its readers poll this. */
 int v_port_hw_console_try_read(char *c);
+
+/* What this image runs on, for the boot banner: a compile-time string, so an
+ * unprivileged task can print it too. NavHAL names the board, family and core. */
+#ifdef NAVHAL
+#define VAIOS_PORT_TARGET                                                      \
+  NAVHAL_TARGET_BOARD " (" NAVHAL_TARGET_FAMILY ", " NAVHAL_TARGET_ARCH ")"
+#else
+#define VAIOS_PORT_TARGET "qemu-semihosting (armv7e-m)"
+#endif
+/* The core clock in Hz, or 0 where the port cannot tell. Privileged. */
+uint32_t v_port_hw_cpu_hz(void);
+
 
 // SD/MMC over SDIO (VFS backend). Return 0 on success, non-zero on failure.
 int v_port_hw_sdio_init(void);

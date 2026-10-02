@@ -100,6 +100,28 @@ static void sh_putc(char c) {
   v_printf("%s", b);
 }
 
+/* A string of any length: v_printf formats into 128 bytes, and the banner is
+   longer than that. */
+static void sh_puts(const char *s) {
+  char chunk[100];
+  while (*s) {
+    int n = 0;
+    while (s[n] && n < (int)sizeof chunk - 1) {
+      chunk[n] = s[n];
+      n++;
+    }
+    chunk[n] = '\0';
+    v_printf("%s", chunk);
+    s += n;
+  }
+}
+
+/* The banner, as at boot, then what the shell itself adds. */
+static void sh_banner(void) {
+  sh_puts(v_banner);
+  v_printf("  features:%s\r\n", v_features[0] ? v_features : " none");
+}
+
 /* --- tokenizing ----------------------------------------------------------- */
 
 int shell_tokenize(char *line, char **argv, int max_argv) {
@@ -127,6 +149,7 @@ static int cmd_help(shell_t *sh, int argc, char **argv);
 static int cmd_clear(shell_t *sh, int argc, char **argv);
 static int cmd_version(shell_t *sh, int argc, char **argv);
 static int cmd_history(shell_t *sh, int argc, char **argv);
+static int cmd_dmesg(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_PERF
 static int cmd_perf(shell_t *sh, int argc, char **argv);
 #endif
@@ -147,8 +170,9 @@ static int cmd_cat(shell_t *sh, int argc, char **argv);
 static const Command_t builtins[] = {
     {cmd_help, "help", "list commands", 0},
     {cmd_clear, "clear", "clear the screen", 0},
-    {cmd_version, "version", "kernel version and author", 0},
+    {cmd_version, "version", "kernel version, build and target", 0},
     {cmd_history, "history", "recent command lines", 0},
+    {cmd_dmesg, "dmesg", "kernel log since boot (or since last dmesg)", 0},
 #if VAIOS_MODULE_PERF
     {cmd_perf, "perf", "[show|reset] kernel counters", SHELL_CMD_PRIV},
 #endif
@@ -318,10 +342,19 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       continue;
     }
 
-    if (c == 0x0C) { /* ^L: redraw -- typed, or a host attaching (port.h) */
-      /* A fresh prompt with the line so far, not readline's clear-screen: on
-         attach the terminal has just opened, and wiping it would also wipe
-         what the terminal printed about the connection. `clear` clears. */
+    if (c == 0x05) { /* ENQ, "who are you": a host attaching (port.h) */
+      /* On USB CDC the boot banner went out before anyone listened, so this
+         is the first a terminal sees: the banner, then a prompt with any line
+         already typed. ^E typed by hand asks the same. */
+      v_printf("\r\n");
+      sh_banner();
+      v_printf(SHELL_PROMPT "%s", sh->line);
+      continue;
+    }
+
+    if (c == 0x0C) { /* ^L: redraw */
+      /* A fresh prompt with the line so far, not readline's clear-screen:
+         `clear` clears. */
       v_printf("\r\n" SHELL_PROMPT "%s", sh->line);
       continue;
     }
@@ -399,8 +432,30 @@ static int cmd_version(shell_t *sh, int argc, char **argv) {
   (void)sh;
   (void)argc;
   (void)argv;
-  v_printf("vaios %s\r\n", VAIOS_VERSION);
-  v_printf("NAVROBOTEC PVT. LTD. -- %s\r\n", AUTHOR);
+  sh_banner();
+  v_printf("  NAVROBOTEC PVT. LTD. -- %s\r\n", AUTHOR);
+  return 0;
+}
+
+/* The kernel log, from /dev/kmsg: the boot banner and messages included, which
+   is how a terminal that attached after boot sees them. The ring is drained by
+   reading, so a second dmesg shows only what came since. */
+static int cmd_dmesg(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  (void)argc;
+  (void)argv;
+  int fd = v_file_open("/dev/kmsg", 0);
+  if (fd < 0) {
+    v_printf("dmesg: no /dev/kmsg\r\n");
+    return 1;
+  }
+  char buf[100];
+  int n;
+  while ((n = v_file_read(fd, buf, sizeof buf - 1)) > 0) {
+    buf[n] = '\0';
+    v_printf("%s", buf);
+  }
+  v_file_close(fd);
   return 0;
 }
 

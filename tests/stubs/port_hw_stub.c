@@ -70,6 +70,8 @@ int v_port_hw_console_try_read(char *c) {
   return 0;
 }
 
+uint32_t v_port_hw_cpu_hz(void) { return 0; }
+
 int v_port_hw_sdio_init(void) { return -1; }
 int v_port_hw_sdio_card_present(void) { return 0; }
 int v_port_hw_sdio_card_init(void) { return -1; }

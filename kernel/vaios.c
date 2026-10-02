@@ -15,6 +15,65 @@
 
 extern uint32_t systick_count;
 
+/* --- the boot banner ---------------------------------------------------------
+ * What a Linux kernel says first: what this is, built from what, by whom and
+ * when, and what it runs on. All compile-time, so it sits in flash and the
+ * unprivileged shell prints the same text (its `version`, and on attach). The
+ * build identity comes from vaios_build.h, regenerated on every build. */
+#if __has_include("vaios_build.h")
+#include "vaios_build.h"
+#else
+#define VAIOS_BUILD_REV "unknown"
+#define VAIOS_BUILD_TIME "unknown"
+#define VAIOS_BUILD_BY "unknown"
+#endif
+#ifndef VAIOS_VERSION /* from Kconfig; absent only to a bare analyser run */
+#define VAIOS_VERSION "unknown"
+#endif
+#if defined(__VERSION__) && defined(__GNUC__) && !defined(__clang__)
+#define VAIOS_CC "gcc " __VERSION__
+#elif defined(__VERSION__)
+#define VAIOS_CC __VERSION__
+#else
+#define VAIOS_CC "an unknown compiler"
+#endif
+
+/* Each enabled kernel feature, space-led; "" if none. */
+const char v_features[] =
+#if VAIOS_SYSCALL_SVC
+    " svc"
+#endif
+#if VAIOS_DEVFS
+    " devfs"
+#endif
+#if VAIOS_MPU_ENABLE
+    " mpu"
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+    " user-separation"
+#endif
+#if VAIOS_TASK_HEAP
+    " task-heap"
+#endif
+#if VAIOS_MODULE_PERF
+    " perf"
+#endif
+#if VAIOS_MODULE_BUS
+    " bus"
+#endif
+#if VAIOS_MODULE_VFS
+    " vfs"
+#endif
+#if VAIOS_MODULE_SHELL
+    " shell"
+#endif
+    "";
+
+const char v_banner[] =
+    "vaios " VAIOS_VERSION " (" VAIOS_BUILD_REV ") #" VAIOS_BUILD_TIME "\r\n"
+    "  built by " VAIOS_BUILD_BY " with " VAIOS_CC "\r\n"
+    "  on " VAIOS_PORT_TARGET "\r\n";
+
 void v_init(vaios_init_config_t *cfg) {
   // resetting global variables
   systick_count = 0;
@@ -34,6 +93,16 @@ void v_init(vaios_init_config_t *cfg) {
 
 #if UART_LOGGING_ENABLE == 1
   v_port_hw_console_init(CONSOLE_BAUDRATE, dma_tx_complete_callback);
+  /* First thing out, as on Linux. Through the kernel print path, so it lands
+     in /dev/kmsg as well and `dmesg` can show it to a terminal that attached
+     after boot -- on USB CDC, every terminal. */
+  print("\r\n");
+  print(v_banner);
+  print("  features:");
+  print(v_features[0] ? v_features : " none");
+  print("\r\n");
+  v_log(LOG_INFO, "[VAIOS INIT] cpu %d MHz, heap %d KiB",
+        (int)(v_port_hw_cpu_hz() / 1000000u), (int)(HEAP_SIZE / 1024));
   v_log(LOG_INFO, "[VAIOS INIT] kernel tick started with period %d us",
         TICK_PERIOD_US);
   v_log(LOG_INFO, "[VAIOS INIT] console started with baudrate %d bps",

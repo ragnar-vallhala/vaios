@@ -82,3 +82,7 @@ const char *task_get_name(const TCB *t) {
 uint32_t v_get_heap_size(void) { return 4096; }
 uint32_t v_get_heap_allocation_count(void) { return 2; }
 uint32_t v_get_heap_allocation_size(void) { return 100; }
+
+/* The banner the shell prints (kernel/vaios.c, not linked here). */
+const char v_banner[] = "vaios test (unknown)\r\n";
+const char v_features[] = " devfs shell";

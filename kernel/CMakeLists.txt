@@ -31,6 +31,19 @@ endif()
 
 add_library(vaios STATIC ${VAIOS_SOURCES})
 
+# The boot banner's build identity (git revision, time, builder): regenerated on
+# every build by a target, so it describes the image actually being linked.
+# kernel/vaios.c falls back to "unknown" when built without it (host tests).
+set(VAIOS_BUILD_H "${CMAKE_BINARY_DIR}/vaios_build.h")
+add_custom_target(vaios_build_info
+  COMMAND ${CMAKE_COMMAND} -DOUT=${VAIOS_BUILD_H}
+          -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/..
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/../tools/build_info.cmake
+  BYPRODUCTS ${VAIOS_BUILD_H}
+  VERBATIM)
+add_dependencies(vaios vaios_build_info)
+target_include_directories(vaios PRIVATE ${CMAKE_BINARY_DIR})
+
 # Export the public headers as a usage requirement so projects that link vaios
 # (e.g. a nav firmware consumer that pulls vaios in as a [dependencies] library)
 # get include/ on their include path. The top-level include_directories() only

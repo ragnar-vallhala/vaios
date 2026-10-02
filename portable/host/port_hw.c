@@ -81,6 +81,8 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
   return 0;
 }
 
+uint32_t v_port_hw_cpu_hz(void) { return 0; }
+
 // No non-blocking stdin either: a reader on this port gets its bytes some other
 // way (the unit tests feed the shell directly).
 int v_port_hw_console_try_read(char *c) {

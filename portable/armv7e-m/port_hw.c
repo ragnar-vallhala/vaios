@@ -158,10 +158,11 @@ void hal_timebase_tick(void); // NavHAL timebase.c; not in the public navhal.h
 #if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
 static void (*_console_rx_sink)(const uint8_t *, uint16_t);
 
-/* A host opening the port raises DTR, and the console reports that the way a
- * terminal would ask for a redraw: one form feed (^L) into the RX path, which
- * the shell answers with a fresh prompt. Without it the prompt was printed once
- * at boot, before anyone listened, and the first thing a user saw was nothing.
+/* A host opening the port raises DTR, and the console reports it as one ENQ
+ * (0x05, "who are you") into the RX path -- the byte a terminal answers with
+ * its identity -- and the shell answers with the banner and a prompt. Without
+ * it both were printed once at boot, before anyone listened, and the first
+ * thing a user saw was nothing.
  *
  * Polled from the tick because NavHAL tracks DTR (SET_CONTROL_LINE_STATE) but
  * has no callback for it -- one load per tick, and nothing wakes until a host
@@ -184,9 +185,9 @@ static void console_attach_poll(void) {
     return;
   }
   if (up <= CONSOLE_ATTACH_SETTLE_TICKS && ++up == CONSOLE_ATTACH_SETTLE_TICKS) {
-    static const uint8_t ff = 0x0C;
+    static const uint8_t enq = 0x05;
     uint32_t st = ENTER_CRITICAL_FROM_ISR();
-    _console_rx_sink(&ff, 1);
+    _console_rx_sink(&enq, 1);
     EXIT_CRITICAL_FROM_ISR(st);
   }
 }
@@ -242,6 +243,32 @@ uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
  * Console (log/terminal UART, or semihosting under QEMU)
  * ------------------------------------------------------------------------- */
 
+#if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC && VAIOS_PORT_CONSOLE_DMA
+/* A console DMA transfer in flight. A direct write (the console writer, a
+ * kernel print) used to go straight to the data register while the logger's
+ * DMA was still sending, and the two came out interleaved byte by byte -- on a
+ * Nucleo-F401RE, the shell's first prompt woven into the boot log's last line.
+ * So the port tracks its own transfer and a direct write waits for it. */
+static volatile uint8_t _console_dma_busy;
+static uint8_t _console_dma_tracked; /* completion is wired, so busy clears */
+static void (*_console_dma_done_cb)(void);
+
+static void console_dma_done(void) {
+  _console_dma_busy = 0;
+  if (_console_dma_done_cb)
+    _console_dma_done_cb();
+}
+
+static void console_dma_wait(void) {
+  /* Bounded: a panic printing from an interrupt may mask the very DMA
+     interrupt it would wait for. ~100 ms at 84 MHz, far past one log flush
+     (a full 128-byte buffer is 11 ms at 115200). */
+  for (uint32_t guard = 2000000u; _console_dma_busy && guard; guard--)
+    ;
+  _console_dma_busy = 0;
+}
+#endif
+
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 #ifdef NAVHAL
 #if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
@@ -275,8 +302,10 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
     // it, so DMA1_Stream6_IRQn was right only for USART2 on an F4 that nothing
     // had rebound. This follows whatever the console UART actually got.
     hal_dma_binding_t tx;
-    if (hal_uart_dma_get_binding(BOARD_CONSOLE_UART, true, &tx) == HAL_OK)
-      hal_interrupt_attach_callback(tx.irq, dma_tx_done_cb);
+    _console_dma_done_cb = dma_tx_done_cb;
+    if (hal_uart_dma_get_binding(BOARD_CONSOLE_UART, true, &tx) == HAL_OK &&
+        hal_interrupt_attach_callback(tx.irq, console_dma_done) == HAL_OK)
+      _console_dma_tracked = 1;
   }
 #else
   (void)dma_tx_done_cb;
@@ -293,7 +322,10 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
   // peripheral FIFO, so the buffered logger's "DMA" write is a plain write.
   hal_usb_cdc_write(bytes, (uint16_t)len);
 #elif VAIOS_PORT_CONSOLE_DMA
-  hal_uart_write_dma(BOARD_CONSOLE_UART, bytes, len);
+  console_dma_wait(); /* one transfer at a time, whoever started the last */
+  _console_dma_busy = _console_dma_tracked;
+  if (hal_uart_write_dma(BOARD_CONSOLE_UART, bytes, len) != HAL_OK)
+    _console_dma_busy = 0; /* never started: nothing will complete it */
 #else
   (void)bytes;
   (void)len;
@@ -305,6 +337,9 @@ void v_port_hw_console_write_string(const char *str) {
 #if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   hal_usb_cdc_write_string(str);
 #else
+#if VAIOS_PORT_CONSOLE_DMA
+  console_dma_wait();
+#endif
   hal_uart_write_string(BOARD_CONSOLE_UART, str);
 #endif
 #else
@@ -350,6 +385,14 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
   /* QEMU semihosting has no async RX; a UART console without NavHAL's USART
      vectors must not arm one (above). The reader polls. */
   return 0;
+#endif
+}
+
+uint32_t v_port_hw_cpu_hz(void) {
+#ifdef NAVHAL
+  return hal_clock_get_sysclk();
+#else
+  return 0; /* QEMU: the no-HAL clock is whatever the model runs at */
 #endif
 }
 

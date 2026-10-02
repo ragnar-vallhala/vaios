@@ -296,9 +296,7 @@ static void test_editor_accepts_cr_and_crlf(void) {
   TEST_ASSERT_EQ(g_stub_prompts, 1);
 }
 
-/* ^L redraws: one fresh prompt, and the line being typed survives it. It is
- * also what the CDC console delivers when a host attaches, so a terminal
- * opened after boot gets a prompt without pressing anything. */
+/* ^L redraws: one fresh prompt, and the line being typed survives it. */
 static void test_editor_ctrl_l_redraws(void) {
   shell_reset();
   char out[CMD_MAX_LEN];
@@ -309,6 +307,23 @@ static void test_editor_ctrl_l_redraws(void) {
   feed("lp\n");
   TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
+}
+
+/* ENQ is what the CDC console delivers when a host attaches: the shell answers
+ * with its banner and one prompt, and a line already typed survives it. */
+static void test_editor_enq_greets(void) {
+  shell_reset();
+  char out[CMD_MAX_LEN];
+  feed("ve\005");
+  g_stub_prompts = 0;
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
+  TEST_ASSERT_EQ(g_stub_prompts, 1);
+  feed("rsion\n");
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
+  TEST_ASSERT_EQ(v_strcmp(out, "version"), 0);
+  char l1[] = "version", l2[] = "dmesg";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l1), 0);
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 0); /* /dev/kmsg is empty here */
 }
 
 static void test_editor_incomplete_line_waits(void) {
@@ -493,6 +508,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_editor_short_line_submits),
     TEST_CASE(test_editor_accepts_cr_and_crlf),
     TEST_CASE(test_editor_ctrl_l_redraws),
+    TEST_CASE(test_editor_enq_greets),
     TEST_CASE(test_editor_incomplete_line_waits),
     TEST_CASE(test_editor_backspace),
     TEST_CASE(test_editor_backspace_on_empty_is_harmless),

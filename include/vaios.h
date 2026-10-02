@@ -9,5 +9,11 @@ typedef struct {
 } vaios_init_config_t;
 void v_init(vaios_init_config_t *cfg);
 void v_system_init(vaios_init_config_t *cfg);
+
+/* The boot banner (version, build revision and time, builder and compiler,
+   target), \r\n-terminated lines; and the enabled kernel features, each
+   space-led. Both in flash, so any task may print them. */
+extern const char v_banner[];
+extern const char v_features[];
 void v_delay(uint32_t ms);
 #endif // !VAIOS_H
