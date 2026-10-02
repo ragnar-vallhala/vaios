@@ -65,7 +65,21 @@ typedef struct Command {
   shell_fn_t fn;
   const char *name;
   const char *help; /* one line, shown by `help`; may be NULL */
+  uint8_t flags;    /* SHELL_CMD_PRIV, or 0 */
 } Command_t;
+
+/**
+ * Run this command PRIVILEGED. Only honoured in a const table (the built-ins and
+ * the startup table): shell_register_command never sets it, or an unprivileged
+ * task could hand the helper any function to call.
+ *
+ * When the shell itself is unprivileged (VAIOS_MPU_USER_SEPARATION), such a
+ * command runs in the helper task (shell_helper_run) instead: the shell sends it
+ * the command's index and a copy of the line, never a pointer, and waits for the
+ * return code. Either way a privileged command gets sh == NULL -- the shell's
+ * state is not the helper's to touch -- and argv from its own copy of the line.
+ */
+#define SHELL_CMD_PRIV 0x1
 
 /**
  * @brief What shell_run() is started with: the application's startup commands.
@@ -100,6 +114,7 @@ struct shell {
   int hist_pos;   /* -1 = editing a fresh line; else steps back */
   int esc;        /* 0 normal, 1 saw ESC, 2 saw ESC '[' */
   int prev_cr;    /* last byte was CR: an LF now ends the same line */
+  int req_fd, done_fd; /* the helper's queues, opened on first use; -1 until */
 };
 
 /** @brief Reset @p sh: empty line, history and runtime registry, with
@@ -123,6 +138,23 @@ int shell_register_command(shell_t *sh, shell_fn_t fn, const char *name,
  *        for the built-ins alone). Runs commands in its own context.
  */
 void shell_run(void *args);
+
+/**
+ * @brief The privileged helper's task body (VAIOS_MPU_USER_SEPARATION). Start
+ *        it PRIVILEGED (task_create_privileged) with the same config as the
+ *        shell, so both resolve a command index against the same flash tables.
+ */
+#if VAIOS_MPU_USER_SEPARATION
+void shell_helper_run(void *args);
+#endif
+
+/**
+ * @brief Run one line: tokenize @p line (in place), look the command up, run it
+ *        -- through the helper if it is privileged and the shell is not.
+ *        Returns its result (printing a non-zero one), or -1 when the line
+ *        names no command (0 for an empty line). shell_run() is this in a loop.
+ */
+int shell_exec(shell_t *sh, char *line);
 
 /** @brief Exact lookup: built-ins, then the startup table, then the runtime
  *         registry. NULL if unknown. */

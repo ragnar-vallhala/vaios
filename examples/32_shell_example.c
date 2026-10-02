@@ -78,11 +78,13 @@ static int cmd_spin(shell_t *sh, int argc, char **argv) {
 /* The startup commands, and what the shell task is started with. Both const,
    so both are in flash: the shell reads them however unprivileged it is. A
    command can still add more at runtime with shell_register_command(sh, ...);
-   those go into the shell task's own memory. */
+   those go into the shell task's own memory. Mark a command SHELL_CMD_PRIV
+   when it needs kernel state or hardware: an unprivileged shell then has the
+   helper run it (the built-in `perf` is one). */
 static const Command_t commands[] = {
-    {cmd_echo, "echo", "print the arguments"},
-    {cmd_ticks, "ticks", "kernel tick count"},
-    {cmd_spin, "spin", "start a background task"},
+    {cmd_echo, "echo", "print the arguments", 0},
+    {cmd_ticks, "ticks", "kernel tick count", 0},
+    {cmd_spin, "spin", "start a background task", 0},
 };
 static const shell_config_t shell_cfg = {
     commands, (int)(sizeof commands / sizeof commands[0])};
@@ -124,6 +126,13 @@ int main(void) {
 #endif
   task_create_named(shell_run, (void *)&shell_cfg, SHELL_TASK_STACK_SIZE, 1,
                     "shell");
+#if VAIOS_MPU_USER_SEPARATION
+  /* Runs the SHELL_CMD_PRIV commands for the now-unprivileged shell, from the
+     same flash config. The shell's priority: the shell only waits while it
+     runs, and the writer (above both) keeps their output in order. */
+  task_create_privileged(shell_helper_run, (void *)&shell_cfg, 2048, 1,
+                         "shpriv");
+#endif
   scheduler_start();
   while (1)
     ;

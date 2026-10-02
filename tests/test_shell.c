@@ -107,8 +107,8 @@ static int other_cb(shell_t *sh, int argc, char **argv) {
   return 7;
 }
 static const Command_t startup_cmds[] = {
-    {dummy_cb, "echo", "print the arguments"},
-    {other_cb, "ticks", NULL},
+    {dummy_cb, "echo", "print the arguments", 0},
+    {other_cb, "ticks", NULL, 0},
 };
 static void test_startup_table_found(void) {
   shell_init(&g_sh, startup_cmds, 2);
@@ -152,6 +152,56 @@ static void test_shells_are_independent(void) {
   shell_feed(&other, '\n');
   TEST_ASSERT_EQ(shell_poll(&other, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "x"), 0); /* g_sh's half line did not leak */
+}
+
+/* shell_exec runs a line end to end. An ordinary command gets its shell; a
+ * privileged one -- run here directly, since this build has no MPU separation
+ * and so no helper -- gets NULL, exactly as it would in the helper, so a
+ * command that works in one place works in the other. */
+static shell_t *seen_sh;
+static int seen_argc;
+static char seen_arg1[16];
+static int probe_cb(shell_t *sh, int argc, char **argv) {
+  seen_sh = sh;
+  seen_argc = argc;
+  seen_arg1[0] = '\0';
+  if (argc > 1)
+    for (int i = 0; i < 15 && (seen_arg1[i] = argv[1][i]); i++)
+      ;
+  return 3;
+}
+static const Command_t exec_cmds[] = {
+    {probe_cb, "plain", NULL, 0},
+    {probe_cb, "priv", NULL, SHELL_CMD_PRIV},
+};
+static void test_exec_routes_by_privilege(void) {
+  shell_init(&g_sh, exec_cmds, 2);
+  char l1[] = "plain  one two";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l1), 3);
+  TEST_ASSERT(seen_sh == &g_sh);
+  TEST_ASSERT_EQ(seen_argc, 3);
+  TEST_ASSERT_EQ(v_strcmp(seen_arg1, "one"), 0);
+
+  char l2[] = "priv x";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 3);
+  TEST_ASSERT(seen_sh == NULL); /* the shell's state is not the helper's */
+  TEST_ASSERT_EQ(v_strcmp(seen_arg1, "x"), 0);
+
+  char l3[] = "nosuch";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l3), -1);
+  char l4[] = "   ";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l4), 0);
+}
+
+/* A runtime registration can never be privileged: it is a function pointer an
+ * unprivileged task chose, and the helper would call it with privilege. */
+static void test_runtime_command_is_never_privileged(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, probe_cb, "late", NULL), 0);
+  TEST_ASSERT_EQ(shell_find_command(&g_sh, "late")->flags, 0);
+  char l[] = "late";
+  shell_exec(&g_sh, l);
+  TEST_ASSERT(seen_sh == &g_sh); /* ran as an ordinary command */
 }
 
 static void test_find_unknown_and_empty(void) {
@@ -406,6 +456,8 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_startup_table_found),
     TEST_CASE(test_command_registers_at_runtime),
     TEST_CASE(test_shells_are_independent),
+    TEST_CASE(test_exec_routes_by_privilege),
+    TEST_CASE(test_runtime_command_is_never_privileged),
     TEST_CASE(test_find_unknown_and_empty),
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),

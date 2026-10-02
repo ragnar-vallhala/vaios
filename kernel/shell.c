@@ -29,7 +29,9 @@
  *    first touch (todo 164: MMFAR was sh->in_head, the input ring's own index).
  */
 #include "perf.h"
+#include "port.h" // v_port_is_privileged: which side of the helper we are
 #include "shell.h"
+#include "structure.h" // the helper's queues
 #include "task.h"
 #include "utils.h"
 #include "vfile.h" // v_file_read — console input through fd 0
@@ -118,22 +120,21 @@ static int cmd_help(shell_t *sh, int argc, char **argv);
 static int cmd_clear(shell_t *sh, int argc, char **argv);
 static int cmd_version(shell_t *sh, int argc, char **argv);
 static int cmd_history(shell_t *sh, int argc, char **argv);
-#if VAIOS_MODULE_PERF && !VAIOS_MPU_USER_SEPARATION
+#if VAIOS_MODULE_PERF
 static int cmd_perf(shell_t *sh, int argc, char **argv);
 #endif
 
-/* In flash. `perf` dumps through the kernel's own print path, which writes the
-   kmsg ring in kernel memory -- from an unprivileged shell that is an MPU fault,
-   and a task's MPU fault is a kernel panic. Seen on the F401: fault address
-   kmsg_head, board halted. So under MPU separation it is not offered at all
-   until the stage-3 privileged helper can run it. */
+/* In flash. `perf` is privileged: it dumps through the kernel's own print path,
+   which writes the kmsg ring in kernel memory. Run from an unprivileged shell
+   that was an MPU fault at kmsg_head and -- a task's MPU fault being a kernel
+   panic -- a halted board; through the helper it is fine. */
 static const Command_t builtins[] = {
-    {cmd_help, "help", "list commands"},
-    {cmd_clear, "clear", "clear the screen"},
-    {cmd_version, "version", "kernel version and author"},
-    {cmd_history, "history", "recent command lines"},
-#if VAIOS_MODULE_PERF && !VAIOS_MPU_USER_SEPARATION
-    {cmd_perf, "perf", "[show|reset] kernel counters"},
+    {cmd_help, "help", "list commands", 0},
+    {cmd_clear, "clear", "clear the screen", 0},
+    {cmd_version, "version", "kernel version and author", 0},
+    {cmd_history, "history", "recent command lines", 0},
+#if VAIOS_MODULE_PERF
+    {cmd_perf, "perf", "[show|reset] kernel counters", SHELL_CMD_PRIV},
 #endif
 };
 static const int n_builtins = (int)(sizeof builtins / sizeof builtins[0]);
@@ -171,6 +172,7 @@ int shell_register_command(shell_t *sh, shell_fn_t fn, const char *name,
   sh->extra[sh->extra_count].fn = fn;
   sh->extra[sh->extra_count].name = name;
   sh->extra[sh->extra_count].help = help;
+  sh->extra[sh->extra_count].flags = 0; /* never privileged: see SHELL_CMD_PRIV */
   sh->extra_count++;
   return 0;
 }
@@ -377,7 +379,7 @@ static int cmd_history(shell_t *sh, int argc, char **argv) {
   return 0;
 }
 
-#if VAIOS_MODULE_PERF && !VAIOS_MPU_USER_SEPARATION
+#if VAIOS_MODULE_PERF
 /* `perf [show|reset|save <path>]`. No hand-rolled argument splitting: argv[1]
    is the subcommand and argv[2] is the path, because the shell tokenized. */
 static int cmd_perf(shell_t *sh, int argc, char **argv) {
@@ -428,6 +430,116 @@ void shell_init(shell_t *sh, const Command_t *cmds, int count) {
   sh->hist_pos = -1;
   sh->esc = 0;
   sh->prev_cr = 0;
+  sh->req_fd = sh->done_fd = -1;
+}
+
+/* --- privileged commands --------------------------------------------------
+ * Numbered across the two const tables, built-ins first. The number is all that
+ * crosses to the helper: it resolves it against its own copy of the same flash
+ * tables, so there is nothing for the shell to forge. */
+#if VAIOS_MPU_USER_SEPARATION
+static const Command_t *priv_nth(const Command_t *table, int count, int n) {
+  for (int i = 0; i < n_builtins; i++)
+    if ((builtins[i].flags & SHELL_CMD_PRIV) && n-- == 0)
+      return &builtins[i];
+  for (int i = 0; table && i < count; i++)
+    if ((table[i].flags & SHELL_CMD_PRIV) && n-- == 0)
+      return &table[i];
+  return NULL;
+}
+
+typedef struct {
+  int16_t index;          /* which privileged command */
+  char line[CMD_MAX_LEN]; /* the arguments, re-joined: a copy, not a pointer */
+} shell_req_t;
+
+static int priv_index(const shell_t *sh, const Command_t *c) {
+  const Command_t *p;
+  for (int n = 0; (p = priv_nth(sh->table, sh->table_count, n)) != NULL; n++)
+    if (p == c)
+      return n;
+  return -1;
+}
+
+static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
+  if (sh->req_fd < 0)
+    sh->req_fd = v_queue_open("shell.req", V_Q_WR);
+  if (sh->done_fd < 0)
+    sh->done_fd = v_queue_open("shell.done", V_Q_RD);
+  if (sh->req_fd < 0 || sh->done_fd < 0) {
+    v_printf("%s: needs the privileged helper (shell_helper_run)\r\n",
+             argv[0]);
+    return 1;
+  }
+  shell_req_t r;
+  r.index = (int16_t)priv_index(sh, c);
+  int n = 0;
+  for (int a = 0; a < argc; a++) {
+    if (a && n < CMD_MAX_LEN - 1)
+      r.line[n++] = ' ';
+    for (const char *p = argv[a]; *p && n < CMD_MAX_LEN - 1; p++)
+      r.line[n++] = *p;
+  }
+  r.line[n] = '\0';
+  int rc = 1;
+  if (v_queue_send(sh->req_fd, &r, V_WAIT_FOREVER) != VA_PASS ||
+      v_queue_recv(sh->done_fd, &rc, V_WAIT_FOREVER) != VA_PASS)
+    return 1;
+  return rc;
+}
+
+/* The helper's queues are kernel memory, which is fine: only it, privileged,
+   touches them directly; the shell reaches them through fds. One slot each --
+   the shell waits for every answer before it asks again. */
+static mpmc_queue_t _req_q, _done_q;
+static shell_req_t _req_buf[1];
+static int _done_buf[1];
+
+void shell_helper_run(void *args) {
+  const shell_config_t *cfg = (const shell_config_t *)args;
+  mpmc_init(&_req_q, _req_buf, 1, sizeof(shell_req_t));
+  mpmc_init(&_done_q, _done_buf, 1, sizeof(int));
+  v_queue_register("shell.req", &_req_q);
+  v_queue_register("shell.done", &_done_q);
+  int rfd = v_queue_open("shell.req", V_Q_RD);
+  int dfd = v_queue_open("shell.done", V_Q_WR);
+  for (;;) {
+    shell_req_t r;
+    if (v_queue_recv(rfd, &r, V_WAIT_FOREVER) != VA_PASS)
+      continue;
+    r.line[CMD_MAX_LEN - 1] = '\0'; /* our copy: terminate it ourselves */
+    const Command_t *c =
+        priv_nth(cfg ? cfg->cmds : NULL, cfg ? cfg->count : 0, r.index);
+    char *argv[SHELL_MAX_ARGV];
+    int argc = shell_tokenize(r.line, argv, SHELL_MAX_ARGV);
+    int rc = (c && argc > 0) ? c->fn(NULL, argc, argv) : 1;
+    v_queue_send(dfd, &rc, V_WAIT_FOREVER);
+  }
+}
+#endif /* VAIOS_MPU_USER_SEPARATION */
+
+int shell_exec(shell_t *sh, char *line) {
+  char *argv[SHELL_MAX_ARGV];
+  int argc = shell_tokenize(line, argv, SHELL_MAX_ARGV);
+  if (argc == 0)
+    return 0;
+  const Command_t *c = shell_find_command(sh, argv[0]);
+  if (!c) {
+    v_printf("%s: not found\r\n", argv[0]);
+    return -1;
+  }
+  int rc;
+  if (!(c->flags & SHELL_CMD_PRIV))
+    rc = c->fn(sh, argc, argv);
+#if VAIOS_MPU_USER_SEPARATION
+  else if (!v_port_is_privileged())
+    rc = via_helper(sh, c, argc, argv);
+#endif
+  else
+    rc = c->fn(NULL, argc, argv); /* privileged already: run it here */
+  if (rc != 0)
+    v_printf("%s: exit %d\r\n", argv[0], rc);
+  return rc;
 }
 
 void shell_run(void *args) {
@@ -437,7 +549,6 @@ void shell_run(void *args) {
   shell_t sh;
   shell_init(&sh, cfg ? cfg->cmds : NULL, cfg ? cfg->count : 0);
   char line[CMD_MAX_LEN];
-  char *argv[SHELL_MAX_ARGV];
   v_printf("\r\n" SHELL_PROMPT);
   for (;;) {
     if (!shell_poll(&sh, line, (int)sizeof line)) {
@@ -448,17 +559,7 @@ void shell_run(void *args) {
       (void)v_file_wait(0, V_WAIT_FOREVER);
       continue;
     }
-    int argc = shell_tokenize(line, argv, SHELL_MAX_ARGV);
-    if (argc > 0) {
-      const Command_t *c = shell_find_command(&sh, argv[0]);
-      if (c) {
-        int rc = c->fn(&sh, argc, argv);
-        if (rc != 0)
-          v_printf("%s: exit %d\r\n", argv[0], rc);
-      } else {
-        v_printf("%s: not found\r\n", argv[0]);
-      }
-    }
+    (void)shell_exec(&sh, line);
     v_printf(SHELL_PROMPT);
   }
 }
