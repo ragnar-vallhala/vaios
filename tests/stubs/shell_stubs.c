@@ -14,6 +14,7 @@
 #include "task.h"
 #include "vfile.h"
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 
@@ -40,10 +41,32 @@ int v_kmsg_read(char *out, uint32_t len) {
 /* Counts prompts printed, which is the one piece of output a test needs: a
    CRLF terminal must get one prompt per line, not two. */
 int g_stub_prompts;
+char g_stub_last_prompt[80]; /* the last prompt, as it would print */
+/* Everything printed, formatted by libc's vsnprintf -- the same result as the
+   kernel formatter for what the shell uses (%d %s %02d %%) -- so a test can
+   check what a command said. stub_out_reset() between checks. */
+char g_stub_out[4096];
+int g_stub_out_len;
+void stub_out_reset(void) {
+  g_stub_out_len = 0;
+  g_stub_out[0] = '\0';
+}
 int v_printf(const char *fmt, ...) {
-  if (strstr(fmt, "vaios> "))
+  va_list ap;
+  if (strcmp(fmt, "vsh%s%s> ") == 0) { /* SHELL_PROMPT_FMT */
+    va_start(ap, fmt);
+    const char *a = va_arg(ap, const char *), *b = va_arg(ap, const char *);
+    va_end(ap);
+    snprintf(g_stub_last_prompt, sizeof g_stub_last_prompt, "vsh%s%s> ", a, b);
     g_stub_prompts++;
-  return 0;
+  }
+  va_start(ap, fmt);
+  int room = (int)sizeof g_stub_out - g_stub_out_len;
+  int n = vsnprintf(g_stub_out + g_stub_out_len, (size_t)room, fmt, ap);
+  va_end(ap);
+  if (n > 0)
+    g_stub_out_len += n < room ? n : room - 1;
+  return n;
 }
 
 /* kernel/shell.c's perf command is compiled out here (VAIOS_MODULE_PERF=0), and
@@ -94,19 +117,62 @@ void v_banner_print(void (*put)(const char *line), uint32_t cpu_hz,
 }
 uint32_t v_get_ticks(void) { return 0; }
 
-/* ps formats its numbers; nothing here reads the result, so a blank one does. */
+/* The shell formats numbers with it (ps, the banner); libc does the same. */
 int print_fmt_buf(char *out, uint32_t out_size, const char *fmt, ...) {
-  (void)fmt;
-  if (out_size)
-    out[0] = '\0';
-  return 0;
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(out, out_size, fmt, ap);
+  va_end(ap);
+  return n;
 }
 
-/* A fake card for cd/pwd/mkdir/ls: these directories exist, nothing else. */
+/* A fake card: three directories that exist, and a handful of files held in
+   memory, enough for the file commands to read, write, seek and remove. */
 #include "vfs.h"
-#include <string.h>
+#include "ipc.h" /* VA_PASS */
 static const char *const _dirs[] = {"0:/", "0:/LOGS", "0:/LOGS/A"};
 char g_stub_mkdir_path[64];
+
+typedef struct {
+  char path[64];
+  char data[700];
+  int len, used;
+} sfile_t;
+static sfile_t _files[6];
+static struct {
+  int file, pos, used;
+} _fds[4];
+
+void stub_fs_reset(void) {
+  memset(_files, 0, sizeof _files);
+  memset(_fds, 0, sizeof _fds);
+}
+static sfile_t *ffind(const char *path) {
+  for (int i = 0; i < 6; i++)
+    if (_files[i].used && strcmp(_files[i].path, path) == 0)
+      return &_files[i];
+  return NULL;
+}
+void stub_fs_put(const char *path, const char *data, int len) {
+  sfile_t *f = ffind(path);
+  for (int i = 0; !f && i < 6; i++)
+    if (!_files[i].used)
+      f = &_files[i];
+  if (!f)
+    return; /* the fake card is full */
+  strncpy(f->path, path, sizeof f->path - 1);
+  memcpy(f->data, data, (size_t)len);
+  f->len = len;
+  f->used = 1;
+}
+const char *stub_fs_get(const char *path, int *len) {
+  sfile_t *f = ffind(path);
+  if (!f)
+    return NULL;
+  *len = f->len;
+  return f->data;
+}
+
 int v_vfs_diropen(const char *path, uint32_t ticks) {
   (void)ticks;
   for (unsigned i = 0; i < sizeof _dirs / sizeof _dirs[0]; i++)
@@ -120,26 +186,93 @@ int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks) {
   (void)ticks;
   return 0;
 }
-int v_vfs_close(int fd, uint32_t ticks) {
-  (void)fd;
-  (void)ticks;
-  return 0;
-}
 int v_vfs_open(const char *path, int flags, uint32_t ticks) {
-  (void)path;
-  (void)flags;
   (void)ticks;
-  return -4; /* FR_NO_FILE */
+  sfile_t *f = ffind(path);
+  if (!f && !(flags & VFS_O_CREAT))
+    return -4; /* FR_NO_FILE */
+  if (!f) {
+    stub_fs_put(path, "", 0);
+    f = ffind(path);
+    if (!f)
+      return -16; /* full */
+  }
+  if (flags & VFS_O_TRUNC)
+    f->len = 0;
+  for (int i = 0; i < 4; i++)
+    if (!_fds[i].used) {
+      _fds[i].used = 1;
+      _fds[i].file = (int)(f - _files);
+      _fds[i].pos = (flags & VFS_O_APPEND) ? f->len : 0;
+      return 10 + i;
+    }
+  return -16;
+}
+int v_vfs_close(int fd, uint32_t ticks) {
+  (void)ticks;
+  if (fd >= 10 && fd < 14)
+    _fds[fd - 10].used = 0;
+  return 0;
 }
 int v_vfs_read(int fd, void *buf, uint32_t len, uint32_t ticks) {
-  (void)fd;
-  (void)buf;
-  (void)len;
   (void)ticks;
+  sfile_t *f = &_files[_fds[fd - 10].file];
+  int *pos = &_fds[fd - 10].pos;
+  int n = f->len - *pos < (int)len ? f->len - *pos : (int)len;
+  memcpy(buf, f->data + *pos, (size_t)n);
+  *pos += n;
+  return n;
+}
+int v_vfs_write(int fd, const void *buf, uint32_t len, uint32_t ticks) {
+  (void)ticks;
+  sfile_t *f = &_files[_fds[fd - 10].file];
+  int *pos = &_fds[fd - 10].pos;
+  memcpy(f->data + *pos, buf, len);
+  *pos += (int)len;
+  if (*pos > f->len)
+    f->len = *pos;
+  return (int)len;
+}
+long v_vfs_seek(int fd, long off, int whence, uint32_t ticks) {
+  (void)whence;
+  (void)ticks;
+  _fds[fd - 10].pos = (int)off;
+  return off;
+}
+long v_vfs_size(int fd, uint32_t ticks) {
+  (void)ticks;
+  return _files[_fds[fd - 10].file].len;
+}
+int v_vfs_remove(const char *path, uint32_t ticks) {
+  (void)ticks;
+  sfile_t *f = ffind(path);
+  if (!f)
+    return -4;
+  f->used = 0;
   return 0;
+}
+int v_vfs_info(const char *path, vfs_stat_t *st, uint32_t ticks) {
+  (void)ticks;
+  memset(st, 0, sizeof *st);
+  sfile_t *f = ffind(path);
+  if (f) {
+    st->exists = 1;
+    st->size = (uint32_t)f->len;
+    /* 2026-10-03 14:05: (46 << 9 | 10 << 5 | 3) << 16 | (14 << 11 | 5 << 5) */
+    st->mtime = ((46u << 9 | 10u << 5 | 3u) << 16) | (14u << 11 | 5u << 5);
+    return 0;
+  }
+  if (v_vfs_diropen(path, 0) > 0) {
+    st->exists = st->is_dir = 1;
+    return 0;
+  }
+  return -4;
 }
 int v_vfs_makedir(const char *path, uint32_t ticks) {
   (void)ticks;
   strncpy(g_stub_mkdir_path, path, sizeof g_stub_mkdir_path - 1);
   return 0;
 }
+
+/* kill: pid 5 is this shell's child, pid 2 is not. */
+int v_task_kill(uint32_t id) { return id == 5 ? VA_PASS : id == 2 ? V_TASK_EPERM : V_TASK_EINVAL; }

@@ -52,7 +52,10 @@
   v_log(SHELL_LOG_LEVEL, "[SHELL] " fmt, ##__VA_ARGS__)
 #endif
 
-#define SHELL_PROMPT "vaios> "
+/* The prompt: the shell's name, vsh, and -- with a filesystem -- where it is.
+   "vsh:/logs> ". The format is a constant so the tests can find a prompt among
+   everything else printed. */
+#define SHELL_PROMPT_FMT "vsh%s%s> "
 
 /* --- input staging ---------------------------------------------------------
  * A plain byte ring, not the kernel's general-purpose FIFO. It was that FIFO while
@@ -125,6 +128,75 @@ static void sh_banner(void) {
   v_printf("\r\n");
 }
 
+#if VAIOS_MODULE_VFS
+/* A path as a person reads it: the drive prefix FatFs needs ("0:") is not
+   shown for the first drive, the only one there usually is. */
+static const char *sh_display_path(const char *p) {
+  return (p[0] == '0' && p[1] == ':') ? p + 2 : p;
+}
+#endif
+
+static void sh_prompt(const shell_t *sh) {
+#if VAIOS_MODULE_VFS
+  v_printf(SHELL_PROMPT_FMT, ":", sh_display_path(sh->cwd));
+#else
+  (void)sh;
+  v_printf(SHELL_PROMPT_FMT, "", "");
+#endif
+}
+
+/* --- ^C while a command runs ----------------------------------------------
+ * Cooperative, as a tty's is: a command that can run long (cat, hexdump, cp,
+ * bus sub) calls shell_interrupted between chunks. A ^C stops it, and -- as a
+ * tty flushes on interrupt -- drops whatever was typed ahead with it; anything
+ * else that arrived stays queued for the editor. A command that loops without
+ * asking still cannot be stopped: those spawn a task (see `spin`). sh may be
+ * NULL for a privileged command in the helper, which has no editor to keep
+ * input for. */
+int shell_interrupted(shell_t *sh) {
+  char rx[16];
+  int n, hit = 0;
+  while ((n = v_file_read(0, rx, (uint32_t)sizeof rx)) > 0)
+    for (int i = 0; i < n; i++) {
+      if (rx[i] == 0x03)
+        hit = 1;
+      else if (sh && !hit)
+        shell_feed(sh, rx[i]);
+    }
+  if (hit) {
+    if (sh)
+      sh->in_head = sh->in_tail = 0;
+    v_printf("^C\r\n");
+  }
+  return hit;
+}
+
+/* A number from a command line: decimal, or hex with 0x. -1 if it is not one. */
+static long sh_num(const char *s) {
+  long v = 0;
+  int base = 10;
+  if (!s || !*s)
+    return -1;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+    base = 16;
+    s += 2;
+    if (!*s)
+      return -1;
+  }
+  for (; *s; s++) {
+    int d = (*s >= '0' && *s <= '9')   ? *s - '0'
+            : (*s >= 'a' && *s <= 'f') ? *s - 'a' + 10
+            : (*s >= 'A' && *s <= 'F') ? *s - 'A' + 10
+                                       : 99;
+    if (d >= base)
+      return -1;
+    v = v * base + d;
+    if (v > 0x7FFFFFFFL)
+      return -1;
+  }
+  return v;
+}
+
 /* --- tokenizing ----------------------------------------------------------- */
 
 int shell_tokenize(char *line, char **argv, int max_argv) {
@@ -158,6 +230,8 @@ static int cmd_perf(shell_t *sh, int argc, char **argv);
 #endif
 static int cmd_ps(shell_t *sh, int argc, char **argv);
 static int cmd_heap(shell_t *sh, int argc, char **argv);
+static int cmd_uptime(shell_t *sh, int argc, char **argv);
+static int cmd_kill(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_BUS
 static int cmd_bus(shell_t *sh, int argc, char **argv);
 #endif
@@ -167,6 +241,14 @@ static int cmd_cat(shell_t *sh, int argc, char **argv);
 static int cmd_cd(shell_t *sh, int argc, char **argv);
 static int cmd_pwd(shell_t *sh, int argc, char **argv);
 static int cmd_mkdir(shell_t *sh, int argc, char **argv);
+static int cmd_rm(shell_t *sh, int argc, char **argv);
+static int cmd_stat(shell_t *sh, int argc, char **argv);
+static int cmd_head(shell_t *sh, int argc, char **argv);
+static int cmd_tail(shell_t *sh, int argc, char **argv);
+static int cmd_hexdump(shell_t *sh, int argc, char **argv);
+static int cmd_touch(shell_t *sh, int argc, char **argv);
+static int cmd_write(shell_t *sh, int argc, char **argv);
+static int cmd_cp(shell_t *sh, int argc, char **argv);
 #endif
 
 /* In flash. `perf` is privileged: it dumps through the kernel's own print path,
@@ -184,8 +266,11 @@ static const Command_t builtins[] = {
 #endif
     {cmd_ps, "ps", "tasks", SHELL_CMD_PRIV},
     {cmd_heap, "heap", "kernel heap in use", SHELL_CMD_PRIV},
+    {cmd_uptime, "uptime", "time since boot", 0},
+    {cmd_kill, "kill", "<pid> end a task this shell started", 0},
 #if VAIOS_MODULE_BUS
-    {cmd_bus, "bus", "topics and their counters", SHELL_CMD_PRIV},
+    {cmd_bus, "bus", "[sub <topic> [n] | pub <topic> <text>] topics",
+     SHELL_CMD_PRIV},
 #endif
 #if VAIOS_MODULE_VFS
     /* Not privileged: the task file API goes through the VFS worker. */
@@ -194,6 +279,14 @@ static const Command_t builtins[] = {
     {cmd_cd, "cd", "[dir] change directory (default: the card's root)", 0},
     {cmd_pwd, "pwd", "where you are", 0},
     {cmd_mkdir, "mkdir", "<dir> make a directory", 0},
+    {cmd_rm, "rm", "<path> remove a file or an empty directory", 0},
+    {cmd_stat, "stat", "<path> size, type and modified time", 0},
+    {cmd_head, "head", "[-n N] <file> the first N lines (10)", 0},
+    {cmd_tail, "tail", "[-n N] <file> the last N lines (10)", 0},
+    {cmd_hexdump, "hexdump", "<file> [offset] [len] bytes as hex (256)", 0},
+    {cmd_touch, "touch", "<file> create it if it is not there", 0},
+    {cmd_write, "write", "<file> <text...> append a line", 0},
+    {cmd_cp, "cp", "<src> <dst> copy a file", 0},
 #endif
 };
 static const int n_builtins = (int)(sizeof builtins / sizeof builtins[0]);
@@ -344,7 +437,8 @@ int shell_poll(shell_t *sh, char *out, int cap) {
     }
 
     if (c == 0x03) { /* ^C: abandon the line */
-      v_printf("^C\r\n" SHELL_PROMPT);
+      v_printf("^C\r\n");
+      sh_prompt(sh);
       sh->len = 0;
       sh->line[0] = '\0';
       sh->hist_pos = -1;
@@ -357,14 +451,17 @@ int shell_poll(shell_t *sh, char *out, int cap) {
          already typed. ^E typed by hand asks the same. */
       v_printf("\r\n");
       sh_banner();
-      v_printf(SHELL_PROMPT "%s", sh->line);
+      sh_prompt(sh);
+      v_printf("%s", sh->line);
       continue;
     }
 
     if (c == 0x0C) { /* ^L: redraw */
       /* A fresh prompt with the line so far, not readline's clear-screen:
          `clear` clears. */
-      v_printf("\r\n" SHELL_PROMPT "%s", sh->line);
+      v_printf("\r\n");
+      sh_prompt(sh);
+      v_printf("%s", sh->line);
       continue;
     }
 
@@ -385,7 +482,7 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       v_printf("\r\n");
       sh->line[sh->len] = '\0';
       if (sh->len == 0) {
-        v_printf(SHELL_PROMPT);
+        sh_prompt(sh);
         sh->hist_pos = -1;
         continue;
       }
@@ -586,11 +683,116 @@ static int cmd_heap(shell_t *sh, int argc, char **argv) {
   return 0;
 }
 
-#if VAIOS_MODULE_BUS
-static int cmd_bus(shell_t *sh, int argc, char **argv) {
+static int cmd_uptime(shell_t *sh, int argc, char **argv) {
   (void)sh;
   (void)argc;
   (void)argv;
+  uint32_t t = (uint32_t)((uint64_t)v_get_ticks() * TICK_PERIOD_US / 1000000u);
+  if (t >= 86400u)
+    v_printf("up %dd %dh %dm %ds\r\n", (int)(t / 86400u), (int)(t / 3600u % 24u),
+             (int)(t / 60u % 60u), (int)(t % 60u));
+  else
+    v_printf("up %dh %dm %ds\r\n", (int)(t / 3600u), (int)(t / 60u % 60u),
+             (int)(t % 60u));
+  return 0;
+}
+
+/* The kernel lets a task end only the tasks it spawned -- the right limit for
+   a shell, which is not every task's owner -- and says which refusal it was. */
+static int cmd_kill(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  long pid = argc > 1 ? sh_num(argv[1]) : -1;
+  if (pid <= 0) {
+    v_printf("usage: kill <pid>\r\n");
+    return 1;
+  }
+  int rc = v_task_kill((uint32_t)pid);
+  if (rc == VA_PASS)
+    return 0;
+  v_printf(rc == V_TASK_EPERM ? "kill: %d: not started by this shell\r\n"
+                              : "kill: %d: no such task\r\n",
+           (int)pid);
+  return 1;
+}
+
+#if VAIOS_MODULE_BUS
+static int bus_sub(shell_t *sh, const char *topic, long count) {
+  int fd = v_bus_open(topic, V_BUS_RD);
+  if (fd < 0) {
+    v_printf("bus: %s: no such topic\r\n", topic);
+    return 1;
+  }
+  uint8_t buf[64];
+  int rc = 0;
+  for (long got = 0; got < count;) {
+    v_bus_rx_t rx = {buf, sizeof buf, 0, 0};
+    int r = v_bus_recv_wait(fd, &rx, MS_TO_TICKS(100));
+    if (shell_interrupted(sh)) {
+      rc = SHELL_INTERRUPTED;
+      break;
+    }
+    if (r == V_BUS_EMSGSIZE) {
+      v_printf("  (a message larger than %d bytes)\r\n", (int)sizeof buf);
+      got++;
+      continue;
+    }
+    if (r != VA_PASS)
+      continue; /* nothing within 100 ms: ask about ^C again */
+    if (rx.missed)
+      v_printf("  (%d missed)\r\n", (int)rx.missed);
+    int text = 1;
+    for (int k = 0; k < rx.len; k++)
+      if (buf[k] < 0x20 || buf[k] > 0x7E)
+        text = 0;
+    char line[3 * sizeof buf + 8];
+    int o = 0;
+    for (int k = 0; k < rx.len; k++) {
+      if (text) {
+        line[o++] = (char)buf[k];
+      } else {
+        static const char hx[] = "0123456789abcdef";
+        line[o++] = hx[buf[k] >> 4];
+        line[o++] = hx[buf[k] & 15];
+        line[o++] = ' ';
+      }
+    }
+    line[o] = '\0';
+    v_printf("  [%d] %s\r\n", (int)rx.len, line);
+    got++;
+  }
+  v_file_close(fd);
+  return rc;
+}
+
+static int cmd_bus(shell_t *sh, int argc, char **argv) {
+  if (argc >= 3 && v_strcmp(argv[1], "sub") == 0)
+    return bus_sub(sh, argv[2], argc > 3 ? sh_num(argv[3]) : 10);
+  if (argc >= 4 && v_strcmp(argv[1], "pub") == 0) {
+    int fd = v_bus_open(argv[2], V_BUS_WR);
+    if (fd < 0) {
+      v_printf("bus: %s: no such topic\r\n", argv[2]);
+      return 1;
+    }
+    char msg[CMD_MAX_LEN];
+    int o = 0;
+    for (int a = 3; a < argc; a++) {
+      if (a > 3 && o < (int)sizeof msg - 1)
+        msg[o++] = ' ';
+      for (const char *q = argv[a]; *q && o < (int)sizeof msg - 1; q++)
+        msg[o++] = *q;
+    }
+    int r = v_bus_send(fd, msg, (uint16_t)o);
+    v_file_close(fd);
+    if (r != VA_PASS) {
+      v_printf("bus: %s: not published (%d)\r\n", argv[2], r);
+      return 1;
+    }
+    return 0;
+  }
+  if (argc > 1) {
+    v_printf("usage: bus [sub <topic> [n] | pub <topic> <text>]\r\n");
+    return 1;
+  }
   const v_bus_topic_t *t;
   int i = 0;
   for (; (t = v_bus_topic_nth(i)) != NULL; i++) {
@@ -725,6 +927,10 @@ static int cmd_cat(shell_t *sh, int argc, char **argv) {
   while ((n = v_vfs_read(fd, buf, sizeof buf - 1, SHELL_IO_TICKS)) > 0) {
     buf[n] = '\0'; /* text: an embedded NUL ends the chunk early */
     v_printf("%s", buf);
+    if (shell_interrupted(sh)) {
+      v_vfs_close(fd, SHELL_IO_TICKS);
+      return SHELL_INTERRUPTED;
+    }
   }
   v_vfs_close(fd, SHELL_IO_TICKS);
   v_printf("\r\n");
@@ -749,7 +955,7 @@ static int cmd_cd(shell_t *sh, int argc, char **argv) {
 static int cmd_pwd(shell_t *sh, int argc, char **argv) {
   (void)argc;
   (void)argv;
-  v_printf("%s\r\n", sh->cwd);
+  v_printf("%s\r\n", sh_display_path(sh->cwd));
   return 0;
 }
 
@@ -767,6 +973,279 @@ static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
     return 1;
   }
   return 0;
+}
+
+/* Open argv's file through the working directory, or say why not. */
+static int sh_open(shell_t *sh, const char *cmd, const char *arg, int flags) {
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, cmd, arg, path, sizeof path))
+    return -1;
+  int fd = v_vfs_open(path, flags, SHELL_IO_TICKS);
+  if (fd < 0)
+    v_printf("%s: %s: error %d\r\n", cmd, sh_display_path(path), fd);
+  return fd;
+}
+
+/* "-n N" before the file, for head and tail. The index of the file argument,
+   or 0 when the line is not usable. */
+static int opt_n(int argc, char **argv, long *n) {
+  *n = 10;
+  int a = 1;
+  if (a < argc && v_strcmp(argv[a], "-n") == 0) {
+    *n = a + 1 < argc ? sh_num(argv[a + 1]) : -1;
+    a += 2;
+  }
+  return (*n >= 0 && a < argc) ? a : 0;
+}
+
+static int cmd_rm(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: rm <path>\r\n");
+    return 1;
+  }
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "rm", argv[1], path, sizeof path))
+    return 1;
+  int rc = v_vfs_remove(path, SHELL_IO_TICKS);
+  if (rc < 0) {
+    /* FatFs refuses a directory that still has something in it */
+    v_printf("rm: %s: error %d (a directory must be empty)\r\n",
+             sh_display_path(path), rc);
+    return 1;
+  }
+  return 0;
+}
+
+static int cmd_stat(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: stat <path>\r\n");
+    return 1;
+  }
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "stat", argv[1], path, sizeof path))
+    return 1;
+  vfs_stat_t st;
+  int rc = v_vfs_info(path, &st, SHELL_IO_TICKS);
+  if (rc < 0 || !st.exists) {
+    v_printf("stat: %s: no such file or directory\r\n", sh_display_path(path));
+    return 1;
+  }
+  /* FAT packs the date and time: (fdate << 16) | ftime, fdate = year-1980:7
+     month:4 day:5, ftime = hour:5 minute:6 second/2:5. */
+  uint32_t d = st.mtime >> 16, t = st.mtime & 0xFFFFu;
+  v_printf("  path      %s\r\n", sh_display_path(path));
+  v_printf("  type      %s\r\n", st.is_dir ? "directory" : "file");
+  if (!st.is_dir)
+    v_printf("  size      %d bytes\r\n", (int)st.size);
+  if (d)
+    v_printf("  modified  %d-%02d-%02d %02d:%02d\r\n", (int)(1980u + (d >> 9)),
+             (int)(d >> 5 & 15u), (int)(d & 31u), (int)(t >> 11),
+             (int)(t >> 5 & 63u));
+  return 0;
+}
+
+static int cmd_head(shell_t *sh, int argc, char **argv) {
+  long want;
+  int a = opt_n(argc, argv, &want);
+  if (!a) {
+    v_printf("usage: head [-n N] <file>\r\n");
+    return 1;
+  }
+  int fd = sh_open(sh, "head", argv[a], VFS_O_RDONLY);
+  if (fd < 0)
+    return 1;
+  char buf[65];
+  int n, rc = 0;
+  long lines = 0;
+  while (lines < want && (n = v_vfs_read(fd, buf, sizeof buf - 1,
+                                         SHELL_IO_TICKS)) > 0) {
+    int k = 0;
+    while (k < n && lines < want)
+      if (buf[k++] == '\n')
+        lines++;
+    buf[k] = '\0'; /* up to and including the last wanted newline */
+    v_printf("%s", buf);
+    if (shell_interrupted(sh)) {
+      rc = SHELL_INTERRUPTED;
+      break;
+    }
+  }
+  v_vfs_close(fd, SHELL_IO_TICKS);
+  return rc;
+}
+
+/* The last N lines, from the file's final TAIL_SPAN bytes.
+   ponytail: one fixed window -- N lines longer than that in total come out
+   short; read back block by block if that ever matters. */
+#define TAIL_SPAN 512
+static int cmd_tail(shell_t *sh, int argc, char **argv) {
+  long want;
+  int a = opt_n(argc, argv, &want);
+  if (!a) {
+    v_printf("usage: tail [-n N] <file>\r\n");
+    return 1;
+  }
+  int fd = sh_open(sh, "tail", argv[a], VFS_O_RDONLY);
+  if (fd < 0)
+    return 1;
+  long size = v_vfs_size(fd, SHELL_IO_TICKS);
+  long from = size > TAIL_SPAN ? size - TAIL_SPAN : 0;
+  char buf[TAIL_SPAN + 1];
+  int n = 0;
+  if (size > 0 && v_vfs_seek(fd, from, VFS_SEEK_SET, SHELL_IO_TICKS) >= 0)
+    n = v_vfs_read(fd, buf, TAIL_SPAN, SHELL_IO_TICKS);
+  v_vfs_close(fd, SHELL_IO_TICKS);
+  if (n <= 0)
+    return n < 0 ? 1 : 0;
+  int k = n;
+  if (buf[k - 1] == '\n')
+    k--; /* a final newline ends the last line, it does not start one */
+  long lines = 0;
+  while (k > 0 && !(buf[k - 1] == '\n' && ++lines == want))
+    k--;
+  if (want == 0)
+    k = n;
+  buf[n] = '\0';
+  v_printf("%s", buf + k);
+  return 0;
+}
+
+/* Offset, sixteen bytes in hex, the same as text: hexdump -C's layout. */
+static int cmd_hexdump(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: hexdump <file> [offset] [len]\r\n");
+    return 1;
+  }
+  long off = argc > 2 ? sh_num(argv[2]) : 0;
+  long len = argc > 3 ? sh_num(argv[3]) : 256;
+  if (off < 0 || len < 0) {
+    v_printf("hexdump: offset and len are numbers (0x for hex)\r\n");
+    return 1;
+  }
+  int fd = sh_open(sh, "hexdump", argv[1], VFS_O_RDONLY);
+  if (fd < 0)
+    return 1;
+  int rc = 0;
+  if (off && v_vfs_seek(fd, off, VFS_SEEK_SET, SHELL_IO_TICKS) < 0)
+    rc = 1;
+  static const char hx[] = "0123456789abcdef";
+  uint8_t b[16];
+  while (!rc && len > 0) {
+    int n = v_vfs_read(fd, b, len < 16 ? (uint32_t)len : 16u, SHELL_IO_TICKS);
+    if (n <= 0)
+      break;
+    char row[80];
+    int o = 0;
+    for (int sft = 28; sft >= 0; sft -= 4)
+      row[o++] = hx[((uint32_t)off >> sft) & 15u];
+    row[o++] = ' ';
+    for (int k = 0; k < 16; k++) {
+      row[o++] = ' ';
+      if (k == 8)
+        row[o++] = ' '; /* a gap between the two halves */
+      row[o++] = k < n ? hx[b[k] >> 4] : ' ';
+      row[o++] = k < n ? hx[b[k] & 15] : ' ';
+    }
+    row[o++] = ' ';
+    row[o++] = ' ';
+    row[o++] = '|';
+    for (int k = 0; k < n; k++)
+      row[o++] = (b[k] >= 0x20 && b[k] < 0x7F) ? (char)b[k] : '.';
+    row[o++] = '|';
+    row[o] = '\0';
+    v_printf("%s\r\n", row);
+    off += n;
+    len -= n;
+    if (shell_interrupted(sh))
+      rc = SHELL_INTERRUPTED;
+  }
+  v_vfs_close(fd, SHELL_IO_TICKS);
+  return rc;
+}
+
+static int cmd_touch(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: touch <file>\r\n");
+    return 1;
+  }
+  int fd = sh_open(sh, "touch", argv[1], VFS_O_WRONLY | VFS_O_CREAT);
+  if (fd < 0)
+    return 1;
+  v_vfs_close(fd, SHELL_IO_TICKS);
+  return 0;
+}
+
+/* Append argv[2..] as one line. Until there is > redirection. */
+static int cmd_write(shell_t *sh, int argc, char **argv) {
+  if (argc < 3) {
+    v_printf("usage: write <file> <text...>\r\n");
+    return 1;
+  }
+  int fd = sh_open(sh, "write", argv[1],
+                   VFS_O_WRONLY | VFS_O_CREAT | VFS_O_APPEND);
+  if (fd < 0)
+    return 1;
+  char line[CMD_MAX_LEN + 1];
+  int o = 0;
+  for (int a = 2; a < argc; a++) {
+    if (a > 2 && o < CMD_MAX_LEN)
+      line[o++] = ' ';
+    for (const char *q = argv[a]; *q && o < CMD_MAX_LEN; q++)
+      line[o++] = *q;
+  }
+  line[o++] = '\n';
+  int w = v_vfs_write(fd, line, (uint32_t)o, SHELL_IO_TICKS);
+  v_vfs_close(fd, SHELL_IO_TICKS);
+  if (w != o) {
+    v_printf("write: error %d\r\n", w);
+    return 1;
+  }
+  return 0;
+}
+
+static int cmd_cp(shell_t *sh, int argc, char **argv) {
+  if (argc < 3) {
+    v_printf("usage: cp <src> <dst>\r\n");
+    return 1;
+  }
+  char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "cp", argv[1], src, sizeof src) ||
+      sh_arg_path(sh, "cp", argv[2], dst, sizeof dst))
+    return 1;
+  if (v_strcmp(src, dst) == 0) {
+    v_printf("cp: %s and %s are the same file\r\n", argv[1], argv[2]);
+    return 1;
+  }
+  int in = v_vfs_open(src, VFS_O_RDONLY, SHELL_IO_TICKS);
+  if (in < 0) {
+    v_printf("cp: %s: error %d\r\n", sh_display_path(src), in);
+    return 1;
+  }
+  int out = v_vfs_open(dst, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC,
+                       SHELL_IO_TICKS);
+  if (out < 0) {
+    v_vfs_close(in, SHELL_IO_TICKS);
+    v_printf("cp: %s: error %d\r\n", sh_display_path(dst), out);
+    return 1;
+  }
+  uint8_t buf[128];
+  int n, rc = 0;
+  while ((n = v_vfs_read(in, buf, sizeof buf, SHELL_IO_TICKS)) > 0) {
+    if (v_vfs_write(out, buf, (uint32_t)n, SHELL_IO_TICKS) != n) {
+      v_printf("cp: %s: write failed\r\n", sh_display_path(dst));
+      rc = 1;
+      break;
+    }
+    if (shell_interrupted(sh)) {
+      rc = SHELL_INTERRUPTED;
+      break;
+    }
+  }
+  if (n < 0)
+    rc = 1;
+  v_vfs_close(out, SHELL_IO_TICKS);
+  v_vfs_close(in, SHELL_IO_TICKS);
+  return rc;
 }
 #endif
 
@@ -896,7 +1375,7 @@ int shell_exec(shell_t *sh, char *line) {
 #endif
   else
     rc = c->fn(NULL, argc, argv); /* privileged already: run it here */
-  if (rc != 0)
+  if (rc != 0 && rc != SHELL_INTERRUPTED)
     v_printf("%s: exit %d\r\n", argv[0], rc);
   return rc;
 }
@@ -908,7 +1387,8 @@ void shell_run(void *args) {
   shell_t sh;
   shell_init(&sh, cfg ? cfg->cmds : NULL, cfg ? cfg->count : 0);
   char line[CMD_MAX_LEN];
-  v_printf("\r\n" SHELL_PROMPT);
+  v_printf("\r\n");
+  sh_prompt(&sh);
   for (;;) {
     if (!shell_poll(&sh, line, (int)sizeof line)) {
       /* Everything that arrived has been edited and no line is complete:
@@ -919,6 +1399,6 @@ void shell_run(void *args) {
       continue;
     }
     (void)shell_exec(&sh, line);
-    v_printf(SHELL_PROMPT);
+    sh_prompt(&sh);
   }
 }

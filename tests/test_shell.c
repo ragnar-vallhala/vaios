@@ -14,6 +14,7 @@
  * there are none left.
  */
 #include "framework.h"
+#include <string.h>
 #include "shell.h"
 #include "utils.h" /* v_strcmp, v_strlen */
 #include "task.h"  /* V_WAIT_FOREVER, MS_TO_TICKS */
@@ -249,6 +250,20 @@ static void test_cd_and_paths(void) {
   TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
 }
 
+/* The prompt is vsh's and carries where it is, without FatFs's "0:". */
+extern char g_stub_last_prompt[80];
+static void test_prompt_shows_cwd(void) {
+  shell_reset();
+  char out[CMD_MAX_LEN];
+  feed("\n");
+  shell_poll(&g_sh, out, sizeof out);
+  TEST_ASSERT_EQ(v_strcmp(g_stub_last_prompt, "vsh:/> "), 0);
+  cd_to("LOGS");
+  feed("\n");
+  shell_poll(&g_sh, out, sizeof out);
+  TEST_ASSERT_EQ(v_strcmp(g_stub_last_prompt, "vsh:/LOGS> "), 0);
+}
+
 /* mkdir resolves against the working directory too. */
 extern char g_stub_mkdir_path[64];
 static void test_mkdir_is_relative(void) {
@@ -260,6 +275,126 @@ static void test_mkdir_is_relative(void) {
   char l2[] = "mkdir /top";
   TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 0);
   TEST_ASSERT_EQ(v_strcmp(g_stub_mkdir_path, "0:/top"), 0);
+}
+
+/* --- the file commands, over the fake card (shell_stubs.c) ---------------- */
+extern char g_stub_out[4096];
+void stub_out_reset(void);
+void stub_fs_reset(void);
+void stub_fs_put(const char *path, const char *data, int len);
+const char *stub_fs_get(const char *path, int *len);
+
+static int run(const char *line) {
+  char l[CMD_MAX_LEN];
+  sh_copy_test(l, line);
+  stub_out_reset();
+  return shell_exec(&g_sh, l);
+}
+static void put(const char *path, const char *text) {
+  stub_fs_put(path, text, (int)v_strlen(text));
+}
+static int out_is(const char *want) { return v_strcmp(g_stub_out, want) == 0; }
+
+static void test_head_and_tail(void) {
+  shell_reset();
+  stub_fs_reset();
+  put("0:/f.txt", "one\ntwo\nthree\nfour\n");
+  TEST_ASSERT_EQ(run("head -n 2 f.txt"), 0);
+  TEST_ASSERT(out_is("one\ntwo\n"));
+  TEST_ASSERT_EQ(run("tail -n 2 f.txt"), 0);
+  TEST_ASSERT(out_is("three\nfour\n"));
+  TEST_ASSERT_EQ(run("tail f.txt"), 0); /* fewer lines than 10: all of them */
+  TEST_ASSERT(out_is("one\ntwo\nthree\nfour\n"));
+  put("0:/g.txt", "a\nb\nlast"); /* no final newline */
+  TEST_ASSERT_EQ(run("tail -n 1 g.txt"), 0);
+  TEST_ASSERT(out_is("last"));
+  TEST_ASSERT_EQ(run("head -n x f.txt"), 1); /* not a number */
+  TEST_ASSERT_EQ(run("head nope.txt"), 1);
+}
+
+static void test_write_cp_rm_touch(void) {
+  int len;
+  shell_reset();
+  stub_fs_reset();
+  TEST_ASSERT_EQ(run("write log.txt hello there"), 0);
+  TEST_ASSERT_EQ(run("write log.txt again"), 0); /* appends */
+  const char *d = stub_fs_get("0:/log.txt", &len);
+  TEST_ASSERT(d && len == 18 && memcmp(d, "hello there\nagain\n", 18) == 0);
+  TEST_ASSERT_EQ(run("cp log.txt copy.txt"), 0);
+  d = stub_fs_get("0:/copy.txt", &len);
+  TEST_ASSERT(d && len == 18 && memcmp(d, "hello there\nagain\n", 18) == 0);
+  TEST_ASSERT_EQ(run("cp log.txt ./log.txt"), 1); /* the same file */
+  TEST_ASSERT_EQ(run("touch empty.txt"), 0);
+  TEST_ASSERT(stub_fs_get("0:/empty.txt", &len) != NULL && len == 0);
+  TEST_ASSERT_EQ(run("touch log.txt"), 0); /* an existing file is left alone */
+  stub_fs_get("0:/log.txt", &len);
+  TEST_ASSERT_EQ(len, 18);
+  TEST_ASSERT_EQ(run("rm copy.txt"), 0);
+  TEST_ASSERT(stub_fs_get("0:/copy.txt", &len) == NULL);
+  TEST_ASSERT_EQ(run("rm copy.txt"), 1);
+}
+
+static void test_stat_and_hexdump(void) {
+  shell_reset();
+  stub_fs_reset();
+  put("0:/LOGS/h.bin", "ABC\001");
+  cd_to("LOGS");
+  TEST_ASSERT_EQ(run("stat h.bin"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "size      4 bytes") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "modified  2026-10-03 14:05") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "path      /LOGS/h.bin") != NULL);
+  TEST_ASSERT_EQ(run("stat /LOGS"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "type      directory") != NULL);
+  TEST_ASSERT_EQ(run("stat nope"), 1);
+  TEST_ASSERT_EQ(run("hexdump h.bin"), 0);
+  /* byte for byte what `hexdump -C` prints for the same bytes */
+  TEST_ASSERT(out_is("00000000  41 42 43 01                                       |ABC.|\r\n"));
+  TEST_ASSERT_EQ(run("hexdump h.bin 0x1 2"), 0);
+  TEST_ASSERT(out_is("00000001  42 43                                             |BC|\r\n"));
+}
+
+/* kill reports which refusal the kernel gave. */
+static void test_kill(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(run("kill 5"), 0);
+  TEST_ASSERT_EQ(run("kill 2"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "not started by this shell") != NULL);
+  TEST_ASSERT_EQ(run("kill 9"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "no such task") != NULL);
+  TEST_ASSERT_EQ(run("kill"), 1);
+}
+
+/* ^C: the console delivers it like any byte, and a long command stops. Bytes
+ * typed AHEAD of it are dropped with it; a byte that is not ^C stays for the
+ * editor. */
+extern void (*g_stub_console_rx_sink)(const uint8_t *, uint16_t);
+static void test_ctrl_c_interrupts(void) {
+  shell_reset();
+  stub_fs_reset();
+  TEST_ASSERT_EQ(shell_interrupted(&g_sh), 0);
+  g_stub_console_rx_sink((const uint8_t *)"x", 1);
+  TEST_ASSERT_EQ(shell_interrupted(&g_sh), 0); /* kept for the editor */
+  char out[CMD_MAX_LEN];
+  feed("\n");
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
+  TEST_ASSERT_EQ(v_strcmp(out, "x"), 0);
+
+  static char big[650];
+  for (int i = 0; i < 649; i++)
+    big[i] = (char)('a' + i % 26);
+  stub_fs_put("0:/big.txt", big, 649);
+  g_stub_console_rx_sink((const uint8_t *)"ls\003", 3);
+  TEST_ASSERT_EQ(run("cat big.txt"), SHELL_INTERRUPTED);
+  TEST_ASSERT((int)v_strlen(g_stub_out) < 200); /* stopped after a chunk */
+  TEST_ASSERT(strstr(g_stub_out, "exit") == NULL); /* not a failure */
+  feed("\n");
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0); /* "ls" was dropped */
+}
+
+static void test_uptime(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(run("uptime"), 0);
+  TEST_ASSERT(out_is("up 0h 0m 0s\r\n"));
 }
 
 static void test_find_unknown_and_empty(void) {
@@ -551,6 +686,13 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_inspection_builtins),
     TEST_CASE(test_cd_and_paths),
     TEST_CASE(test_mkdir_is_relative),
+    TEST_CASE(test_prompt_shows_cwd),
+    TEST_CASE(test_head_and_tail),
+    TEST_CASE(test_write_cp_rm_touch),
+    TEST_CASE(test_stat_and_hexdump),
+    TEST_CASE(test_kill),
+    TEST_CASE(test_ctrl_c_interrupts),
+    TEST_CASE(test_uptime),
     TEST_CASE(test_find_unknown_and_empty),
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),

@@ -65,7 +65,7 @@ const char v_features[] =
     " vfs"
 #endif
 #if VAIOS_MODULE_SHELL
-    " shell"
+    " vsh"
 #endif
     "";
 

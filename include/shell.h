@@ -5,7 +5,10 @@
 
 /**
  * @file shell.h
- * @brief The on-target command shell.
+ * @brief vsh, the on-target command shell.
+ *
+ * Its name is vsh; in code it keeps the plain shell_* names (shell_t,
+ * shell_run, the SHELL_* Kconfig symbols) rather than renaming every caller.
  *
  * Not to be confused with a terminal, which is the host-side program you talk to
  * it through (tio, screen, minicom). A terminal carries characters; a shell
@@ -184,6 +187,16 @@ void shell_feed(shell_t *sh, char c);
  * up/down arrows walk the history.
  */
 int shell_poll(shell_t *sh, char *out, int cap);
+
+/**
+ * @brief ^C while a command runs. A command that can run long calls this
+ *        between chunks: 1 when the user pressed ^C (the command should stop
+ *        and return SHELL_INTERRUPTED), 0 otherwise. Input typed ahead of a ^C
+ *        is dropped with it, as a tty flushes on interrupt; other input stays
+ *        queued for the editor. @p sh may be NULL (a privileged command).
+ */
+int shell_interrupted(shell_t *sh);
+#define SHELL_INTERRUPTED 130 /* what an interrupted command returns */
 
 /**
  * @brief Split @p line in place into at most @p max_argv tokens on whitespace.
