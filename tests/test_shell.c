@@ -520,6 +520,24 @@ static void test_i2c_scan(void) {
   TEST_ASSERT(strstr(g_stub_out, "\n00:                         -- -- -- -- -- -- -- --\r") != NULL);
 }
 
+static void test_mv_and_df(void) {
+  int len;
+  shell_reset();
+  stub_fs_reset();
+  put("0:/a.txt", "A");
+  put("0:/b.txt", "B");
+  TEST_ASSERT_EQ(run("mv a.txt c.txt"), 0);
+  TEST_ASSERT(stub_fs_get("0:/a.txt", &len) == NULL);
+  TEST_ASSERT(stub_fs_get("0:/c.txt", &len) != NULL);
+  TEST_ASSERT_EQ(run("mv c.txt LOGS"), 0); /* into a directory, same name */
+  TEST_ASSERT(stub_fs_get("0:/LOGS/c.txt", &len) != NULL);
+  TEST_ASSERT_EQ(run("mv b.txt LOGS/c.txt"), 1); /* would replace */
+  TEST_ASSERT(strstr(g_stub_out, "already exists") != NULL);
+  TEST_ASSERT_EQ(run("mv nope.txt x"), 1);
+  TEST_ASSERT_EQ(run("df"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "0:       30.0G    1.5G   28.5G    5%") != NULL);
+}
+
 static void test_uptime(void) {
   shell_reset();
   TEST_ASSERT_EQ(run("uptime"), 0);
@@ -822,6 +840,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_kill),
     TEST_CASE(test_ctrl_c_interrupts),
     TEST_CASE(test_uptime),
+    TEST_CASE(test_mv_and_df),
     TEST_CASE(test_i2c_scan),
     TEST_CASE(test_tab_completes_commands),
     TEST_CASE(test_tab_completes_paths),

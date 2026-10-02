@@ -20,10 +20,15 @@
 typedef int vfs_fd_t;
 typedef int vfs_dir_t;
 
-/* A directory entry's name, NUL included. Bounded by NavHAL's v_dirent_t
-   (V_NAME_MAX, 13), which vfs.c asserts: long names (FS_LFN) keep their case
-   and open at any length, but a listing shows 12 characters of them. */
+/* A directory entry's name, NUL included: NavHAL's V_NAME_MAX, which follows
+   FatFs long file names -- 8.3 (13) without them, CONFIG_FS_LFN_MAX + 1 with.
+   vfs.c asserts the two agree, since the name is copied out of NavHAL's. The
+   macros come from navhal_target.h (force-included on NAVHAL builds). */
+#if defined(NAVHAL_CONFIG_FS_LFN) && NAVHAL_CONFIG_FS_LFN
+#define VFS_NAME_MAX (NAVHAL_CONFIG_FS_LFN_MAX + 1)
+#else
 #define VFS_NAME_MAX 13
+#endif
 
 /* One directory entry from vfs_readdir(). */
 typedef struct {
@@ -40,6 +45,12 @@ typedef struct {
   uint8_t exists; /* 0 distinguishes "absent" from "error" */
 } vfs_stat_t;
 
+/* A drive's size and free space, from v_vfs_space. */
+typedef struct {
+  uint32_t total_kib;
+  uint32_t free_kib;
+} vfs_space_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +63,8 @@ int vfs_write(vfs_fd_t fd, const void *buf, size_t count);
 long vfs_lseek(vfs_fd_t fd, long offset, int whence);
 int vfs_mkdir(const char *path);
 int vfs_unlink(const char *path);
+int vfs_rename(const char *from, const char *to);
+int vfs_space(const char *drive, vfs_space_t *out);
 int vfs_sync(vfs_fd_t fd);
 int vfs_preallocate(const char *path, uint32_t size);
 long vfs_size(vfs_fd_t fd);
@@ -156,6 +169,11 @@ int v_vfs_flush(int fd, uint32_t ticks);
 int v_vfs_info(const char *path, vfs_stat_t *st, uint32_t ticks);
 int v_vfs_makedir(const char *path, uint32_t ticks);
 int v_vfs_remove(const char *path, uint32_t ticks);
+/* Rename or move, on the same drive; `to` must not exist yet. */
+int v_vfs_rename(const char *from, const char *to, uint32_t ticks);
+/* Size and free space of `drive` ("0:", or under the mount, "/mnt/0:"). The
+   first call after a mount may scan the whole FAT: give it ticks to match. */
+int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks);
 int v_vfs_diropen(const char *path, uint32_t ticks);
 int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks);
 // Size of an open file, in bytes (>= 0), or an error. Unlike the privileged

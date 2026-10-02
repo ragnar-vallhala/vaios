@@ -3,10 +3,7 @@
 #include "utils/v_fs.h"
 
 /* vfs_readdir copies VFS_NAME_MAX bytes out of NavHAL's v_dirent_t, so ours
-   may never outgrow theirs. With FatFs long names on (FS_LFN) the NAME is
-   long, but NavHAL's v_dirent_t still holds 12 characters of it -- a listing
-   cuts a longer name until NavHAL sizes V_NAME_MAX from FS_LFN_MAX; raise
-   VFS_NAME_MAX with it then, not before. */
+   may never outgrow theirs. Both follow FS_LFN_MAX now; this keeps it so. */
 _Static_assert(VFS_NAME_MAX <= V_NAME_MAX,
                "VFS_NAME_MAX would read past NavHAL's v_dirent_t.name");
 
@@ -84,6 +81,22 @@ int vfs_mkdir(const char *path) {
 int vfs_unlink(const char *path) {
   vfs_lock();
   int res = v_unlink(path);
+  vfs_unlock();
+  return res;
+}
+
+int vfs_rename(const char *from, const char *to) {
+  vfs_lock();
+  int res = v_rename(from, to);
+  vfs_unlock();
+  return res;
+}
+
+int vfs_space(const char *drive, vfs_space_t *out) {
+  if (!out)
+    return -1;
+  vfs_lock();
+  int res = v_getfree(drive, &out->total_kib, &out->free_kib);
   vfs_unlock();
   return res;
 }
@@ -378,6 +391,8 @@ typedef enum {
   VFS_OP_DIRNEXT,
   VFS_OP_SIZE,
   VFS_OP_PREALLOC,
+  VFS_OP_RENAME, // path -> the NUL-terminated new path carried as the payload
+  VFS_OP_SPACE,  // path is the drive; out is a vfs_space_t
 } vfs_op_t;
 
 typedef struct {
@@ -398,6 +413,9 @@ typedef struct {
 } vfs_req_t;
 
 static vfs_req_t vfs_reqs[VAIOS_VFS_IO_SLOTS];
+/* A dirent travels back to a task through the worker's request buffer. */
+_Static_assert(sizeof(vfs_dirent_t) <= VAIOS_VFS_IO_BUF,
+               "a directory entry no longer fits VAIOS_VFS_IO_BUF");
 static SemaphoreHandle_t vfs_work_sem; // counts queued requests
 static StaticSemaphore_t vfs_work_store;
 static uint8_t vfs_worker_seen; // a worker has run at least once
@@ -462,12 +480,21 @@ int v_vfs_submit(const v_vfs_desc_t *d) {
 
   int need_path = d->op == VFS_OP_OPEN || d->op == VFS_OP_STAT ||
                   d->op == VFS_OP_MKDIR || d->op == VFS_OP_REMOVE ||
-                  d->op == VFS_OP_DIROPEN || d->op == VFS_OP_PREALLOC;
+                  d->op == VFS_OP_DIROPEN || d->op == VFS_OP_PREALLOC ||
+                  d->op == VFS_OP_RENAME || d->op == VFS_OP_SPACE;
   if (need_path && vfs_copy_path(r, d->path) != VA_PASS) {
     r->used = 0;
     return V_VFS_EINVAL;
   }
-  if (d->op == VFS_OP_WRITE) { // the payload crosses now, not later
+  if (d->op == VFS_OP_RENAME) { // the new path: a payload, NUL-terminated
+    const char *to = (const char *)d->data;
+    if (!to || d->len < 2 || d->len > sizeof r->path || to[d->len - 1]) {
+      r->used = 0;
+      return V_VFS_EINVAL;
+    }
+  }
+  if (d->op == VFS_OP_WRITE || d->op == VFS_OP_RENAME) {
+    // the payload crosses now, not later
     if (!d->data) {
       r->used = 0;
       return V_VFS_EINVAL;
@@ -608,6 +635,20 @@ int v_vfs_worker_step(uint32_t ticks) {
   case VFS_OP_REMOVE:
     res = vfs_unlink(vfs_strip_prefix(r->path));
     break;
+  case VFS_OP_RENAME:
+    res = vfs_rename(vfs_strip_prefix(r->path),
+                     vfs_strip_prefix((const char *)r->buf));
+    break;
+  case VFS_OP_SPACE: {
+    vfs_space_t sp;
+    res = vfs_space(vfs_strip_prefix(r->path), &sp);
+    if (res == 0) {
+      for (uint32_t i = 0; i < sizeof sp; i++)
+        r->buf[i] = ((const uint8_t *)&sp)[i];
+      out = (uint32_t)sizeof sp;
+    }
+    break;
+  }
   case VFS_OP_DIROPEN:
     res = vfs_dir_open_internal(r->path);
     break;
@@ -764,6 +805,22 @@ int v_vfs_makedir(const char *path, uint32_t ticks) {
 int v_vfs_remove(const char *path, uint32_t ticks) {
   v_vfs_desc_t d = {.op = VFS_OP_REMOVE, .path = path};
   return vfs_do(&d, 0, 0, ticks);
+}
+int v_vfs_rename(const char *from, const char *to, uint32_t ticks) {
+  if (!to)
+    return V_VFS_EINVAL;
+  uint32_t n = 0;
+  while (to[n] && n < VAIOS_VFS_IO_BUF)
+    n++;
+  v_vfs_desc_t d = {.op = VFS_OP_RENAME, .path = from, .data = to,
+                    .len = n + 1};
+  return vfs_do(&d, 0, 0, ticks);
+}
+int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks) {
+  if (!out)
+    return V_VFS_EINVAL;
+  v_vfs_desc_t d = {.op = VFS_OP_SPACE, .path = drive};
+  return vfs_do(&d, out, (uint32_t)sizeof *out, ticks);
 }
 int v_vfs_diropen(const char *path, uint32_t ticks) {
   v_vfs_desc_t d = {.op = VFS_OP_DIROPEN, .path = path};

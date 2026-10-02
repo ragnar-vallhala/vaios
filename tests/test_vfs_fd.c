@@ -152,6 +152,44 @@ static void test_vfs_round_trip(void) {
   teardown();
 }
 
+/* Rename carries its second path as the payload, copied at submit, and both
+ * lose the mount prefix; a payload that is not a NUL-terminated path is
+ * refused. Space comes back as a vfs_space_t through the caller's buffer. */
+static void test_vfs_rename_and_space(void) {
+  setup();
+  drain();
+  vfs_stub_reset();
+  char to[] = "/mnt/0:b.txt";
+  v_vfs_desc_t rn = {.op = 14 /*RENAME*/, .path = "/mnt/0:a.txt", .data = to,
+                     .len = sizeof to};
+  int slot = v_vfs_submit(&rn);
+  TEST_ASSERT(slot >= 0);
+  to[0] = 'X'; /* the caller's buffer no longer matters: it was copied */
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT_EQ(v_vfs_finish(slot, 0, 0), 0);
+  TEST_ASSERT_EQ(vfs_stub.rename_called, 1);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.rename_from, "0:a.txt"), 0);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.rename_to, "0:b.txt"), 0);
+
+  char unterminated[4] = {'a', 'b', 'c', 'd'};
+  v_vfs_desc_t bad = {.op = 14, .path = "/mnt/0:a", .data = unterminated,
+                      .len = 4};
+  TEST_ASSERT_EQ(v_vfs_submit(&bad), V_VFS_EINVAL);
+
+  vfs_stub.getfree_total = 30000;
+  vfs_stub.getfree_free = 1000;
+  v_vfs_desc_t sp = {.op = 15 /*SPACE*/, .path = "/mnt/0:"};
+  slot = v_vfs_submit(&sp);
+  TEST_ASSERT(slot >= 0);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  vfs_space_t out = {0, 0};
+  TEST_ASSERT_EQ(v_vfs_finish(slot, &out, sizeof out), 0);
+  TEST_ASSERT_EQ(out.total_kib, 30000u);
+  TEST_ASSERT_EQ(out.free_kib, 1000u);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.getfree_drive, "0:"), 0);
+  teardown();
+}
+
 /* What crosses is bounded: a request larger than the bounce buffer is refused
  * (the wrapper chunks instead), and a path longer than a slot is refused rather
  * than truncated into the wrong file. */
@@ -286,6 +324,7 @@ static const test_case_t vfs_fd_cases[] = {
     TEST_CASE(test_vfs_mount_validates),
     TEST_CASE(test_vfs_round_trip),
     TEST_CASE(test_vfs_requests_are_bounded),
+    TEST_CASE(test_vfs_rename_and_space),
     TEST_CASE(test_vfs_slots_are_owned_and_bounded),
     TEST_CASE(test_vfs_teardown_abandons_and_closes),
     TEST_CASE(test_vfs_wait_blocks_the_caller),

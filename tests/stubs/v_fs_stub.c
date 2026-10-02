@@ -70,6 +70,22 @@ int v_unlink(const char *path) {
   return vfs_stub.unlink_ret;
 }
 
+int v_rename(const char *from, const char *to) {
+  vfs_stub.rename_called++;
+  strncpy(vfs_stub.rename_from, from, sizeof vfs_stub.rename_from - 1);
+  strncpy(vfs_stub.rename_to, to, sizeof vfs_stub.rename_to - 1);
+  return vfs_stub.rename_ret;
+}
+int v_getfree(const char *drive, uint32_t *total_kib, uint32_t *free_kib) {
+  vfs_stub.getfree_called++;
+  strncpy(vfs_stub.getfree_drive, drive, sizeof vfs_stub.getfree_drive - 1);
+  if (total_kib)
+    *total_kib = vfs_stub.getfree_total;
+  if (free_kib)
+    *free_kib = vfs_stub.getfree_free;
+  return vfs_stub.getfree_ret;
+}
+
 int v_sync(v_fd_t fd) {
   vfs_stub.sync_called++;
   vfs_stub.sync_fd = fd;

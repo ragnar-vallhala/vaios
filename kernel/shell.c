@@ -269,6 +269,8 @@ static int cmd_hexdump(shell_t *sh, int argc, char **argv);
 static int cmd_touch(shell_t *sh, int argc, char **argv);
 static int cmd_write(shell_t *sh, int argc, char **argv);
 static int cmd_cp(shell_t *sh, int argc, char **argv);
+static int cmd_mv(shell_t *sh, int argc, char **argv);
+static int cmd_df(shell_t *sh, int argc, char **argv);
 #endif
 
 /* In flash. `perf` is privileged: it dumps through the kernel's own print path,
@@ -315,6 +317,8 @@ static const Command_t builtins[] = {
     {cmd_touch, "touch", "<file> create it if it is not there", 0},
     {cmd_write, "write", "<file> <text...> append a line", 0},
     {cmd_cp, "cp", "<src> <dst> copy a file", 0},
+    {cmd_mv, "mv", "<src> <dst> rename, or move into a directory", 0},
+    {cmd_df, "df", "the card's size and free space", 0},
 #endif
 };
 static const int n_builtins = (int)(sizeof builtins / sizeof builtins[0]);
@@ -1454,6 +1458,87 @@ static int cmd_cp(shell_t *sh, int argc, char **argv) {
   v_vfs_close(out, SHELL_IO_TICKS);
   v_vfs_close(in, SHELL_IO_TICKS);
   return rc;
+}
+
+/* As Unix mv: into `dst` when it is a directory that is there, keeping the
+   name; otherwise to `dst`. Same drive only (FatFs renames, never copies). */
+static int cmd_mv(shell_t *sh, int argc, char **argv) {
+  if (argc < 3) {
+    v_printf("usage: mv <src> <dst>\r\n");
+    return 1;
+  }
+  char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "mv", argv[1], src, sizeof src) ||
+      sh_arg_path(sh, "mv", argv[2], dst, sizeof dst))
+    return 1;
+  vfs_stat_t st;
+  if (v_vfs_info(dst, &st, SHELL_IO_TICKS) == 0 && st.exists && st.is_dir) {
+    const char *base = src;
+    for (const char *q = src; *q; q++)
+      if (*q == '/')
+        base = q + 1;
+    int n = (int)v_strlen(dst);
+    if (n + 1 + (int)v_strlen(base) >= (int)sizeof dst) {
+      v_printf("mv: %s/%s: path too long\r\n", argv[2], base);
+      return 1;
+    }
+    if (dst[n - 1] != '/')
+      dst[n++] = '/';
+    sh_copy(dst + n, base, (int)sizeof dst - n);
+  }
+  int rc = v_vfs_rename(src, dst, SHELL_IO_TICKS);
+  if (rc < 0) {
+    v_printf(rc == -8 ? "mv: %s: already exists\r\n" /* FR_EXIST */
+                      : "mv: %s: error %d\r\n",
+             sh_display_path(rc == -8 ? dst : src), rc);
+    return 1;
+  }
+  return 0;
+}
+
+/* KiB as a person reads it: 512K, 3.4M, 29.7G. */
+static void human(char *out, int cap, uint32_t kib) {
+  static const char units[] = "KMGT";
+  int u = 0;
+  uint32_t whole = kib, tenth = 0;
+  while (whole >= 1024 && u < 3) {
+    tenth = (whole % 1024u) * 10u / 1024u;
+    whole /= 1024u;
+    u++;
+  }
+  if (u == 0 || whole >= 100)
+    print_fmt_buf(out, (uint32_t)cap, "%d%c", (int)whole, units[u]);
+  else
+    print_fmt_buf(out, (uint32_t)cap, "%d.%d%c", (int)whole, (int)tenth,
+                  units[u]);
+}
+
+static int cmd_df(shell_t *sh, int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  char drive[4] = {sh->cwd[0], ':', '\0', '\0'};
+  vfs_space_t sp;
+  /* the first call after a mount may scan the whole FAT: allow for it */
+  int rc = v_vfs_space(drive, &sp, MS_TO_TICKS(30000));
+  if (rc < 0) {
+    v_printf("df: %s: error %d\r\n", drive, rc);
+    return 1;
+  }
+  uint32_t used = sp.total_kib - sp.free_kib;
+  char size[12], usd[12], avail[12], pct[8];
+  human(size, sizeof size, sp.total_kib);
+  human(usd, sizeof usd, used);
+  human(avail, sizeof avail, sp.free_kib);
+  print_fmt_buf(pct, sizeof pct, "%d%%",
+                sp.total_kib ? (int)((uint64_t)used * 100u / sp.total_kib) : 0);
+  char row[80], *p = row, *end = row + sizeof row - 1;
+  cell(&p, end, drive, 6, 0);
+  cell(&p, end, size, 8, 1);
+  cell(&p, end, usd, 8, 1);
+  cell(&p, end, avail, 8, 1);
+  cell(&p, end, pct, 6, 1);
+  v_printf("  Drive    Size    Used   Avail  Use%%\r\n  %s\r\n", row);
+  return 0;
 }
 #endif
 

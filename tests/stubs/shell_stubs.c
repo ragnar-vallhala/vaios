@@ -348,3 +348,24 @@ int v_pbus_xfer(int fd, const v_pbus_xfer_t *x, uint8_t prio, uint32_t ticks) {
   (void)ticks;
   return (x->addr == 0x68 || x->addr == 0x76) ? 0 : -5;
 }
+
+/* mv / df on the fake card: a rename moves the entry; the card is 30 GiB with
+   1.5 GiB in use. */
+int v_vfs_rename(const char *from, const char *to, uint32_t ticks) {
+  (void)ticks;
+  sfile_t *f = ffind(from);
+  if (!f)
+    return -4; /* FR_NO_FILE */
+  if (ffind(to))
+    return -8; /* FR_EXIST */
+  strncpy(f->path, to, sizeof f->path - 1);
+  return 0;
+}
+int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks) {
+  (void)ticks;
+  if (strcmp(drive, "0:") != 0)
+    return -11; /* FR_INVALID_DRIVE */
+  out->total_kib = 30u * 1024u * 1024u;
+  out->free_kib = out->total_kib - 1536u * 1024u;
+  return 0;
+}

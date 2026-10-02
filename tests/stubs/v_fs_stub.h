@@ -50,6 +50,15 @@ struct vfs_stub_state {
   const char *unlink_path;
   int unlink_ret;
 
+  int rename_called;
+  char rename_from[64], rename_to[64]; /* copies: the worker's slot is reused */
+  int rename_ret;
+
+  int getfree_called;
+  char getfree_drive[8];
+  uint32_t getfree_total, getfree_free;
+  int getfree_ret;
+
   int sync_called;
   v_fd_t sync_fd;
   int sync_ret;
