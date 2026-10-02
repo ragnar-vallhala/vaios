@@ -116,10 +116,13 @@ static void sh_puts(const char *s) {
   }
 }
 
-/* The banner, as at boot, then what the shell itself adds. */
+/* The boot banner, rendered again for whoever is looking now -- with uptime,
+   which the boot banner cannot know. The clock stays out: reading it is
+   privileged, and this may be an unprivileged shell. */
 static void sh_banner(void) {
-  sh_puts(v_banner);
-  v_printf("  features:%s\r\n", v_features[0] ? v_features : " none");
+  uint32_t s = (uint32_t)((uint64_t)v_get_ticks() * TICK_PERIOD_US / 1000000u);
+  v_banner_print(sh_puts, 0, (int32_t)s);
+  v_printf("\r\n");
 }
 
 /* --- tokenizing ----------------------------------------------------------- */

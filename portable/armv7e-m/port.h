@@ -248,13 +248,14 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
  * The CDC route has no RX interrupt, so its readers poll this. */
 int v_port_hw_console_try_read(char *c);
 
-/* What this image runs on, for the boot banner: a compile-time string, so an
- * unprivileged task can print it too. NavHAL names the board, family and core. */
+/* What this image runs on, for the boot banner: compile-time strings, so an
+ * unprivileged task can print them too. NavHAL names the board, family, core. */
 #ifdef NAVHAL
-#define VAIOS_PORT_TARGET                                                      \
-  NAVHAL_TARGET_BOARD " (" NAVHAL_TARGET_FAMILY ", " NAVHAL_TARGET_ARCH ")"
+#define VAIOS_PORT_BOARD NAVHAL_TARGET_BOARD
+#define VAIOS_PORT_SOC NAVHAL_TARGET_FAMILY " / " NAVHAL_TARGET_ARCH
 #else
-#define VAIOS_PORT_TARGET "qemu-semihosting (armv7e-m)"
+#define VAIOS_PORT_BOARD "qemu"
+#define VAIOS_PORT_SOC "armv7e-m (semihosting)"
 #endif
 /* The core clock in Hz, or 0 where the port cannot tell. Privileged. */
 uint32_t v_port_hw_cpu_hz(void);

@@ -20,6 +20,7 @@
 #include "vfile.h" /* v_file_wait */
 
 extern int g_stub_prompts;
+extern int32_t g_stub_banner_uptime;
 
 static shell_t g_sh;
 static void shell_reset(void) { shell_init(&g_sh, NULL, 0); }
@@ -316,8 +317,10 @@ static void test_editor_enq_greets(void) {
   char out[CMD_MAX_LEN];
   feed("ve\005");
   g_stub_prompts = 0;
+  g_stub_banner_uptime = -2;
   TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   TEST_ASSERT_EQ(g_stub_prompts, 1);
+  TEST_ASSERT_EQ(g_stub_banner_uptime, 0); /* the shell knows its uptime */
   feed("rsion\n");
   TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "version"), 0);

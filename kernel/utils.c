@@ -1066,6 +1066,22 @@ void v_log_flush(void) {
 #endif
 }
 
+// Flush until nothing is buffered or in flight. Boot calls it before the
+// scheduler starts, so the boot log is out before the first prompt: the logger
+// is asynchronous, and with the banner keeping the UART busy its last lines
+// otherwise arrived after the shell had already printed "vaios> ". Bounded, in
+// case a DMA completion never comes.
+void v_log_drain(void) {
+#if LOGGING_ENABLED == 1 && BUFFERED_LOGGING == 1
+  for (uint32_t guard = 4000000u; guard; guard--) {
+    if (!atomic_get(&log_buffer_storage_read_lock) &&
+        log_buffer_size_to_read == 0 && log_buffer_storage_writing_head == 0)
+      return;
+    v_log_flush();
+  }
+#endif
+}
+
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 

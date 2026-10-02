@@ -51,6 +51,7 @@ typedef enum {
 #define COLOR_UNKNOWN "\x1B[34m" // Blue
 void v_log(Log_Type type, const char *msg, ...);
 void v_log_flush(void);
+void v_log_drain(void); // flush until empty; boot, before the scheduler
 
 // Kernel-internal log macro. Calls in kernel hot paths (memory, task, ipc)
 // route through this so the entire call site can be compiled out below a

@@ -10,10 +10,13 @@ typedef struct {
 void v_init(vaios_init_config_t *cfg);
 void v_system_init(vaios_init_config_t *cfg);
 
-/* The boot banner (version, build revision and time, builder and compiler,
-   target), \r\n-terminated lines; and the enabled kernel features, each
-   space-led. Both in flash, so any task may print them. */
-extern const char v_banner[];
+/* Render the boot banner -- logo, what this image is, a colour strip -- one
+   \r\n-terminated line at a time through `put`. cpu_hz 0 leaves the clock out;
+   uptime_s < 0 leaves uptime out. Const data and its own stack only, so any
+   task may call it with its own writer. */
+void v_banner_print(void (*put)(const char *line), uint32_t cpu_hz,
+                    int32_t uptime_s);
+/* The enabled kernel features, each space-led ("" if none). */
 extern const char v_features[];
 void v_delay(uint32_t ms);
 #endif // !VAIOS_H

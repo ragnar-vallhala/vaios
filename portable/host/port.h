@@ -105,7 +105,8 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
  * The CDC route has no RX interrupt, so its readers poll this. */
 int v_port_hw_console_try_read(char *c);
 
-#define VAIOS_PORT_TARGET "host"
+#define VAIOS_PORT_BOARD "host"
+#define VAIOS_PORT_SOC "native"
 uint32_t v_port_hw_cpu_hz(void); /* 0: the host does not say */
 
 int v_port_hw_sdio_init(void);

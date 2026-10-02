@@ -83,6 +83,13 @@ uint32_t v_get_heap_size(void) { return 4096; }
 uint32_t v_get_heap_allocation_count(void) { return 2; }
 uint32_t v_get_heap_allocation_size(void) { return 100; }
 
-/* The banner the shell prints (kernel/vaios.c, not linked here). */
-const char v_banner[] = "vaios test (unknown)\r\n";
-const char v_features[] = " devfs shell";
+/* The banner the shell prints (kernel/vaios.c, not linked here): one line, and
+   the uptime it was asked for, so a test can see the shell passes one. */
+int32_t g_stub_banner_uptime = -2;
+void v_banner_print(void (*put)(const char *line), uint32_t cpu_hz,
+                    int32_t uptime_s) {
+  (void)cpu_hz;
+  g_stub_banner_uptime = uptime_s;
+  put("vaios test\r\n");
+}
+uint32_t v_get_ticks(void) { return 0; }

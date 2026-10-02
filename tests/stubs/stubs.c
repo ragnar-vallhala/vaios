@@ -115,6 +115,7 @@ void v_log(Log_Type type, const char *msg, ...) {
 }
 
 void v_log_flush(void) {}
+void v_log_drain(void) {}
 
 uint32_t print_buffer_count = 0;
 
