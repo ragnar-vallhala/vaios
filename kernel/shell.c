@@ -63,6 +63,13 @@
    everything else printed. */
 #define SHELL_PROMPT_FMT "vsh%s%s> "
 
+/* The longest name a directory listing can show (todo 174). */
+#if VAIOS_MODULE_VFS
+#define VFS_NAME_MAX_SHOWN (VFS_NAME_MAX - 1)
+#else
+#define VFS_NAME_MAX_SHOWN 0
+#endif
+
 /* --- input staging ---------------------------------------------------------
  * A plain byte ring, not the kernel's general-purpose FIFO. It was that FIFO while
  * the producer was the RX interrupt and reuse cost nothing -- shell.c sits in
@@ -389,6 +396,8 @@ static void line_replace(shell_t *sh, const char *s) {
   sh->line[sh->len] = '\0';
 }
 
+static void sh_complete(shell_t *sh); /* tab: below, beside the path helpers */
+
 /* --- input path ----------------------------------------------------------- */
 
 void shell_feed(shell_t *sh, char c) {
@@ -471,6 +480,11 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       sh_banner();
       sh_prompt(sh);
       v_printf("%s", sh->line);
+      continue;
+    }
+
+    if (c == '\t') {
+      sh_complete(sh);
       continue;
     }
 
@@ -1406,6 +1420,158 @@ void shell_init(shell_t *sh, const Command_t *cmds, int count) {
 #if VAIOS_MODULE_VFS
   sh_copy(sh->cwd, "0:/", CMD_MAX_LEN);
 #endif
+}
+
+/* --- tab completion --------------------------------------------------------
+ * The word under the cursor (the line's last): the first word against command
+ * names, any later word against the card's paths -- case-insensitively, as FAT
+ * names are. One match fills in, with '/' after a directory and a space after
+ * anything else; several fill in what they share, and when that is nothing
+ * more, they are listed and the line is redrawn. */
+typedef struct {
+  const char *word; /* what has been typed of it */
+  int wlen;
+  int nocase;
+  int dirs_only;            /* cd: a file is no answer */
+  int count;                /* matches so far */
+  char first[CMD_MAX_LEN];  /* the first match */
+  int common;               /* how much every match shares with it */
+  int is_dir;               /* the first match is a directory */
+} comp_t;
+
+static int lc(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+
+static int comp_eq(const comp_t *k, char a, char b) {
+  return k->nocase ? lc(a) == lc(b) : a == b;
+}
+
+/* Whether `name` matches, and what it does to the common part. */
+static int comp_offer(comp_t *k, const char *name, int is_dir) {
+  if (k->dirs_only && !is_dir)
+    return 0;
+  for (int i = 0; i < k->wlen; i++)
+    if (!name[i] || !comp_eq(k, name[i], k->word[i]))
+      return 0;
+  if (k->count++ == 0) {
+    sh_copy(k->first, name, CMD_MAX_LEN);
+    k->common = (int)v_strlen(k->first);
+    k->is_dir = is_dir;
+  } else {
+    int i = 0;
+    while (i < k->common && name[i] && comp_eq(k, name[i], k->first[i]))
+      i++;
+    k->common = i;
+  }
+  return 1;
+}
+
+static void sh_insert(shell_t *sh, const char *p, int n) {
+  for (int i = 0; i < n && sh->len < CMD_MAX_LEN - 1; i++) {
+    sh->line[sh->len++] = p[i];
+    sh_putc(p[i]);
+  }
+  sh->line[sh->len] = '\0';
+}
+
+#if VAIOS_MODULE_VFS
+/* Offer each entry of `dir` (a word's directory part, as typed) -- and, when
+   `list` is set, print the matching ones instead. 0, or -1 if the directory
+   does not open. */
+static int comp_dir(shell_t *sh, comp_t *k, const char *dir, int list) {
+  char path[CMD_MAX_LEN];
+  if (sh_path(sh, *dir ? dir : ".", path, sizeof path))
+    return -1;
+  int d = v_vfs_diropen(path, SHELL_IO_TICKS);
+  if (d < 0)
+    return -1;
+  vfs_dirent_t e;
+  while (v_vfs_dirnext(d, &e, SHELL_IO_TICKS) == 1) {
+    comp_t probe = *k;
+    if (!comp_offer(list ? &probe : k, e.name, e.is_dir))
+      continue;
+    if (list)
+      v_printf(e.is_dir ? "%s/  " : "%s  ", e.name);
+  }
+  v_vfs_close(d, SHELL_IO_TICKS);
+  return 0;
+}
+#endif
+
+static void sh_complete(shell_t *sh) {
+  int start = sh->len;
+  while (start > 0 && sh->line[start - 1] != ' ')
+    start--;
+  int first_word = 1;
+  for (int i = 0; i < start; i++)
+    if (sh->line[i] != ' ')
+      first_word = 0;
+  comp_t k = {0};
+  k.word = sh->line + start;
+  k.wlen = sh->len - start;
+
+#if VAIOS_MODULE_VFS
+  char dir[CMD_MAX_LEN] = "";
+#endif
+  if (first_word) {
+    const Command_t *c;
+    for (int i = 0; (c = cmd_at(sh, i)) != NULL; i++)
+      if (c->fn && c->name)
+        comp_offer(&k, c->name, 0);
+  } else {
+#if VAIOS_MODULE_VFS
+    /* split the word at its last '/': the directory, then the name in it */
+    int slash = -1;
+    for (int i = 0; i < k.wlen; i++)
+      if (k.word[i] == '/')
+        slash = i;
+    if (slash >= 0) {
+      sh_copy(dir, k.word, slash + 2 < CMD_MAX_LEN ? slash + 2 : CMD_MAX_LEN);
+      if (slash == 0)
+        dir[1] = '\0'; /* "/x": the root */
+      else
+        dir[slash] = '\0';
+      k.word += slash + 1;
+      k.wlen -= slash + 1;
+    }
+    k.nocase = 1;
+    k.dirs_only = sh->line[0] == 'c' && sh->line[1] == 'd' && sh->line[2] == ' ';
+    if (comp_dir(sh, &k, dir, 0) < 0)
+      return;
+#else
+    return;
+#endif
+  }
+
+  if (k.count == 0)
+    return;
+  if (k.common > k.wlen) /* what every match shares, past what was typed */
+    sh_insert(sh, k.first + k.wlen, k.common - k.wlen);
+  if (k.count == 1) {
+    /* A name exactly as long as a listing can hold may have been cut there
+       (todo 174): fill it in, but leave it open rather than end it. */
+    if (!first_word && (int)v_strlen(k.first) == VFS_NAME_MAX_SHOWN)
+      return;
+    sh_insert(sh, k.is_dir ? "/" : " ", 1);
+    return;
+  }
+  if (k.common > k.wlen)
+    return; /* it moved: another tab lists what is left */
+  v_printf("\r\n");
+  if (first_word) {
+    const Command_t *c;
+    for (int i = 0; (c = cmd_at(sh, i)) != NULL; i++) {
+      comp_t probe = k;
+      if (c->fn && c->name && comp_offer(&probe, c->name, 0))
+        v_printf("%s  ", c->name);
+    }
+  }
+#if VAIOS_MODULE_VFS
+  else
+    comp_dir(sh, &k, dir, 1);
+#endif
+  v_printf("\r\n");
+  sh_prompt(sh);
+  v_printf("%s", sh->line);
 }
 
 /* --- privileged commands --------------------------------------------------

@@ -183,17 +183,57 @@ const char *stub_fs_get(const char *path, int *len) {
   return f->data;
 }
 
+/* A directory listing: the fake card's subdirectories and files directly in
+   `path`, in that order. One open listing at a time is all the shell needs. */
+static char _ls_dir[64];
+static int _ls_pos;
 int v_vfs_diropen(const char *path, uint32_t ticks) {
   (void)ticks;
   for (unsigned i = 0; i < sizeof _dirs / sizeof _dirs[0]; i++)
-    if (strcmp(path, _dirs[i]) == 0)
+    if (strcmp(path, _dirs[i]) == 0) {
+      strncpy(_ls_dir, path, sizeof _ls_dir - 1);
+      _ls_pos = 0;
       return 3;
+    }
   return -5; /* FR_NO_PATH */
+}
+/* `full` directly inside `dir`: the rest after "dir/" (or "0:/") has no '/'. */
+static const char *child_of(const char *dir, const char *full) {
+  size_t n = strlen(dir);
+  if (strncmp(full, dir, n) != 0)
+    return NULL;
+  const char *rest = full + n;
+  if (dir[n - 1] != '/') {
+    if (*rest != '/')
+      return NULL;
+    rest++;
+  }
+  return (*rest && !strchr(rest, '/')) ? rest : NULL;
 }
 int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks) {
   (void)fd;
-  (void)ent;
   (void)ticks;
+  int k = 0;
+  for (unsigned i = 0; i < sizeof _dirs / sizeof _dirs[0]; i++) {
+    const char *c = child_of(_ls_dir, _dirs[i]);
+    if (c && k++ == _ls_pos) {
+      memset(ent, 0, sizeof *ent);
+      strncpy(ent->name, c, VFS_NAME_MAX - 1);
+      ent->is_dir = 1;
+      _ls_pos++;
+      return 1;
+    }
+  }
+  for (int i = 0; i < 6; i++) {
+    const char *c = _files[i].used ? child_of(_ls_dir, _files[i].path) : NULL;
+    if (c && k++ == _ls_pos) {
+      memset(ent, 0, sizeof *ent);
+      strncpy(ent->name, c, VFS_NAME_MAX - 1);
+      ent->size = (uint32_t)_files[i].len;
+      _ls_pos++;
+      return 1;
+    }
+  }
   return 0;
 }
 int v_vfs_open(const char *path, int flags, uint32_t ticks) {

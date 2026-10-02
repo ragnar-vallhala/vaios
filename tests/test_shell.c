@@ -462,6 +462,52 @@ static void test_redirect_overflow(void) {
   TEST_ASSERT(found);
 }
 
+/* Tab: what the line reads after typing `typed` and pressing it. */
+static const char *after_tab(const char *typed) {
+  static char out[CMD_MAX_LEN];
+  char ignore[CMD_MAX_LEN];
+  feed(typed);
+  feed("\t");
+  shell_poll(&g_sh, ignore, sizeof ignore);
+  sh_copy_test(out, g_sh.line);
+  feed("\003"); /* ^C: a fresh line for the next one */
+  shell_poll(&g_sh, ignore, sizeof ignore);
+  return out;
+}
+
+static void test_tab_completes_commands(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(v_strcmp(after_tab("upt"), "uptime "), 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("hexd"), "hexdump "), 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("zz"), "zz"), 0); /* nothing matches */
+  /* several, nothing more in common: listed, the line unchanged */
+  stub_out_reset();
+  TEST_ASSERT_EQ(v_strcmp(after_tab("h"), "h"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "help") && strstr(g_stub_out, "history") &&
+              strstr(g_stub_out, "hexdump"));
+}
+
+static void test_tab_completes_paths(void) {
+  shell_reset();
+  stub_fs_reset();
+  put("0:/LOGS/run1.csv", "1");
+  put("0:/LOGS/run2.csv", "2");
+  put("0:/abcdefghijkl", "x"); /* 12: as long as a listing can show */
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat LO"), "cat LOGS/"), 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat lo"), "cat loGS/"), 0); /* any case */
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat LOGS/r"), "cat LOGS/run"), 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat LOGS/run1"), "cat LOGS/run1.csv "),
+                 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat /LO"), "cat /LOGS/"), 0);
+  /* cd completes directories only: A/ is the one among two files */
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cd LOGS/"), "cd LOGS/A/"), 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat LOGS/"), "cat LOGS/"), 0); /* three */
+  /* may have been cut at 12: filled in, but left open */
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat abc"), "cat abcdefghijkl"), 0);
+  cd_to("LOGS");
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat ../LO"), "cat ../LOGS/"), 0);
+}
+
 static void test_uptime(void) {
   shell_reset();
   TEST_ASSERT_EQ(run("uptime"), 0);
@@ -764,6 +810,8 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_kill),
     TEST_CASE(test_ctrl_c_interrupts),
     TEST_CASE(test_uptime),
+    TEST_CASE(test_tab_completes_commands),
+    TEST_CASE(test_tab_completes_paths),
     TEST_CASE(test_redirect),
     TEST_CASE(test_redirect_overflow),
     TEST_CASE(test_loglevel),
