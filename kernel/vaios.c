@@ -177,7 +177,7 @@ static void info_row(int r, wbuf_t *w, uint32_t cpu_hz, int32_t uptime_s) {
     break;
   case ROW_BUILT:
     put_key(w, "built");
-    put_s(w, VAIOS_BUILD_TIME B_DIM "  " VAIOS_BUILD_BY B_RESET);
+    put_s(w, VAIOS_BUILD_TIME B_DIM "  by " VAIOS_BUILD_BY B_RESET);
     break;
   case ROW_CC:
     put_key(w, "compiler");
