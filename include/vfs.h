@@ -20,7 +20,9 @@
 typedef int vfs_fd_t;
 typedef int vfs_dir_t;
 
-/* FatFS short (8.3) names: 12 chars + NUL (FF_USE_LFN = 0). */
+/* A directory entry's name, NUL included. Bounded by NavHAL's v_dirent_t
+   (V_NAME_MAX, 13), which vfs.c asserts: long names (FS_LFN) keep their case
+   and open at any length, but a listing shows 12 characters of them. */
 #define VFS_NAME_MAX 13
 
 /* One directory entry from vfs_readdir(). */

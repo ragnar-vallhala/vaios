@@ -2,6 +2,14 @@
 #include "ipc.h"
 #include "utils/v_fs.h"
 
+/* vfs_readdir copies VFS_NAME_MAX bytes out of NavHAL's v_dirent_t, so ours
+   may never outgrow theirs. With FatFs long names on (FS_LFN) the NAME is
+   long, but NavHAL's v_dirent_t still holds 12 characters of it -- a listing
+   cuts a longer name until NavHAL sizes V_NAME_MAX from FS_LFN_MAX; raise
+   VFS_NAME_MAX with it then, not before. */
+_Static_assert(VFS_NAME_MAX <= V_NAME_MAX,
+               "VFS_NAME_MAX would read past NavHAL's v_dirent_t.name");
+
 static MutexHandle_t vfs_mutex = NULL;
 
 static void vfs_lock(void) {
