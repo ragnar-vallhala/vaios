@@ -287,20 +287,42 @@ char v_port_hw_console_read_char(void) {
 #endif
 }
 
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
+#if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC &&                    \
+    NAVHAL_CONFIG_DRV_DMA && NAVHAL_CONFIG_DRV_UART_DMA
+/* NavHAL defines the USARTx_IRQHandler vectors only inside its UART-DMA block,
+ * so without UART DMA the console UART's interrupt resolves to Default_Handler
+ * and arming RXNE would hang the board on the first keystroke. Until NavHAL
+ * defines them unconditionally, a UART console without DMA polls instead. */
+#define CONSOLE_UART_RX_IRQ 1
+static void (*_console_rx_sink)(const uint8_t *, uint16_t);
+
+static void console_uart_rx_isr(void) {
+  /* RXNEIE also fires on overrun; reading SR (available) then DR clears both. */
+  while (hal_uart_available(BOARD_CONSOLE_UART)) {
+    uint8_t c = (uint8_t)hal_uart_read_char(BOARD_CONSOLE_UART);
+    _console_rx_sink(&c, 1);
+  }
+}
+#endif
+
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len)) {
+  if (!sink)
+    return 0;
 #if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
-  /* No UART interrupt to attach: the console is the USB device port. Attaching
-     BOARD_CONSOLE_UART_IRQ here would enable an interrupt on a peripheral that
-     is not the console and leave the caller with no input at all -- which is
-     exactly what it used to do, visible as USART2's bit set in NVIC ISER1 on a
-     CDC build. Readers poll v_port_hw_console_try_read() instead. */
-  (void)rx_cb;
-#elif defined(NAVHAL)
-  hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ, rx_cb);
-  hal_interrupt_enable(BOARD_CONSOLE_UART_IRQ);
+  /* The CDC driver calls this from the OTG_FS interrupt instead of queueing
+     for hal_usb_cdc_read. Its callback type is exactly this signature. */
+  return hal_usb_cdc_set_rx_callback(sink) == HAL_OK;
+#elif defined(CONSOLE_UART_RX_IRQ)
+  _console_rx_sink = sink;
+  if (hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ,
+                                    console_uart_rx_isr) != HAL_OK)
+    return 0;
+  return hal_uart_enable_interrupt(BOARD_CONSOLE_UART, 1, 0) == HAL_OK;
 #else
-  /* QEMU semihosting has no async RX IRQ; the reader polls instead. */
-  (void)rx_cb;
+  /* QEMU semihosting has no async RX; a UART console without NavHAL's USART
+     vectors must not arm one (above). The reader polls. */
+  return 0;
 #endif
 }
 

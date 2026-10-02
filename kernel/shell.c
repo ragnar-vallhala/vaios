@@ -4,11 +4,12 @@
  *
  * Three things changed shape here, and the reasons are worth keeping.
  *
- * 1. THE EDITOR IS NOT IN THE ISR. The console RX interrupt calls shell_feed(),
- *    which does one lock-free SPSC write and returns. shell_poll() drains that
- *    in thread mode and does the editing. Before, the ISR walked a multi-line
- *    history ring, wrote NULs into it and set a "ready" flag -- interrupt
- *    context doing string work on shared state, and untestable besides.
+ * 1. THE EDITOR IS NOT IN THE ISR. The console RX interrupt belongs to
+ *    /dev/console (devfs.c): it queues bytes in kernel memory and wakes the
+ *    reader. The shell reads fd 0, sleeps in v_file_wait when there is nothing,
+ *    and edits in its own task. Before, the ISR walked a multi-line history
+ *    ring, wrote NULs into it and set a "ready" flag -- interrupt context doing
+ *    string work on shared state, and untestable besides.
  *
  * 2. COMMANDS TAKE argc/argv. They used to receive the raw line as `void *` and
  *    parse it themselves; `perf` carried its own subcommand splitter. One
@@ -410,22 +411,25 @@ void shell_run(void *args) {
   char *argv[SHELL_MAX_ARGV];
   print_fmt("\r\n" SHELL_PROMPT);
   for (;;) {
-    if (shell_poll(line, (int)sizeof line)) {
-      int argc = shell_tokenize(line, argv, SHELL_MAX_ARGV);
-      if (argc > 0) {
-        Command_t *c = shell_find_command(argv[0]);
-        if (c) {
-          int rc = c->fn(argc, argv);
-          if (rc != 0)
-            print_fmt("%s: exit %d\r\n", argv[0], rc);
-        } else {
-          print_fmt("%s: not found\r\n", argv[0]);
-        }
-      }
-      print_fmt(SHELL_PROMPT);
+    if (!shell_poll(line, (int)sizeof line)) {
+      /* Everything that arrived has been edited and no line is complete:
+         sleep until the console's RX interrupt says more came. A line DOES
+         return straight to shell_poll, since a paste can leave the next line
+         already queued with nothing left to signal it. */
+      (void)v_file_wait(0, V_WAIT_FOREVER);
+      continue;
     }
-    /* Nothing to do but wait for input. 10 ms is imperceptible to a person and
-       keeps the shell off the CPU; the fifo absorbs bursts in between. */
-    v_delay(10);
+    int argc = shell_tokenize(line, argv, SHELL_MAX_ARGV);
+    if (argc > 0) {
+      Command_t *c = shell_find_command(argv[0]);
+      if (c) {
+        int rc = c->fn(argc, argv);
+        if (rc != 0)
+          print_fmt("%s: exit %d\r\n", argv[0], rc);
+      } else {
+        print_fmt("%s: not found\r\n", argv[0]);
+      }
+    }
+    print_fmt(SHELL_PROMPT);
   }
 }

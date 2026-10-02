@@ -15,7 +15,7 @@
 
 #if VAIOS_DEVFS
 
-#include "port.h"
+#include "ipc.h" // the console's RX wake (a binary semaphore)
 #include "syscall.h"
 #include "task.h"
 #include "utils.h" // v_kmsg_read (/dev/kmsg backing ring)
@@ -174,6 +174,17 @@ int v_file_read(int fd, void *buf, uint32_t len) {
   return e->ops->read(e->priv, buf, len);
 }
 
+int v_file_wait(int fd, uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_file_wait, (uint32_t)fd, ticks);
+#endif
+  v_fd_entry *e = fd_lookup(fd);
+  if (!e || !e->ops->wait)
+    return -1;
+  return e->ops->wait(e->priv, ticks);
+}
+
 int v_file_close(int fd) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
@@ -219,37 +230,79 @@ static int console_write(void *priv, const void *buf, uint32_t len) {
 }
 
 /* --- console input ----------------------------------------------------------
- * Non-blocking, so a reader never waits and never touches the hardware itself.
- * That is what lets an UNPRIVILEGED task read the console: v_file_read(0, ...)
- * returns whatever has arrived, 0 if nothing has.
+ * The port's RX interrupt (UART RXNE, or the CDC driver's rx callback) hands
+ * bytes to console_rx_sink, which queues them here, in KERNEL memory, and wakes
+ * any reader. A reader never touches the hardware: read is non-blocking and
+ * drains this ring; v_file_wait parks the caller until the sink signals. That
+ * is what lets an unprivileged task read the console without polling it.
  *
- * It used to read `len` characters with a BLOCKING per-character call, so
- * read(0, buf, 64) waited for 64 keystrokes and, on the CDC route, busy-spun
- * inside v_port_hw_console_read_char() while doing it. Nothing interactive can
- * be built on that.
+ * Single producer (the RX ISR) and single consumer (read, inside the syscall).
+ * On target the syscall runs at the ceiling and masks the console IRQ anyway,
+ * so the two never actually interleave; the volatile indices are for the
+ * no-SVC builds where read runs in thread mode and the ISR can cut in.
  *
- * Deliberately NOT buffered behind an spsc_fifo_t here, even though that is the
- * tested ring this kernel uses elsewhere: structure.c pulls in mutexes,
- * semaphores and the tick, and devfs.c is built in isolation by
- * vaios_devfs_tests precisely so it does not need them. The port's try_read
- * already serves both routes -- the UART's data register for one, the CDC
- * driver's own buffer for the other -- so the ring would buy only burst
- * absorption, which is a separate concern with its own todo.
+ * A port with no RX interrupt (semihosting, host, a UART build whose NavHAL has
+ * no USART vectors) reports so, and the console falls back to polling the
+ * port's try_read: read polls it directly and wait sleeps one poll interval
+ * instead of waiting for a signal nobody will send.
  */
+#ifndef CONSOLE_RX_SIZE
+#define CONSOLE_RX_SIZE 128 /* holds a pasted line at 115200 with room to spare */
+#endif
+#define CONSOLE_POLL_TICKS MS_TO_TICKS(10)
+
+static uint8_t con_rx[CONSOLE_RX_SIZE];
+static volatile uint16_t con_head, con_tail;
+static StaticSemaphore_t con_sem_store;
+static SemaphoreHandle_t con_rx_sem;
+static int con_rx_armed;
+
+/* ISR context. A full ring drops the rest of the burst: losing input is better
+   than an interrupt that waits for a reader. */
+static void console_rx_sink(const uint8_t *data, uint16_t len) {
+  for (uint16_t i = 0; i < len; i++) {
+    uint16_t next = (uint16_t)((con_head + 1u) % CONSOLE_RX_SIZE);
+    if (next == con_tail)
+      break;
+    con_rx[con_head] = data[i];
+    con_head = next;
+  }
+  if (con_rx_sem)
+    (void)v_semaphore_give_from_isr(con_rx_sem, NULL);
+}
+
 static int console_read(void *priv, void *buf, uint32_t len) {
   (void)priv;
   uint8_t *p = (uint8_t *)buf;
   uint32_t got = 0;
-  char c;
-  while (got < len && v_port_hw_console_try_read(&c))
-    p[got++] = (uint8_t)c;
+  while (got < len && con_tail != con_head) {
+    p[got++] = con_rx[con_tail];
+    con_tail = (uint16_t)((con_tail + 1u) % CONSOLE_RX_SIZE);
+  }
+  if (!con_rx_armed) {
+    char c;
+    while (got < len && v_port_hw_console_try_read(&c))
+      p[got++] = (uint8_t)c;
+  }
   return (int)got;
+}
+
+static int console_wait(void *priv, uint32_t ticks) {
+  (void)priv;
+  if (con_tail != con_head)
+    return 0; /* already there: don't sleep on a signal already consumed */
+  if (!con_rx_sem)
+    return -1;
+  if (!con_rx_armed && ticks > CONSOLE_POLL_TICKS)
+    ticks = CONSOLE_POLL_TICKS; /* nothing will signal: wake up and re-poll */
+  return v_semaphore_take(con_rx_sem, ticks) == VA_PASS ? 0 : -1;
 }
 
 static const v_file_ops console_ops = {
     .read = console_read,
     .write = console_write,
     .close = NULL,
+    .wait = console_wait,
 };
 
 // --- /dev/kmsg (read-only kernel log ring) ----------------------------------
@@ -265,6 +318,9 @@ static const v_file_ops kmsg_ops = {
 };
 
 void v_devfs_init(void) {
+  con_head = con_tail = 0;
+  con_rx_sem = v_semaphore_create_binary_static(&con_sem_store);
+  con_rx_armed = v_port_hw_console_rx_irq_init(console_rx_sink);
   v_devfs_register("/dev/console", &console_ops, NULL);
   v_devfs_register("/dev/kmsg", &kmsg_ops, NULL);
 }

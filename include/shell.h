@@ -11,12 +11,13 @@
  * reads a line and runs something. vaios used to ship its own under tools/; a
  * TTY emulator is an ordinary host tool and not this repo's job.
  *
- * The input path is split in two on purpose. shell_feed() is all the console RX
- * interrupt does — hand over one byte and return. Everything else, the line
- * editing included, happens in shell_poll() in thread mode. The editor used to
- * live in the ISR, mutating a multi-line ring and a ready flag from interrupt
- * context, which is both against the kernel's own rule about where work belongs
- * and the reason none of it could be unit-tested.
+ * Input comes through fd 0 like any task's. The console's RX interrupt is
+ * /dev/console's (devfs.c), not the shell's: it queues bytes in kernel memory
+ * and wakes the reader. shell_run() reads, edits in thread mode through
+ * shell_poll(), and sleeps in v_file_wait() when nothing is pending. The editor
+ * used to live in the ISR, mutating a multi-line ring and a ready flag from
+ * interrupt context, which is both against the kernel's own rule about where
+ * work belongs and the reason none of it could be unit-tested.
  */
 
 /* Sizes live here, not private to shell.c, so a caller can size its own buffers
@@ -80,9 +81,9 @@ Command_t *shell_find_command(const char *name);
 /* --- input path ----------------------------------------------------------- */
 
 /**
- * @brief Hand one received byte to the shell. Safe from an ISR: it does a single
- *        lock-free SPSC write and nothing else. Bytes are dropped if the shell
- *        is not draining, which is better than an ISR that edits.
+ * @brief Hand one received byte to the line editor. Task context: shell_poll()
+ *        pushes what it read from fd 0 through here, and the tests inject at
+ *        the same point. A full input ring drops the byte.
  */
 void shell_feed(char c);
 

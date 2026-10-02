@@ -15,6 +15,8 @@
 #include "framework.h"
 #include "shell.h"
 #include "utils.h" /* v_strcmp, v_strlen */
+#include "task.h"  /* V_WAIT_FOREVER, MS_TO_TICKS */
+#include "vfile.h" /* v_file_wait */
 
 static int dummy_cb(int argc, char **argv) {
   (void)argc;
@@ -311,7 +313,20 @@ static void test_history_dedupes_immediate_repeat(void) {
   TEST_ASSERT_EQ(v_strcmp(out, "same"), 0);
 }
 
+/* This binary's port has no console RX interrupt, so nothing will ever signal
+ * the shell's wait on fd 0. The wait must then come back after one poll
+ * interval rather than park forever -- the shell's V_WAIT_FOREVER would
+ * otherwise wedge it on semihosting and the host port. */
+extern uint32_t g_stub_sem_last_ticks;
+static void test_wait_without_rx_irq_polls(void) {
+  shell_init();
+  g_stub_sem_last_ticks = 0;
+  TEST_ASSERT_EQ(v_file_wait(0, V_WAIT_FOREVER), -1);
+  TEST_ASSERT_EQ(g_stub_sem_last_ticks, MS_TO_TICKS(10));
+}
+
 static const test_case_t shell_cases[] = {
+    TEST_CASE(test_wait_without_rx_irq_polls),
     TEST_CASE(test_init_registers_builtins),
     TEST_CASE(test_register_then_find),
     TEST_CASE(test_register_rejects_overlong_name),

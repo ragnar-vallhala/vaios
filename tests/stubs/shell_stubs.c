@@ -58,6 +58,3 @@ int v_strcmp(const char *a, const char *b) {
   }
   return (int)((unsigned char)*a) - (int)((unsigned char)*b);
 }
-
-/* shell_run's idle wait. Never reached: the tests drive shell_poll directly. */
-void v_delay(uint32_t ms) { (void)ms; }

@@ -47,7 +47,16 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
 }
 void v_port_hw_console_write_string(const char *str) { (void)str; }
 char v_port_hw_console_read_char(void) { return 0; }
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) { (void)rx_cb; }
+/* The console's RX interrupt, for tests: the sink devfs registered is kept so
+ * a test can call it as the ISR would, and g_stub_console_rx_armed decides
+ * whether the port claims to have an interrupt (default: no, the poll path). */
+void (*g_stub_console_rx_sink)(const uint8_t *, uint16_t);
+int g_stub_console_rx_armed;
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len)) {
+  g_stub_console_rx_sink = sink;
+  return g_stub_console_rx_armed;
+}
 /* Returns 0 always: the shell tests drive shell_feed() directly, so the editor
    is exercised without pretending there is a console here. */
 int v_port_hw_console_try_read(char *c) {

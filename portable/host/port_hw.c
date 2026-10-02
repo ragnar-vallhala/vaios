@@ -79,8 +79,10 @@ char v_port_hw_console_read_char(void) {
   int c = getchar();
   return (c == EOF) ? '\0' : (char)c;
 }
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
-  (void)rx_cb; // no async stdin in this port
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len)) {
+  (void)sink; // no async stdin in this port: the reader polls
+  return 0;
 }
 
 // No non-blocking stdin either: a reader on this port gets its bytes some other

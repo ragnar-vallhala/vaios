@@ -37,14 +37,18 @@ static int cap_close(void *priv) {
   cap_close_calls++;
   return 0;
 }
-static const v_file_ops cap_ops = {cap_read, cap_write, cap_close, NULL};
-static const v_file_ops other_ops = {0, 0, 0, 0};
+static const v_file_ops cap_ops = {cap_read, cap_write, cap_close, NULL, NULL};
+static const v_file_ops other_ops = {0, 0, 0, 0, 0};
 
 static TCB g_task;
 static int registered;
 
+extern void (*g_stub_console_rx_sink)(const uint8_t *, uint16_t);
+extern int g_stub_console_rx_armed;
+
 static void reset(void) {
   if (!registered) {
+    g_stub_console_rx_armed = 1; /* this binary tests the interrupt path */
     v_devfs_init();                          /* /dev/console, /dev/kmsg */
     v_devfs_register("/dev/cap", &cap_ops, (void *)0x1234);
     registered = 1;
@@ -52,6 +56,12 @@ static void reset(void) {
   memset(&g_task, 0, sizeof g_task);
   current_task = &g_task;
   v_fd_table_init(&g_task); /* clears fds, pre-opens 0/1/2 -> /dev/console */
+  { /* drain the console and any banked wake a previous case left behind */
+    char d[256];
+    while (v_file_read(0, d, sizeof d) > 0)
+      ;
+    (void)v_file_wait(0, 0);
+  }
   cap_len = 0;
   cap_src = 0;
   cap_src_pos = 0;
@@ -140,7 +150,58 @@ static void test_fd_obj_typecheck(void) {
   TEST_ASSERT_NULL(v_fd_obj(9999, &cap_ops)); /* bad fd -> NULL */
 }
 
+/* What the console RX interrupt delivers is what fd 0 reads, in order, across
+ * calls -- the bytes sit in kernel memory between the ISR and the reader. */
+static void test_console_rx_reaches_fd0(void) {
+  reset();
+  char buf[8] = {0};
+  TEST_ASSERT_EQ(v_file_read(0, buf, sizeof buf), 0); /* nothing yet */
+  g_stub_console_rx_sink((const uint8_t *)"ab", 2);
+  g_stub_console_rx_sink((const uint8_t *)"c", 1);
+  TEST_ASSERT_EQ(v_file_read(0, buf, 2), 2);
+  TEST_ASSERT_EQ(memcmp(buf, "ab", 2), 0);
+  TEST_ASSERT_EQ(v_file_read(0, buf, sizeof buf), 1);
+  TEST_ASSERT_EQ(buf[0], 'c');
+}
+
+/* A wait returns at once when bytes are already queued, is woken by the ISR's
+ * signal otherwise, and times out when nothing came. */
+static void test_console_wait(void) {
+  reset();
+  char buf[4];
+  TEST_ASSERT_EQ(v_file_wait(0, 5), -1); /* empty, no signal: timed out */
+  g_stub_console_rx_sink((const uint8_t *)"x", 1);
+  TEST_ASSERT_EQ(v_file_wait(0, 5), 0); /* data queued */
+  TEST_ASSERT_EQ(v_file_read(0, buf, sizeof buf), 1);
+  TEST_ASSERT_EQ(v_file_wait(0, 5), 0);  /* the signal is banked... */
+  TEST_ASSERT_EQ(v_file_wait(0, 5), -1); /* ...once */
+}
+
+/* A burst bigger than the ring keeps what fits and drops the rest, never
+ * overwriting what the reader has not taken yet. */
+static void test_console_rx_full_drops(void) {
+  reset();
+  uint8_t in[200], out[200];
+  for (int i = 0; i < 200; i++)
+    in[i] = (uint8_t)i;
+  g_stub_console_rx_sink(in, 200);
+  int n = v_file_read(0, out, sizeof out);
+  TEST_ASSERT_EQ(n, 127); /* CONSOLE_RX_SIZE 128, one slot kept empty */
+  TEST_ASSERT_EQ(memcmp(out, in, (size_t)n), 0);
+}
+
+/* A device with no wait op cannot be waited on. */
+static void test_wait_unsupported(void) {
+  reset();
+  int fd = v_file_open("/dev/cap", 0);
+  TEST_ASSERT_EQ(v_file_wait(fd, 1), -1);
+}
+
 static const test_case_t devfs_cases[] = {
+    TEST_CASE(test_console_rx_reaches_fd0),
+    TEST_CASE(test_console_wait),
+    TEST_CASE(test_console_rx_full_drops),
+    TEST_CASE(test_wait_unsupported),
     TEST_CASE(test_fd_table_preopens_console),
     TEST_CASE(test_open_known_device),
     TEST_CASE(test_open_unknown_returns_error),

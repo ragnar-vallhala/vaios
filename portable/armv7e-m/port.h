@@ -238,7 +238,11 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
 char v_port_hw_console_read_char(void);
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
+/* Deliver received console bytes to `sink` from the RX interrupt. 1 if an
+ * interrupt was armed, 0 if this port/route has none (the caller then polls
+ * v_port_hw_console_try_read). `data` is valid only for the call. */
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len));
 /* Non-blocking console read: 1 if a byte was placed in *c, 0 if none waiting.
  * The CDC route has no RX interrupt, so its readers poll this. */
 int v_port_hw_console_try_read(char *c);

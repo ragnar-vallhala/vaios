@@ -234,6 +234,7 @@ add_executable(vaios_devfs_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/devfs_main.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_devfs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/console_sem_stub.c"  # console RX wake
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/devfs_stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # console facade
     "${VAIOS_ROOT}/kernel/devfs.c"
@@ -262,6 +263,7 @@ add_executable(vaios_shell_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/shell_main.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_shell.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/console_sem_stub.c"  # console RX wake
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/shell_stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # console facade
     "${VAIOS_ROOT}/kernel/shell.c"

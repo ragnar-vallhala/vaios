@@ -90,6 +90,9 @@ typedef enum {
   SYS_bus_stats = 47,   // this handle's topic counters (B7). Read-only and
                         //   bounded, so no submit/wait/finish split: it copies
                         //   a small struct under one critical section.
+  SYS_file_wait = 48,   // park until an fd has data to read (v_file_wait).
+                        //   Reads stay non-blocking; the console's RX
+                        //   interrupt is what wakes this.
   SYS_MAX
 } v_syscall_t;
 

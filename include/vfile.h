@@ -32,6 +32,11 @@ typedef struct v_file_ops {
   // node's name, which is how a MOUNT works: register "/mnt/" and every path
   // under it reaches this hook with the rest of the path.
   int (*open)(const char *tail, int flags, void **priv_out);
+  // Optional. Park the caller until a read would return data, or `ticks`
+  // pass. 0 when data is (or became) ready, < 0 on timeout. Reads stay
+  // non-blocking; this is the separate wait, split from the transfer for the
+  // same reason SYS_bus_wait is: a parked task holds no buffer in kernel state.
+  int (*wait)(void *priv, uint32_t ticks);
 } v_file_ops;
 
 // One fd-table slot. ops == NULL means the slot is free.
@@ -55,6 +60,9 @@ int v_file_open(const char *path, int flags);
 int v_file_read(int fd, void *buf, uint32_t len);
 int v_file_write(int fd, const void *buf, uint32_t len);
 int v_file_close(int fd);
+// Block until `fd` has data to read, or `ticks` pass (V_WAIT_FOREVER for no
+// deadline). 0 when ready, < 0 on timeout or when the fd cannot wait.
+int v_file_wait(int fd, uint32_t ticks);
 
 // Allocate an fd in the current task's table for (ops, priv). Returns the fd or
 // a negative error. Used by open() and by fd-typed IPC (v_sem_open).
