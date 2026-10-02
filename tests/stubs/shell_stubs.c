@@ -338,3 +338,13 @@ void v_log_set_level(int level) {
 int v_log_get_level(void) { return _level; }
 void v_log_drain(void) {}
 void task_delay(uint32_t ticks) { (void)ticks; }
+
+/* i2c scan: one bus, "i2c1", where 0x68 and 0x76 answer. */
+#include "periph_bus.h"
+int v_pbus_open(const char *name) { return strcmp(name, "i2c1") == 0 ? 6 : -22; }
+int v_pbus_xfer(int fd, const v_pbus_xfer_t *x, uint8_t prio, uint32_t ticks) {
+  (void)fd;
+  (void)prio;
+  (void)ticks;
+  return (x->addr == 0x68 || x->addr == 0x76) ? 0 : -5;
+}

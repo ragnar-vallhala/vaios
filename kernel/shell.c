@@ -33,6 +33,7 @@
 #include "shell.h"
 #include "structure.h" // the helper's queues
 #include "memory.h"    // heap
+#include "periph_bus.h" // i2c scan, through the bus arbiter
 #if VAIOS_MODULE_BUS
 #include "bus.h"
 #endif
@@ -250,6 +251,7 @@ static int cmd_loglevel(shell_t *sh, int argc, char **argv);
 static int cmd_top(shell_t *sh, int argc, char **argv);
 #endif
 static int cmd_kill(shell_t *sh, int argc, char **argv);
+static int cmd_i2c(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_BUS
 static int cmd_bus(shell_t *sh, int argc, char **argv);
 #endif
@@ -293,6 +295,7 @@ static const Command_t builtins[] = {
      SHELL_CMD_PRIV},
 #endif
     {cmd_kill, "kill", "<pid> end a task this shell started", 0},
+    {cmd_i2c, "i2c", "scan <bus> -y: which addresses answer", 0},
 #if VAIOS_MODULE_BUS
     {cmd_bus, "bus", "[sub <topic> [n] | pub <topic> <text>] topics",
      SHELL_CMD_PRIV},
@@ -861,6 +864,61 @@ static int cmd_kill(shell_t *sh, int argc, char **argv) {
                               : "kill: %d: no such task\r\n",
            (int)pid);
   return 1;
+}
+
+/* i2c scan <bus> -y: i2cdetect -r's grid, through the bus arbiter -- the bus
+   must be one the board registered (v_pbus_register), and the probe is
+   whatever its hook makes of a one-byte read at each address. Never raw, and
+   never without -y: some devices act on a read (a FIFO pops, a status flag
+   clears), so a scan is not something to run on a bus that is flying. */
+static int cmd_i2c(shell_t *sh, int argc, char **argv) {
+  if (argc < 3 || v_strcmp(argv[1], "scan") != 0) {
+    v_printf("usage: i2c scan <bus> -y\r\n");
+    return 1;
+  }
+  if (argc < 4 || v_strcmp(argv[3], "-y") != 0) {
+    /* two prints: one v_printf formats at most 128 bytes */
+    v_printf("i2c: a scan reads one byte from every address on %s,\r\n",
+             argv[2]);
+    v_printf("  and some devices act on a read. Not on a bus in flight.\r\n"
+             "  Add -y to go.\r\n");
+    return 1;
+  }
+  int fd = v_pbus_open(argv[2]);
+  if (fd < 0) {
+    v_printf("i2c: %s: no such bus (the board registers them)\r\n", argv[2]);
+    return 1;
+  }
+  static const char hx[] = "0123456789abcdef";
+  v_printf("     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\r\n");
+  int rc = 0;
+  for (int row = 0; row < 8 && !rc; row++) {
+    char line[64];
+    int o = 0;
+    line[o++] = hx[row];
+    line[o++] = '0';
+    line[o++] = ':';
+    for (int col = 0; col < 16; col++) {
+      int a = row * 16 + col;
+      line[o++] = ' ';
+      if (a < 0x08 || a > 0x77) { /* reserved addresses: not probed */
+        line[o++] = ' ';
+        line[o++] = ' ';
+        continue;
+      }
+      uint8_t b;
+      v_pbus_xfer_t x = {.addr = (uint16_t)a, .rx = &b, .rx_len = 1};
+      int r = v_pbus_xfer(fd, &x, 0, MS_TO_TICKS(20));
+      line[o++] = r >= 0 ? hx[a >> 4] : '-';
+      line[o++] = r >= 0 ? hx[a & 15] : '-';
+    }
+    line[o] = '\0';
+    v_printf("%s\r\n", line);
+    if (shell_interrupted(sh))
+      rc = SHELL_INTERRUPTED;
+  }
+  v_file_close(fd);
+  return rc;
 }
 
 #if VAIOS_MODULE_BUS

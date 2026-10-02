@@ -508,6 +508,18 @@ static void test_tab_completes_paths(void) {
   TEST_ASSERT_EQ(v_strcmp(after_tab("cat ../LO"), "cat ../LOGS/"), 0);
 }
 
+static void test_i2c_scan(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(run("i2c scan i2c1"), 1); /* not without -y */
+  TEST_ASSERT(strstr(g_stub_out, "Add -y to go.\r\n") != NULL); /* whole */
+  TEST_ASSERT_EQ(run("i2c scan nope -y"), 1);
+  TEST_ASSERT_EQ(run("i2c scan i2c1 -y"), 0);
+  /* the rows i2cdetect would print: 0x68 and 0x76 answer, reserved blank */
+  TEST_ASSERT(strstr(g_stub_out, "\n60: -- -- -- -- -- -- -- -- 68 -- -- -- -- -- -- --\r") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "\n70: -- -- -- -- -- -- 76 --                        \r") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "\n00:                         -- -- -- -- -- -- -- --\r") != NULL);
+}
+
 static void test_uptime(void) {
   shell_reset();
   TEST_ASSERT_EQ(run("uptime"), 0);
@@ -810,6 +822,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_kill),
     TEST_CASE(test_ctrl_c_interrupts),
     TEST_CASE(test_uptime),
+    TEST_CASE(test_i2c_scan),
     TEST_CASE(test_tab_completes_commands),
     TEST_CASE(test_tab_completes_paths),
     TEST_CASE(test_redirect),
