@@ -107,6 +107,7 @@ int v_port_hw_console_try_read(char *c);
 
 #define VAIOS_PORT_BOARD "host"
 #define VAIOS_PORT_SOC "native"
+void v_port_hw_system_reset(void);
 uint32_t v_port_hw_cpu_hz(void); /* 0: the host does not say */
 
 int v_port_hw_sdio_init(void);

@@ -783,6 +783,17 @@ static int module_allowed(const char *msg) {
 }
 
 extern uint8_t scheduler_running;
+// The level below which v_log drops a message. Starts at the compile-time
+// MIN_LOG_LEVEL and can be moved at runtime (the shell's `loglevel`); the
+// kernel-internal macros still compile out below VAIOS_KERNEL_LOG_LEVEL, so a
+// call site that was never built cannot be turned back on here.
+static volatile int _log_level = MIN_LOG_LEVEL;
+void v_log_set_level(int level) {
+  if (level >= (int)LOG_TRACE && level <= (int)LOG_FATAL)
+    _log_level = level;
+}
+int v_log_get_level(void) { return _log_level; }
+
 void v_log(Log_Type type, const char *msg, ...) {
   // Proactive stack overflow check using live PSP
   // Minimize overhead to avoid using stack before the check
@@ -798,7 +809,7 @@ void v_log(Log_Type type, const char *msg, ...) {
     }
   }
 
-  if (type < MIN_LOG_LEVEL || !module_allowed(msg))
+  if ((int)type < _log_level || !module_allowed(msg))
     return;
 
 #if LOGGING_ENABLED == 1

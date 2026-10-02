@@ -276,3 +276,13 @@ int v_vfs_makedir(const char *path, uint32_t ticks) {
 
 /* kill: pid 5 is this shell's child, pid 2 is not. */
 int v_task_kill(uint32_t id) { return id == 5 ? VA_PASS : id == 2 ? V_TASK_EPERM : V_TASK_EINVAL; }
+
+/* loglevel and reboot: the kernel side they touch. */
+static int _level = 2; /* LOG_INFO */
+void v_log_set_level(int level) {
+  if (level >= 0 && level <= 5)
+    _level = level;
+}
+int v_log_get_level(void) { return _level; }
+void v_log_drain(void) {}
+void task_delay(uint32_t ticks) { (void)ticks; }

@@ -12,6 +12,7 @@
 #include "port.h"
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -82,6 +83,7 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
 }
 
 uint32_t v_port_hw_cpu_hz(void) { return 0; }
+void v_port_hw_system_reset(void) { exit(0); } /* a host "reset" ends the run */
 
 // No non-blocking stdin either: a reader on this port gets its bytes some other
 // way (the unit tests feed the shell directly).

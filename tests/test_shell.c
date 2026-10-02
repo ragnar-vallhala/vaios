@@ -391,6 +391,28 @@ static void test_ctrl_c_interrupts(void) {
   TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0); /* "ls" was dropped */
 }
 
+static void test_loglevel(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(run("loglevel"), 0);
+  TEST_ASSERT(out_is("loglevel: info\r\n"));
+  TEST_ASSERT_EQ(run("loglevel debug"), 0);
+  TEST_ASSERT(out_is("loglevel: debug\r\n"));
+  TEST_ASSERT_EQ(run("loglevel loud"), 1); /* not a level: unchanged */
+  TEST_ASSERT_EQ(run("loglevel"), 0);
+  TEST_ASSERT(out_is("loglevel: debug\r\n"));
+  run("loglevel info");
+}
+
+/* reboot asks the port to reset (the stub counts instead of resetting). */
+extern int g_stub_resets;
+static void test_reboot(void) {
+  shell_reset();
+  g_stub_resets = 0;
+  TEST_ASSERT_EQ(run("reboot"), 0);
+  TEST_ASSERT_EQ(g_stub_resets, 1);
+  TEST_ASSERT_EQ(shell_find_command(&g_sh, "reboot")->flags, SHELL_CMD_PRIV);
+}
+
 static void test_uptime(void) {
   shell_reset();
   TEST_ASSERT_EQ(run("uptime"), 0);
@@ -693,6 +715,8 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_kill),
     TEST_CASE(test_ctrl_c_interrupts),
     TEST_CASE(test_uptime),
+    TEST_CASE(test_loglevel),
+    TEST_CASE(test_reboot),
     TEST_CASE(test_find_unknown_and_empty),
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),

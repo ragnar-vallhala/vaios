@@ -71,6 +71,8 @@ int v_port_hw_console_try_read(char *c) {
 }
 
 uint32_t v_port_hw_cpu_hz(void) { return 0; }
+int g_stub_resets;
+void v_port_hw_system_reset(void) { g_stub_resets++; }
 
 int v_port_hw_sdio_init(void) { return -1; }
 int v_port_hw_sdio_card_present(void) { return 0; }

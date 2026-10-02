@@ -388,6 +388,18 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
 #endif
 }
 
+void v_port_hw_system_reset(void) {
+  /* What CMSIS NVIC_SystemReset does: keep the priority grouping, request the
+     reset, and wait for it. The barriers make sure everything before the write
+     has landed and nothing after it runs. */
+  volatile uint32_t *aircr = (volatile uint32_t *)0xE000ED0CUL;
+  __asm volatile("dsb" ::: "memory");
+  *aircr = 0x05FA0000UL | (*aircr & 0x700UL) | (1UL << 2);
+  __asm volatile("dsb" ::: "memory");
+  for (;;)
+    ;
+}
+
 uint32_t v_port_hw_cpu_hz(void) {
 #ifdef NAVHAL
   return hal_clock_get_sysclk();

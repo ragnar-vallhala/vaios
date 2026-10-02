@@ -257,6 +257,8 @@ int v_port_hw_console_try_read(char *c);
 #define VAIOS_PORT_BOARD "qemu"
 #define VAIOS_PORT_SOC "armv7e-m (semihosting)"
 #endif
+/* Reset the whole chip (SYSRESETREQ). Does not return. Privileged. */
+void v_port_hw_system_reset(void);
 /* The core clock in Hz, or 0 where the port cannot tell. Privileged. */
 uint32_t v_port_hw_cpu_hz(void);
 

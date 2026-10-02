@@ -231,6 +231,11 @@ static int cmd_perf(shell_t *sh, int argc, char **argv);
 static int cmd_ps(shell_t *sh, int argc, char **argv);
 static int cmd_heap(shell_t *sh, int argc, char **argv);
 static int cmd_uptime(shell_t *sh, int argc, char **argv);
+static int cmd_reboot(shell_t *sh, int argc, char **argv);
+static int cmd_loglevel(shell_t *sh, int argc, char **argv);
+#if VAIOS_MODULE_PERF
+static int cmd_top(shell_t *sh, int argc, char **argv);
+#endif
 static int cmd_kill(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_BUS
 static int cmd_bus(shell_t *sh, int argc, char **argv);
@@ -267,6 +272,13 @@ static const Command_t builtins[] = {
     {cmd_ps, "ps", "tasks", SHELL_CMD_PRIV},
     {cmd_heap, "heap", "kernel heap in use", SHELL_CMD_PRIV},
     {cmd_uptime, "uptime", "time since boot", 0},
+    {cmd_reboot, "reboot", "reset the board", SHELL_CMD_PRIV},
+    {cmd_loglevel, "loglevel", "[trace|debug|info|warn|error|fatal] log threshold",
+     SHELL_CMD_PRIV},
+#if VAIOS_MODULE_PERF
+    {cmd_top, "top", "[frames] CPU per task, every second (until ^C)",
+     SHELL_CMD_PRIV},
+#endif
     {cmd_kill, "kill", "<pid> end a task this shell started", 0},
 #if VAIOS_MODULE_BUS
     {cmd_bus, "bus", "[sub <topic> [n] | pub <topic> <text>] topics",
@@ -696,6 +708,122 @@ static int cmd_uptime(shell_t *sh, int argc, char **argv) {
              (int)(t % 60u));
   return 0;
 }
+
+static int cmd_reboot(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  (void)argc;
+  (void)argv;
+  v_printf("rebooting\r\n");
+  /* Let the console writer, which outranks us, put that on the wire, and the
+     logger empty its buffer, before the chip goes. */
+  task_delay(MS_TO_TICKS(50));
+  v_log_drain();
+  v_port_hw_system_reset();
+  return 0; /* only on a port whose reset returns (the host tests) */
+}
+
+static const char *const _levels[] = {"trace", "debug", "info",
+                                      "warn",  "error", "fatal"};
+
+static int cmd_loglevel(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  if (argc > 1) {
+    int lv = -1;
+    for (int i = 0; i < 6; i++)
+      if (v_strcmp(argv[1], _levels[i]) == 0)
+        lv = i;
+    if (lv < 0) {
+      v_printf("usage: loglevel [trace|debug|info|warn|error|fatal]\r\n");
+      return 1;
+    }
+    v_log_set_level(lv);
+  }
+  int cur = v_log_get_level();
+  v_printf("loglevel: %s\r\n", (cur >= 0 && cur < 6) ? _levels[cur] : "?");
+  return 0;
+}
+
+#if VAIOS_MODULE_PERF
+/* Each task's share of the CPU over the last second, busiest first, redrawn
+   in place like top. From the per-task cycle counters, so it needs the perf
+   module and a cycle counter that runs (v_perf_init). */
+#define TOP_MAX 16
+static int cmd_top(shell_t *sh, int argc, char **argv) {
+  long frames = argc > 1 ? sh_num(argv[1]) : 0; /* 0: until ^C */
+  if (frames < 0) {
+    v_printf("usage: top [frames]\r\n");
+    return 1;
+  }
+  uint32_t ids[TOP_MAX];
+  uint64_t was[TOP_MAX];
+  TCB *t[TOP_MAX];
+  int n = task_snapshot_list(t, TOP_MAX);
+  for (int i = 0; i < n; i++) {
+    v_perf_task_t ps;
+    v_perf_task_stats(t[i], &ps);
+    ids[i] = t[i]->task_id;
+    was[i] = ps.cycles_run;
+  }
+  int nwas = n;
+  uint64_t c0 = v_perf_cycles();
+  for (long f = 0; frames == 0 || f < frames; f++) {
+    for (int step = 0; step < 10; step++) { /* a second, asking about ^C */
+      task_delay(MS_TO_TICKS(100));
+      if (shell_interrupted(sh))
+        return SHELL_INTERRUPTED;
+    }
+    uint64_t c1 = v_perf_cycles(), total = c1 - c0;
+    c0 = c1;
+    n = task_snapshot_list(t, TOP_MAX);
+    uint32_t pct10[TOP_MAX]; /* tenths of a percent */
+    uint64_t now[TOP_MAX];
+    for (int i = 0; i < n; i++) {
+      v_perf_task_t ps;
+      v_perf_task_stats(t[i], &ps);
+      now[i] = ps.cycles_run;
+      uint64_t prev = now[i]; /* a task new this second counts from here */
+      for (int k = 0; k < nwas; k++)
+        if (ids[k] == t[i]->task_id)
+          prev = was[k];
+      pct10[i] = total ? (uint32_t)((now[i] - prev) * 1000u / total) : 0;
+    }
+    for (int a = 1; a < n; a++) /* busiest first */
+      for (int b = a; b > 0 && pct10[b - 1] < pct10[b]; b--) {
+        uint32_t x = pct10[b];
+        pct10[b] = pct10[b - 1];
+        pct10[b - 1] = x;
+        TCB *y = t[b];
+        t[b] = t[b - 1];
+        t[b - 1] = y;
+        uint64_t z = now[b];
+        now[b] = now[b - 1];
+        now[b - 1] = z;
+      }
+    uint32_t up = (uint32_t)((uint64_t)v_get_ticks() * TICK_PERIOD_US / 1000000u);
+    v_printf("\033[H\033[2Jtop - up %dh %dm %ds, %d tasks   (^C to stop)\r\n\r\n",
+             (int)(up / 3600u), (int)(up / 60u % 60u), (int)(up % 60u), n);
+    v_printf("    PID  NAME          CPU\r\n");
+    for (int i = 0; i < n; i++) {
+      char row[64], num[16], *p = row, *end = row + sizeof row - 1;
+      const char *name = task_get_name(t[i]);
+      print_fmt_buf(num, sizeof num, "%d", (int)t[i]->task_id);
+      cell(&p, end, num, 7, 1);
+      cell(&p, end, "  ", 2, 0);
+      cell(&p, end, name[0] ? name : "-", 10, 0);
+      print_fmt_buf(num, sizeof num, "%d.%d%%", (int)(pct10[i] / 10u),
+                    (int)(pct10[i] % 10u));
+      cell(&p, end, num, 7, 1);
+      v_printf("%s\r\n", row);
+    }
+    for (int i = 0; i < n; i++) {
+      ids[i] = t[i]->task_id;
+      was[i] = now[i];
+    }
+    nwas = n;
+  }
+  return 0;
+}
+#endif
 
 /* The kernel lets a task end only the tasks it spawned -- the right limit for
    a shell, which is not every task's owner -- and says which refusal it was. */
