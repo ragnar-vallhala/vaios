@@ -81,6 +81,16 @@ void v_fd_table_init(struct Task_Control_Block *t);
 // current task.
 void v_fd_close_all(struct Task_Control_Block *t);
 
+// The console's output worker. Writes to /dev/console made from a syscall only
+// queue; this does the hardware write, in thread mode where the console's own
+// interrupt (USB CDC's, a DMA completion) can be taken. Run it forever from a
+// PRIVILEGED task (task_create_privileged under MPU separation) at a priority
+// above every task that prints:
+//     for (;;) v_console_writer_step(V_WAIT_FOREVER);
+// Until it has run once, console writes go straight to the hardware. Returns
+// the bytes written, 0 if `ticks` passed with nothing queued.
+int v_console_writer_step(uint32_t ticks);
+
 // Register the built-in devices (/dev/console). Called once at boot.
 void v_devfs_init(void);
 

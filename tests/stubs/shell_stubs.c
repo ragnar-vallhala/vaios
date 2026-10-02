@@ -40,9 +40,10 @@ int v_kmsg_read(char *out, uint32_t len) {
 /* Counts prompts printed, which is the one piece of output a test needs: a
    CRLF terminal must get one prompt per line, not two. */
 int g_stub_prompts;
-void print_fmt(const char *fmt, ...) {
+int v_printf(const char *fmt, ...) {
   if (strstr(fmt, "vaios> "))
     g_stub_prompts++;
+  return 0;
 }
 
 /* kernel/shell.c's perf command is compiled out here (VAIOS_MODULE_PERF=0), and

@@ -45,7 +45,14 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
   (void)bytes;
   (void)len;
 }
-void v_port_hw_console_write_string(const char *str) { (void)str; }
+/* What reached the console hardware, for tests of the deferred writer. */
+char g_stub_console_out[512];
+int g_stub_console_out_len;
+void v_port_hw_console_write_string(const char *str) {
+  while (*str && g_stub_console_out_len < (int)sizeof g_stub_console_out - 1)
+    g_stub_console_out[g_stub_console_out_len++] = *str++;
+  g_stub_console_out[g_stub_console_out_len] = '\0';
+}
 /* The console's RX interrupt, for tests: the sink devfs registered is kept so
  * a test can call it as the ISR would, and g_stub_console_rx_armed decides
  * whether the port claims to have an interrupt (default: no, the poll path). */

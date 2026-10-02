@@ -27,18 +27,19 @@
 #include "utils.h"
 #include "vaios.h"
 #include "vaios_config.h"
+#include "vfile.h"
 
 static int cmd_echo(int argc, char **argv) {
   for (int i = 1; i < argc; i++)
-    print_fmt(i + 1 < argc ? "%s " : "%s", argv[i]);
-  print_fmt("\r\n");
+    v_printf(i + 1 < argc ? "%s " : "%s", argv[i]);
+  v_printf("\r\n");
   return 0;
 }
 
 static int cmd_ticks(int argc, char **argv) {
   (void)argc;
   (void)argv;
-  print_fmt("%d\r\n", (int)v_get_ticks());
+  v_printf("%d\r\n", (int)v_get_ticks());
   return 0;
 }
 
@@ -57,11 +58,22 @@ static int cmd_spin(int argc, char **argv) {
   (void)argc;
   (void)argv;
   if (task_create(spinner, NULL, 512, 1) == 0) {
-    print_fmt("spin: could not create the task\r\n");
+    v_printf("spin: could not create the task\r\n");
     return 1;
   }
-  print_fmt("spin: started\r\n");
+  v_printf("spin: started\r\n");
   return 0;
+}
+
+/* Console output from a task is queued by the write syscall and put on the wire
+   here, in thread mode: inside the syscall the USB interrupt that completes a
+   CDC transfer is masked. Privileged, because it drives the hardware; above the
+   shell's priority, so a write is drained before the shell runs on and output
+   stays in order. */
+static void console_writer(void *arg) {
+  (void)arg;
+  for (;;)
+    v_console_writer_step(V_WAIT_FOREVER);
 }
 
 int main(void) {
@@ -87,7 +99,12 @@ int main(void) {
   shell_register_command(cmd_ticks, "ticks", "kernel tick count");
   shell_register_command(cmd_spin, "spin", "start a background task");
 
-  task_create(shell_run, NULL, SHELL_TASK_STACK_SIZE, 1);
+#if VAIOS_MPU_USER_SEPARATION
+  task_create_privileged(console_writer, NULL, 768, 2, "conout");
+#else
+  task_create_named(console_writer, NULL, 768, 2, "conout");
+#endif
+  task_create_named(shell_run, NULL, SHELL_TASK_STACK_SIZE, 1, "shell");
   scheduler_start();
   while (1)
     ;

@@ -101,7 +101,7 @@ static void sh_copy(char *dst, const char *src, int cap) {
 
 static void sh_putc(char c) {
   char b[2] = {c, '\0'};
-  print_fmt("%s", b);
+  v_printf("%s", b);
 }
 
 /* --- tokenizing ----------------------------------------------------------- */
@@ -180,7 +180,7 @@ static const char *hist_at(int back) {
 /* Wipe the visible line and put `s` in its place, on screen and in _line. */
 static void line_replace(const char *s) {
   for (int i = 0; i < _len; i++)
-    print_fmt("\b \b");
+    v_printf("\b \b");
   _len = 0;
   _line[0] = '\0';
   if (!s)
@@ -259,7 +259,7 @@ int shell_poll(char *out, int cap) {
     }
 
     if (c == 0x03) { /* ^C: abandon the line */
-      print_fmt("^C\r\n" SHELL_PROMPT);
+      v_printf("^C\r\n" SHELL_PROMPT);
       _len = 0;
       _line[0] = '\0';
       _hist_pos = -1;
@@ -270,7 +270,7 @@ int shell_poll(char *out, int cap) {
       if (_len > 0) {
         _len--;
         _line[_len] = '\0';
-        print_fmt("\b \b");
+        v_printf("\b \b");
       }
       continue;
     }
@@ -280,10 +280,10 @@ int shell_poll(char *out, int cap) {
        many bytes off the end -- so short commands never ran and the line ending
        was assumed rather than handled. An empty line just reprompts. */
     if (c == '\r' || c == '\n') {
-      print_fmt("\r\n");
+      v_printf("\r\n");
       _line[_len] = '\0';
       if (_len == 0) {
-        print_fmt(SHELL_PROMPT);
+        v_printf(SHELL_PROMPT);
         _hist_pos = -1;
         continue;
       }
@@ -316,10 +316,10 @@ static int cmd_help(int argc, char **argv) {
       continue;
     /* No %-10s: the formatter parses a '0' flag and a width, not '-', so a
        left-justify would fall through to the default arm and emit "%-". */
-    print_fmt("  %s", _commands[i].name);
+    v_printf("  %s", _commands[i].name);
     if (_commands[i].help)
-      print_fmt("\t%s", _commands[i].help);
-    print_fmt("\r\n");
+      v_printf("\t%s", _commands[i].help);
+    v_printf("\r\n");
   }
   return 0;
 }
@@ -329,15 +329,15 @@ static int cmd_clear(int argc, char **argv) {
   (void)argv;
   /* Straight to the console, not through v_log: a screen-clear with an
      "[INFO 42]" prefix in front of it is not a screen clear. */
-  print_fmt("\033[2J\033[H");
+  v_printf("\033[2J\033[H");
   return 0;
 }
 
 static int cmd_version(int argc, char **argv) {
   (void)argc;
   (void)argv;
-  print_fmt("vaios %s\r\n", VAIOS_VERSION);
-  print_fmt("NAVROBOTEC PVT. LTD. -- %s\r\n", AUTHOR);
+  v_printf("vaios %s\r\n", VAIOS_VERSION);
+  v_printf("NAVROBOTEC PVT. LTD. -- %s\r\n", AUTHOR);
   return 0;
 }
 
@@ -346,7 +346,7 @@ static int cmd_history(int argc, char **argv) {
   (void)argv;
   /* Oldest first, so the numbering reads like a log. */
   for (int back = _hist_count - 1; back >= 0; back--)
-    print_fmt("  %d  %s\r\n", _hist_count - back, hist_at(back));
+    v_printf("  %d  %s\r\n", _hist_count - back, hist_at(back));
   return 0;
 }
 
@@ -361,24 +361,24 @@ static int cmd_perf(int argc, char **argv) {
   }
   if (v_strcmp(sub, "reset") == 0) {
     v_perf_reset();
-    print_fmt("perf: counters reset\r\n");
+    v_printf("perf: counters reset\r\n");
     return 0;
   }
 #if VAIOS_MODULE_VFS
   if (v_strcmp(sub, "save") == 0) {
     if (argc < 3) {
-      print_fmt("usage: perf save <path>\r\n");
+      v_printf("usage: perf save <path>\r\n");
       return 1;
     }
     int rc = v_perf_dump_to_file(argv[2]);
-    print_fmt(rc == 0 ? "perf: saved to %s\r\n" : "perf: save failed (is VFS "
+    v_printf(rc == 0 ? "perf: saved to %s\r\n" : "perf: save failed (is VFS "
                                                   "mounted?) %s\r\n",
               argv[2]);
     return rc == 0 ? 0 : 1;
   }
-  print_fmt("usage: perf [show|reset|save <path>]\r\n");
+  v_printf("usage: perf [show|reset|save <path>]\r\n");
 #else
-  print_fmt("usage: perf [show|reset]\r\n");
+  v_printf("usage: perf [show|reset]\r\n");
 #endif
   return 1;
 }
@@ -417,7 +417,7 @@ void shell_run(void *args) {
   (void)args;
   char line[CMD_MAX_LEN];
   char *argv[SHELL_MAX_ARGV];
-  print_fmt("\r\n" SHELL_PROMPT);
+  v_printf("\r\n" SHELL_PROMPT);
   for (;;) {
     if (!shell_poll(line, (int)sizeof line)) {
       /* Everything that arrived has been edited and no line is complete:
@@ -433,11 +433,11 @@ void shell_run(void *args) {
       if (c) {
         int rc = c->fn(argc, argv);
         if (rc != 0)
-          print_fmt("%s: exit %d\r\n", argv[0], rc);
+          v_printf("%s: exit %d\r\n", argv[0], rc);
       } else {
-        print_fmt("%s: not found\r\n", argv[0]);
+        v_printf("%s: not found\r\n", argv[0]);
       }
     }
-    print_fmt(SHELL_PROMPT);
+    v_printf(SHELL_PROMPT);
   }
 }

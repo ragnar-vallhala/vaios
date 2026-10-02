@@ -45,6 +45,8 @@ static int registered;
 
 extern void (*g_stub_console_rx_sink)(const uint8_t *, uint16_t);
 extern int g_stub_console_rx_armed;
+extern char g_stub_console_out[];
+extern int g_stub_console_out_len;
 
 static void reset(void) {
   if (!registered) {
@@ -190,6 +192,47 @@ static void test_console_rx_full_drops(void) {
   TEST_ASSERT_EQ(memcmp(out, in, (size_t)n), 0);
 }
 
+/* Before any writer has run, a console write goes straight to the hardware --
+ * the path every example without a writer task keeps. Runs first in the suite:
+ * once a writer has stepped, the console stays deferred. */
+static void test_console_write_direct_without_writer(void) {
+  reset();
+  g_stub_console_out_len = 0;
+  TEST_ASSERT_EQ(v_file_write(1, "hi", 2), 2);
+  TEST_ASSERT_EQ(g_stub_console_out_len, 2);
+  TEST_ASSERT_EQ(memcmp(g_stub_console_out, "hi", 2), 0);
+}
+
+/* With a writer, a write only queues: nothing reaches the hardware until the
+ * writer steps, then all of it does, in order. */
+static void test_console_write_deferred_to_writer(void) {
+  reset();
+  TEST_ASSERT_EQ(v_console_writer_step(0), 0); /* writer up, nothing queued */
+  g_stub_console_out_len = 0;
+  TEST_ASSERT_EQ(v_file_write(1, "help", 4), 4);
+  TEST_ASSERT_EQ(v_file_write(1, "\r\n", 2), 2);
+  TEST_ASSERT_EQ(g_stub_console_out_len, 0); /* the syscall did not touch it */
+  TEST_ASSERT_EQ(v_console_writer_step(0), 6);
+  TEST_ASSERT_EQ(g_stub_console_out_len, 6);
+  TEST_ASSERT_EQ(memcmp(g_stub_console_out, "help\r\n", 6), 0);
+  TEST_ASSERT_EQ(v_console_writer_step(0), 0); /* drained, signal consumed */
+}
+
+/* A write bigger than the queue is taken in part, and the count says so;
+ * the caller retries the rest rather than the syscall waiting for space. */
+static void test_console_write_full_is_partial(void) {
+  reset();
+  (void)v_console_writer_step(0);
+  char big[300];
+  memset(big, 'z', sizeof big);
+  TEST_ASSERT_EQ(v_file_write(1, big, sizeof big), 255); /* 256, one kept empty */
+  TEST_ASSERT_EQ(v_file_write(1, big, 1), 0);
+  g_stub_console_out_len = 0;
+  TEST_ASSERT_EQ(v_console_writer_step(0), 255);
+  TEST_ASSERT_EQ(v_file_write(1, big, 45), 45); /* space again */
+  TEST_ASSERT_EQ(v_console_writer_step(0), 45);
+}
+
 /* A device with no wait op cannot be waited on. */
 static void test_wait_unsupported(void) {
   reset();
@@ -198,10 +241,13 @@ static void test_wait_unsupported(void) {
 }
 
 static const test_case_t devfs_cases[] = {
+    TEST_CASE(test_console_write_direct_without_writer),
     TEST_CASE(test_console_rx_reaches_fd0),
     TEST_CASE(test_console_wait),
     TEST_CASE(test_console_rx_full_drops),
     TEST_CASE(test_wait_unsupported),
+    TEST_CASE(test_console_write_deferred_to_writer),
+    TEST_CASE(test_console_write_full_is_partial),
     TEST_CASE(test_fd_table_preopens_console),
     TEST_CASE(test_open_known_device),
     TEST_CASE(test_open_unknown_returns_error),

@@ -199,13 +199,32 @@ int v_file_close(int fd) {
   return r;
 }
 
-// --- /dev/console -----------------------------------------------------------
-static int console_write(void *priv, const void *buf, uint32_t len) {
-  (void)priv;
-  // Blocking write in NUL-terminated chunks via the port string facade — works
-  // regardless of the DMA config. (Console output is text; embedded NULs, rare
-  // here, would truncate a chunk.)
-  const char *p = (const char *)buf;
+// --- /dev/console output ----------------------------------------------------
+// Inside a syscall the console hardware cannot be driven: SVCall runs at the
+// ceiling and masks the USB interrupt that completes a CDC transfer, so
+// hal_usb_cdc_write times out with bytes unsent ("help" echoed as "hl", todo
+// 163). So once a writer task exists, a write only queues here and wakes it;
+// v_console_writer_step does the hardware write in thread mode. Same split as
+// the VFS worker, and like it the application runs the writer, at a priority
+// above the tasks that print -- then the wake preempts on syscall return and
+// output comes out in the order it was written.
+//
+// Until a writer has run, writes go straight to the hardware as they always
+// did: before the scheduler, in examples that never start one, and on routes
+// where a direct write is fine.
+#ifndef CONSOLE_TX_SIZE
+#define CONSOLE_TX_SIZE 256
+#endif
+static char con_tx[CONSOLE_TX_SIZE];
+static volatile uint16_t con_tx_head, con_tx_tail;
+static StaticSemaphore_t con_tx_sem_store;
+static SemaphoreHandle_t con_tx_sem;
+static volatile uint8_t con_writer_seen;
+
+// Write to the hardware, in NUL-terminated chunks via the port string facade --
+// works regardless of the DMA config. (Console output is text; embedded NULs,
+// rare here, would truncate a chunk.)
+static void console_emit(const char *p, uint32_t len) {
   char tmp[128];
   uint32_t done = 0;
   while (done < len) {
@@ -226,7 +245,53 @@ static int console_write(void *priv, const void *buf, uint32_t len) {
 #endif
     done += chunk;
   }
-  return (int)len;
+}
+
+// Returns how much was taken, which is less than `len` when the queue is full;
+// the caller retries the rest (v_printf does) rather than the syscall waiting.
+static int console_write(void *priv, const void *buf, uint32_t len) {
+  (void)priv;
+  const char *p = (const char *)buf;
+  if (!con_writer_seen) {
+    console_emit(p, len);
+    return (int)len;
+  }
+  uint32_t n = 0;
+  for (; n < len; n++) {
+    uint16_t next = (uint16_t)((con_tx_head + 1u) % CONSOLE_TX_SIZE);
+    if (next == con_tx_tail)
+      break;
+    con_tx[con_tx_head] = p[n];
+    con_tx_head = next;
+  }
+  if (n) {
+    int woke = 0;
+    (void)v_semaphore_give_from_isr(con_tx_sem, &woke);
+    if (woke) // the writer outranks us: let it drain on syscall return
+      v_port_trigger_pendsv();
+  }
+  return (int)n;
+}
+
+int v_console_writer_step(uint32_t ticks) {
+  con_writer_seen = 1;
+  if (con_tx_tail == con_tx_head &&
+      v_semaphore_take(con_tx_sem, ticks) != VA_PASS)
+    return 0;
+  int total = 0;
+  while (con_tx_tail != con_tx_head) {
+    char tmp[64];
+    uint32_t n = 0;
+    uint16_t t = con_tx_tail;
+    while (n < sizeof tmp && t != con_tx_head) {
+      tmp[n++] = con_tx[t];
+      t = (uint16_t)((t + 1u) % CONSOLE_TX_SIZE);
+    }
+    console_emit(tmp, n);
+    con_tx_tail = t; // free the space only once it is on the wire
+    total += (int)n;
+  }
+  return total;
 }
 
 /* --- console input ----------------------------------------------------------
@@ -267,8 +332,11 @@ static void console_rx_sink(const uint8_t *data, uint16_t len) {
     con_rx[con_head] = data[i];
     con_head = next;
   }
+  int woke = 0;
   if (con_rx_sem)
-    (void)v_semaphore_give_from_isr(con_rx_sem, NULL);
+    (void)v_semaphore_give_from_isr(con_rx_sem, &woke);
+  if (woke) // the reader outranks what we interrupted: switch on return
+    v_port_trigger_pendsv();
 }
 
 static int console_read(void *priv, void *buf, uint32_t len) {
@@ -319,7 +387,9 @@ static const v_file_ops kmsg_ops = {
 
 void v_devfs_init(void) {
   con_head = con_tail = 0;
+  con_tx_head = con_tx_tail = 0;
   con_rx_sem = v_semaphore_create_binary_static(&con_sem_store);
+  con_tx_sem = v_semaphore_create_binary_static(&con_tx_sem_store);
   con_rx_armed = v_port_hw_console_rx_irq_init(console_rx_sink);
   v_devfs_register("/dev/console", &console_ops, NULL);
   v_devfs_register("/dev/kmsg", &kmsg_ops, NULL);

@@ -124,8 +124,18 @@ int v_printf(const char *fmt, ...) {
   va_start(args, fmt);
   int n = vaprint_fmt_buf(buf, sizeof(buf), fmt, args);
   va_end(args);
-  if (n > 0)
-    v_file_write(1, buf, (uint32_t)n);
+  // The console takes what fits in its queue and says how much; the rest is
+  // retried here, in the caller's task, rather than waited for in the syscall.
+  // ponytail: a full queue is slept on a tick at a time; a "writable" wait on
+  // the fd is the upgrade if a printer ever has to share the CPU that finely.
+  for (int done = 0; done < n;) {
+    int w = v_file_write(1, buf + done, (uint32_t)(n - done));
+    if (w < 0)
+      break;
+    if (w == 0)
+      task_delay(1);
+    done += w;
+  }
   return n;
 }
 #endif // VAIOS_DEVFS
