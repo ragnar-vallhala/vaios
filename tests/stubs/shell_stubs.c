@@ -66,3 +66,19 @@ int v_strcmp(const char *a, const char *b) {
   }
   return (int)((unsigned char)*a) - (int)((unsigned char)*b);
 }
+
+/* What ps and heap read. One task -- the synthetic one above -- and a heap
+   with fixed numbers, so the commands run end to end here. */
+int task_snapshot_list(TCB **out, int max) {
+  if (max < 1)
+    return 0;
+  out[0] = &_shell_test_task;
+  return 1;
+}
+const char *task_get_name(const TCB *t) {
+  (void)t;
+  return "shell";
+}
+uint32_t v_get_heap_size(void) { return 4096; }
+uint32_t v_get_heap_allocation_count(void) { return 2; }
+uint32_t v_get_heap_allocation_size(void) { return 100; }

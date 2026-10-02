@@ -32,6 +32,13 @@
 #include "port.h" // v_port_is_privileged: which side of the helper we are
 #include "shell.h"
 #include "structure.h" // the helper's queues
+#include "memory.h"    // heap
+#if VAIOS_MODULE_BUS
+#include "bus.h"
+#endif
+#if VAIOS_MODULE_VFS
+#include "vfs.h"
+#endif
 #include "task.h"
 #include "utils.h"
 #include "vfile.h" // v_file_read — console input through fd 0
@@ -123,6 +130,15 @@ static int cmd_history(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_PERF
 static int cmd_perf(shell_t *sh, int argc, char **argv);
 #endif
+static int cmd_ps(shell_t *sh, int argc, char **argv);
+static int cmd_heap(shell_t *sh, int argc, char **argv);
+#if VAIOS_MODULE_BUS
+static int cmd_bus(shell_t *sh, int argc, char **argv);
+#endif
+#if VAIOS_MODULE_VFS
+static int cmd_ls(shell_t *sh, int argc, char **argv);
+static int cmd_cat(shell_t *sh, int argc, char **argv);
+#endif
 
 /* In flash. `perf` is privileged: it dumps through the kernel's own print path,
    which writes the kmsg ring in kernel memory. Run from an unprivileged shell
@@ -135,6 +151,16 @@ static const Command_t builtins[] = {
     {cmd_history, "history", "recent command lines", 0},
 #if VAIOS_MODULE_PERF
     {cmd_perf, "perf", "[show|reset] kernel counters", SHELL_CMD_PRIV},
+#endif
+    {cmd_ps, "ps", "tasks", SHELL_CMD_PRIV},
+    {cmd_heap, "heap", "kernel heap in use", SHELL_CMD_PRIV},
+#if VAIOS_MODULE_BUS
+    {cmd_bus, "bus", "topics and their counters", SHELL_CMD_PRIV},
+#endif
+#if VAIOS_MODULE_VFS
+    /* Not privileged: the task file API goes through the VFS worker. */
+    {cmd_ls, "ls", "[dir] list a directory (default /mnt/0:)", 0},
+    {cmd_cat, "cat", "<file> print a file", 0},
 #endif
 };
 static const int n_builtins = (int)(sizeof builtins / sizeof builtins[0]);
@@ -413,6 +439,105 @@ static int cmd_perf(shell_t *sh, int argc, char **argv) {
   return 1;
 }
 #endif /* VAIOS_MODULE_PERF */
+
+/* --- inspection ----------------------------------------------------------
+ * ps, heap and bus read kernel memory (the task table, the allocator's
+ * counters, the bus registry) and so are SHELL_CMD_PRIV; ls and cat use the
+ * task file API and run in the shell. */
+
+static int cmd_ps(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  (void)argc;
+  (void)argv;
+  static const char *const st[] = {"rdy", "run", "blk", "dly", "term"};
+  TCB *t[16];
+  int n = task_snapshot_list(t, 16);
+  v_printf("  id pri state name\r\n");
+  for (int i = 0; i < n; i++) {
+    unsigned s = (unsigned)t[i]->status;
+    v_printf("  %d  %d   %s   %s", (int)t[i]->task_id, (int)t[i]->priority,
+             st[s <= 4u ? s : 0u], task_get_name(t[i]));
+#if VAIOS_MODULE_PERF
+    v_perf_task_t ps;
+    v_perf_task_stats(t[i], &ps);
+    v_printf("  stack %d/%d", (int)ps.stack_peak, (int)ps.stack_size);
+#endif
+    v_printf("\r\n");
+  }
+  return 0;
+}
+
+static int cmd_heap(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  (void)argc;
+  (void)argv;
+  v_printf("  %d of %d bytes in %d blocks\r\n",
+           (int)v_get_heap_allocation_size(), (int)v_get_heap_size(),
+           (int)v_get_heap_allocation_count());
+  return 0;
+}
+
+#if VAIOS_MODULE_BUS
+static int cmd_bus(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  (void)argc;
+  (void)argv;
+  const v_bus_topic_t *t;
+  int i = 0;
+  for (; (t = v_bus_topic_nth(i)) != NULL; i++) {
+    v_bus_topic_stats_t st;
+    if (v_bus_topic_stats(t, &st) != VA_PASS)
+      continue;
+    v_printf("  %s  pub=%d drop=%d evict=%d queued=%d subs=%d\r\n", t->name,
+             (int)st.published, (int)st.dropped, (int)st.evicted,
+             (int)st.queued, (int)st.subs);
+  }
+  if (i == 0)
+    v_printf("  no topics\r\n");
+  return 0;
+}
+#endif
+
+#if VAIOS_MODULE_VFS
+#define SHELL_IO_TICKS 500 /* how long a file call waits for the VFS worker */
+
+static int cmd_ls(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  const char *path = argc > 1 ? argv[1] : "/mnt/0:";
+  int d = v_vfs_diropen(path, SHELL_IO_TICKS);
+  if (d < 0) {
+    v_printf("ls: %s: error %d\r\n", path, d);
+    return 1;
+  }
+  vfs_dirent_t e;
+  while (v_vfs_dirnext(d, &e, SHELL_IO_TICKS) == 1)
+    v_printf(e.is_dir ? "  %s/\r\n" : "  %s  %d\r\n", e.name, (int)e.size);
+  v_vfs_close(d, SHELL_IO_TICKS);
+  return 0;
+}
+
+static int cmd_cat(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  if (argc < 2) {
+    v_printf("usage: cat <file>\r\n");
+    return 1;
+  }
+  int fd = v_vfs_open(argv[1], VFS_O_RDONLY, SHELL_IO_TICKS);
+  if (fd < 0) {
+    v_printf("cat: %s: error %d\r\n", argv[1], fd);
+    return 1;
+  }
+  char buf[65];
+  int n;
+  while ((n = v_vfs_read(fd, buf, sizeof buf - 1, SHELL_IO_TICKS)) > 0) {
+    buf[n] = '\0'; /* text: an embedded NUL ends the chunk early */
+    v_printf("%s", buf);
+  }
+  v_vfs_close(fd, SHELL_IO_TICKS);
+  v_printf("\r\n");
+  return n < 0 ? 1 : 0;
+}
+#endif
 
 /* --- lifecycle ------------------------------------------------------------ */
 

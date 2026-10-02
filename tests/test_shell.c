@@ -204,6 +204,17 @@ static void test_runtime_command_is_never_privileged(void) {
   TEST_ASSERT(seen_sh == &g_sh); /* ran as an ordinary command */
 }
 
+/* The inspection built-ins exist, ps and heap are privileged (they read kernel
+ * memory, so an unprivileged shell sends them to the helper), and both run. */
+static void test_inspection_builtins(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(shell_find_command(&g_sh, "ps")->flags, SHELL_CMD_PRIV);
+  TEST_ASSERT_EQ(shell_find_command(&g_sh, "heap")->flags, SHELL_CMD_PRIV);
+  char l1[] = "ps", l2[] = "heap";
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l1), 0);
+  TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 0);
+}
+
 static void test_find_unknown_and_empty(void) {
   shell_reset();
   TEST_ASSERT(shell_find_command(&g_sh, "nope") == NULL);
@@ -458,6 +469,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_shells_are_independent),
     TEST_CASE(test_exec_routes_by_privilege),
     TEST_CASE(test_runtime_command_is_never_privileged),
+    TEST_CASE(test_inspection_builtins),
     TEST_CASE(test_find_unknown_and_empty),
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),

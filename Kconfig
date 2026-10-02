@@ -193,6 +193,10 @@ config HEAP_SIZE
     # benchmark example is its own CMake target with no Kconfig choice, so it
     # still needs CONFIG_HEAP_SIZE set by hand (docs/benchmark/bus-ipc.md).
     default 0x8000 if EXAMPLE_SD_USER
+    # The shell example built with -DVAIOS_MODULE_VFS=ON -DVAIOS_MODULE_BUS=ON
+    # (ls/cat/bus) carries FatFs and a bus pool: 11 KiB of .bss, and 0x16000
+    # then ran past the end of an F401's RAM. It used 9 KiB of heap.
+    default 0x10000 if EXAMPLE_SHELL
     default 0x16000
 config HEAP_WATERMARK_ENABLE
     bool "Panic when heap usage crosses the watermark"

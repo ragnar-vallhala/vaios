@@ -32,6 +32,20 @@
 #include "vaios.h"
 #include "vaios_config.h"
 #include "vfile.h"
+#if VAIOS_MODULE_VFS
+#include "vfs.h"
+#endif
+#if VAIOS_MODULE_BUS
+#include "bus.h"
+#endif
+
+#if VAIOS_MODULE_BUS
+/* Something for `bus` to list. Nothing subscribes, and a bus frees a message
+   nobody will read rather than counting it, so its counters stay at 0. */
+V_BUS_POOL(demo, 32, 8);
+static v_bus_t demo_bus;
+static v_bus_topic_t demo_topic;
+#endif
 
 static int cmd_echo(shell_t *sh, int argc, char **argv) {
   (void)sh;
@@ -101,9 +115,21 @@ static void console_writer(void *arg) {
     v_console_writer_step(V_WAIT_FOREVER);
 }
 
+#if VAIOS_MODULE_VFS
+/* The filesystem's worker, for `ls` and `cat`: privileged, because it drives
+   the SD card, and in thread mode, where an SDIO completion can arrive. */
+static void vfsio(void *arg) {
+  (void)arg;
+  for (;;)
+    v_vfs_worker_step(100);
+}
+#endif
+
 int main(void) {
+  /* The SD card only when the filesystem is built in (CONFIG_VAIOS_MODULE_VFS),
+     which is what gives the shell `ls` and `cat`. */
   vaios_init_config_t cfg = {.internal_clock_setup = 1,
-                             .internal_sd_card_setup = 0};
+                             .internal_sd_card_setup = VAIOS_MODULE_VFS};
   /* v_system_init, not v_init: it does the same clock/heap/scheduler bring-up
      and then two things this example cannot do without.
 
@@ -123,6 +149,19 @@ int main(void) {
   task_create_privileged(console_writer, NULL, 1024, 2, "conout");
 #else
   task_create_named(console_writer, NULL, 1024, 2, "conout");
+#endif
+#if VAIOS_MODULE_BUS
+  v_bus_init(&demo_bus, demo_blocks, demo_desc, 32, 8);
+  v_bus_topic_declare(&demo_bus, &demo_topic, "shell.demo", NULL);
+#endif
+#if VAIOS_MODULE_VFS
+  if (v_vfs_mount("/mnt/") != VA_PASS)
+    v_log(LOG_ERROR, "shell: no SD card mounted; ls and cat will fail");
+#if VAIOS_MPU_USER_SEPARATION
+  task_create_privileged(vfsio, NULL, 2048, 1, "vfsio");
+#else
+  task_create_named(vfsio, NULL, 2048, 1, "vfsio");
+#endif
 #endif
   task_create_named(shell_run, (void *)&shell_cfg, SHELL_TASK_STACK_SIZE, 1,
                     "shell");

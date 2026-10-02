@@ -1196,6 +1196,17 @@ static v_bus_topic_t *topic_by_name(const char *name) {
   return 0;
 }
 
+const v_bus_topic_t *v_bus_topic_nth(int n) {
+  for (int i = 0; i < BUS_REG_MAX; i++) {
+    if (!bus_reg[i])
+      continue;
+    for (v_bus_topic_t *t = bus_reg[i]->topics; t; t = t->next)
+      if (n-- == 0)
+        return t;
+  }
+  return 0;
+}
+
 typedef struct {
   v_bus_topic_t *topic;
   v_bus_sub_t sub; // used only when the handle was opened V_BUS_RD

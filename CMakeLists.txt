@@ -149,7 +149,7 @@ add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
 # portable/ must agree with the kernel target about whether the module exists.
 add_compile_definitions(VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>)
 
-message(STATUS "VAIOS modules: terminal=${VAIOS_MODULE_SHELL} vfs=${VAIOS_MODULE_VFS} "
+message(STATUS "VAIOS modules: shell=${VAIOS_MODULE_SHELL} vfs=${VAIOS_MODULE_VFS} "
                "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
                "perf=${VAIOS_MODULE_PERF} bus=${VAIOS_MODULE_BUS}")
 
