@@ -185,6 +185,33 @@ int v_file_wait(int fd, uint32_t ticks) {
   return e->ops->wait(e->priv, ticks);
 }
 
+int v_file_dup(int oldfd) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc1(SYS_dup, (uint32_t)oldfd);
+#endif
+  v_fd_entry *e = fd_lookup(oldfd);
+  if (!e || e->ops->close)
+    return -1; // only a plain device: its close has nothing to count
+  return v_fd_alloc(e->ops, e->priv);
+}
+
+int v_file_dup2(int oldfd, int newfd) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_dup2, (uint32_t)oldfd, (uint32_t)newfd);
+#endif
+  v_fd_entry *e = fd_lookup(oldfd);
+  if (!e || e->ops->close || newfd < 0 || newfd >= VAIOS_MAX_FDS)
+    return -1;
+  v_fd_entry *n = &current_task->fds[newfd];
+  if (n->ops && n->ops->close)
+    return -1; // replacing it would skip its close and leak a reference
+  n->ops = e->ops;
+  n->priv = e->priv;
+  return newfd;
+}
+
 int v_file_close(int fd) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
@@ -400,6 +427,56 @@ static const v_file_ops console_ops = {
     .wait = console_wait,
 };
 
+// --- /dev/capture -------------------------------------------------------------
+// Where a redirected command's output goes (the shell's `> file`). Writes run
+// inside the syscall, where the filesystem cannot be used, so they land here,
+// in kernel RAM, and the shell copies them into the file once the command is
+// done. '\r' is dropped, so a file gets Unix line endings from output written
+// for a terminal. Full, it says so once and drops the rest: the shell cannot
+// drain it while the command it is waiting on is still printing.
+// One buffer: there is one shell, and it runs one command at a time.
+#ifndef CAPTURE_SIZE
+#define CAPTURE_SIZE 2048
+#endif
+#define CAPTURE_CUT "\n[vsh: output cut here, past what > can hold]\n"
+static char cap_buf[CAPTURE_SIZE];
+static uint16_t cap_len, cap_rd;
+static uint8_t cap_cut;
+
+static int capture_write(void *priv, const void *buf, uint32_t len) {
+  (void)priv;
+  const char *p = (const char *)buf;
+  for (uint32_t i = 0; i < len && !cap_cut; i++) {
+    if (p[i] == '\r')
+      continue;
+    if (cap_len >= CAPTURE_SIZE - (sizeof CAPTURE_CUT - 1)) {
+      for (const char *m = CAPTURE_CUT; *m; m++)
+        cap_buf[cap_len++] = *m;
+      cap_cut = 1;
+      break;
+    }
+    cap_buf[cap_len++] = p[i];
+  }
+  return (int)len; // taken, kept or not: a writer must never wait on this
+}
+
+// Drains; once everything is read the buffer is empty for the next command.
+static int capture_read(void *priv, void *buf, uint32_t len) {
+  (void)priv;
+  uint32_t n = 0;
+  while (n < len && cap_rd < cap_len)
+    ((char *)buf)[n++] = cap_buf[cap_rd++];
+  if (cap_rd == cap_len)
+    cap_len = cap_rd = cap_cut = 0;
+  return (int)n;
+}
+
+static const v_file_ops capture_ops = {
+    .read = capture_read,
+    .write = capture_write,
+    .close = NULL,
+};
+
 // --- /dev/kmsg (read-only kernel log ring) ----------------------------------
 static int kmsg_dev_read(void *priv, void *buf, uint32_t len) {
   (void)priv;
@@ -420,6 +497,7 @@ void v_devfs_init(void) {
   con_rx_armed = v_port_hw_console_rx_irq_init(console_rx_sink);
   v_devfs_register("/dev/console", &console_ops, NULL);
   v_devfs_register("/dev/kmsg", &kmsg_ops, NULL);
+  v_devfs_register("/dev/capture", &capture_ops, NULL);
 }
 
 #endif // VAIOS_DEVFS

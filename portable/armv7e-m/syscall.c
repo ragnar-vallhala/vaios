@@ -351,6 +351,10 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
     return v_file_read((int)args[0], (void *)(uintptr_t)args[1], args[2]);
   case SYS_close:
     return v_file_close((int)args[0]);
+  case SYS_dup:
+    return v_file_dup((int)args[0]);
+  case SYS_dup2:
+    return v_file_dup2((int)args[0], (int)args[1]);
   case SYS_file_wait:
     /* Park until fd args[0] has data, or args[1] ticks. Blocking,
        deferred-result; nothing of the caller's is held while it sleeps. */

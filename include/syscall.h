@@ -93,6 +93,9 @@ typedef enum {
   SYS_file_wait = 48,   // park until an fd has data to read (v_file_wait).
                         //   Reads stay non-blocking; the console's RX
                         //   interrupt is what wakes this.
+  SYS_dup = 49,         // a second fd for the same open device (plain
+  SYS_dup2 = 50,        //   devices only); dup2 puts it at a chosen fd. The
+                        //   shell's > redirection points fd 1 at /dev/capture.
   SYS_MAX
 } v_syscall_t;
 

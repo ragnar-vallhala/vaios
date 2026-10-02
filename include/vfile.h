@@ -60,6 +60,13 @@ int v_file_open(const char *path, int flags);
 int v_file_read(int fd, void *buf, uint32_t len);
 int v_file_write(int fd, const void *buf, uint32_t len);
 int v_file_close(int fd);
+// Duplicate a descriptor, as dup/dup2: v_file_dup gives the lowest free fd,
+// v_file_dup2 puts the copy at `newfd` (replacing what was there). Plain
+// devices only -- an fd whose object counts its opens (a sem, a queue, a file)
+// is refused, as is replacing one, since the count would go wrong. The new fd,
+// or < 0.
+int v_file_dup(int oldfd);
+int v_file_dup2(int oldfd, int newfd);
 // Block until `fd` has data to read, or `ticks` pass (V_WAIT_FOREVER for no
 // deadline). 0 when ready, < 0 on timeout or when the fd cannot wait.
 int v_file_wait(int fd, uint32_t ticks);

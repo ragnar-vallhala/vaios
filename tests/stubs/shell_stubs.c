@@ -60,12 +60,22 @@ int v_printf(const char *fmt, ...) {
     snprintf(g_stub_last_prompt, sizeof g_stub_last_prompt, "vsh%s%s> ", a, b);
     g_stub_prompts++;
   }
+  /* Through fd 1 as the real one goes, so a redirect (fd 1 -> /dev/capture)
+     catches it; and into g_stub_out, for the tests that read the output. */
+  char tmp[128]; /* the real v_printf's buffer: a longer print is cut */
   va_start(ap, fmt);
-  int room = (int)sizeof g_stub_out - g_stub_out_len;
-  int n = vsnprintf(g_stub_out + g_stub_out_len, (size_t)room, fmt, ap);
+  int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
   va_end(ap);
-  if (n > 0)
-    g_stub_out_len += n < room ? n : room - 1;
+  if (n > (int)sizeof tmp - 1)
+    n = (int)sizeof tmp - 1;
+  if (n > 0) {
+    v_file_write(1, tmp, (uint32_t)n);
+    int room = (int)sizeof g_stub_out - g_stub_out_len - 1;
+    int k = n < room ? n : room;
+    memcpy(g_stub_out + g_stub_out_len, tmp, (size_t)(k > 0 ? k : 0));
+    g_stub_out_len += k > 0 ? k : 0;
+    g_stub_out[g_stub_out_len] = '\0';
+  }
   return n;
 }
 
@@ -135,7 +145,7 @@ char g_stub_mkdir_path[64];
 
 typedef struct {
   char path[64];
-  char data[700];
+  char data[4096];
   int len, used;
 } sfile_t;
 static sfile_t _files[6];
@@ -227,6 +237,8 @@ int v_vfs_write(int fd, const void *buf, uint32_t len, uint32_t ticks) {
   (void)ticks;
   sfile_t *f = &_files[_fds[fd - 10].file];
   int *pos = &_fds[fd - 10].pos;
+  if (*pos + (int)len > (int)sizeof f->data)
+    len = (uint32_t)((int)sizeof f->data - *pos); /* the fake card is small */
   memcpy(f->data + *pos, buf, len);
   *pos += (int)len;
   if (*pos > f->len)

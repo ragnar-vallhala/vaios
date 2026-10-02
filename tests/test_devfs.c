@@ -85,10 +85,10 @@ static void test_open_known_device(void) {
 
 /* A node name is matched whole: only a name ending in '/' claims the paths under
  * it (that is how a mount works — see v_vfs_mount). Without that rule
- * "/dev/cap" would answer for "/dev/capture" and hand out the wrong device. */
+ * "/dev/cap" would answer for "/dev/capsule" and hand out the wrong device. */
 static void test_open_longer_path_is_not_a_prefix_match(void) {
   reset();
-  TEST_ASSERT(v_file_open("/dev/capture", 0) < 0);
+  TEST_ASSERT(v_file_open("/dev/capsule", 0) < 0);
   TEST_ASSERT(v_file_open("/dev/cap/more", 0) < 0);
   TEST_ASSERT(v_file_open("/dev/ca", 0) < 0);
   TEST_ASSERT(v_file_open("/dev/cap", 0) >= 0); /* the node itself still opens */
@@ -245,6 +245,26 @@ static void test_console_lf_becomes_crlf(void) {
   TEST_ASSERT_EQ(memcmp(g_stub_console_out, "a\r\nb\r\nc\r\n", 9), 0);
 }
 
+/* dup / dup2 copy a plain device's fd, and refuse anything whose close
+ * counts (here: /dev/cap, which has a close op), or replacing one. */
+static void test_dup(void) {
+  reset();
+  int d = v_file_dup(1); /* the console: plain */
+  TEST_ASSERT(d >= 3);
+  TEST_ASSERT_EQ(v_file_write(d, "x", 1), 1);
+  int capfd = v_file_open("/dev/capture", 0);
+  TEST_ASSERT_EQ(v_file_dup2(capfd, 1), 1);  /* fd 1 now captures */
+  TEST_ASSERT_EQ(v_file_write(1, "a\r\nb", 4), 4);
+  char buf[8] = {0};
+  TEST_ASSERT_EQ(v_file_read(capfd, buf, sizeof buf), 3); /* '\r' dropped */
+  TEST_ASSERT_EQ(memcmp(buf, "a\nb", 3), 0);
+  TEST_ASSERT_EQ(v_file_dup2(d, 1), 1); /* the console back */
+  int c = v_file_open("/dev/cap", 0);   /* has a close op */
+  TEST_ASSERT(v_file_dup(c) < 0);
+  TEST_ASSERT(v_file_dup2(1, c) < 0); /* would skip its close */
+  TEST_ASSERT(v_file_dup2(1, 99) < 0);
+}
+
 /* A device with no wait op cannot be waited on. */
 static void test_wait_unsupported(void) {
   reset();
@@ -258,6 +278,7 @@ static const test_case_t devfs_cases[] = {
     TEST_CASE(test_console_wait),
     TEST_CASE(test_console_rx_full_drops),
     TEST_CASE(test_wait_unsupported),
+    TEST_CASE(test_dup),
     TEST_CASE(test_console_write_deferred_to_writer),
     TEST_CASE(test_console_write_full_is_partial),
     TEST_CASE(test_console_lf_becomes_crlf),

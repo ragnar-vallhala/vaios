@@ -308,6 +308,12 @@ static void test_head_and_tail(void) {
   put("0:/g.txt", "a\nb\nlast"); /* no final newline */
   TEST_ASSERT_EQ(run("tail -n 1 g.txt"), 0);
   TEST_ASSERT(out_is("last"));
+  /* lines longer in total than one v_printf (128 bytes) come out whole */
+  put("0:/long.txt", "a-line-that-is-sixty-characters-long-to-fill-up-space-xxxxx\n"
+                      "b-line-that-is-sixty-characters-long-to-fill-up-space-xxxxx\n"
+                      "c-line-that-is-sixty-characters-long-to-fill-up-space-xxxxx\n");
+  TEST_ASSERT_EQ(run("tail -n 3 long.txt"), 0);
+  TEST_ASSERT_EQ((int)v_strlen(g_stub_out), 180);
   TEST_ASSERT_EQ(run("head -n x f.txt"), 1); /* not a number */
   TEST_ASSERT_EQ(run("head nope.txt"), 1);
 }
@@ -411,6 +417,49 @@ static void test_reboot(void) {
   TEST_ASSERT_EQ(run("reboot"), 0);
   TEST_ASSERT_EQ(g_stub_resets, 1);
   TEST_ASSERT_EQ(shell_find_command(&g_sh, "reboot")->flags, SHELL_CMD_PRIV);
+}
+
+/* > and >>: the command's output lands in the file, with Unix line endings;
+ * >> appends; the console has it back afterwards; a > with no file, or not
+ * last, is refused before anything runs. */
+static void test_redirect(void) {
+  int len;
+  shell_reset();
+  stub_fs_reset();
+  TEST_ASSERT_EQ(run("uptime > up.txt"), 0);
+  const char *d = stub_fs_get("0:/up.txt", &len);
+  TEST_ASSERT(d && len == 12 && memcmp(d, "up 0h 0m 0s\n", 12) == 0);
+  TEST_ASSERT_EQ(run("uptime >> up.txt"), 0);
+  d = stub_fs_get("0:/up.txt", &len);
+  TEST_ASSERT_EQ(len, 24);
+  TEST_ASSERT_EQ(run("uptime > up.txt"), 0); /* > truncates */
+  stub_fs_get("0:/up.txt", &len);
+  TEST_ASSERT_EQ(len, 12);
+  TEST_ASSERT_EQ(run("uptime >"), 1);
+  TEST_ASSERT_EQ(run("uptime > a.txt b"), 1);
+  TEST_ASSERT(stub_fs_get("0:/a.txt", &len) == NULL); /* nothing ran */
+  /* fd 1 is the console again: a plain command prints, nothing is caught */
+  TEST_ASSERT_EQ(run("uptime"), 0);
+  stub_fs_get("0:/up.txt", &len);
+  TEST_ASSERT_EQ(len, 12);
+}
+
+/* More output than /dev/capture holds: the file says where it was cut. */
+static void test_redirect_overflow(void) {
+  int len;
+  shell_reset();
+  stub_fs_reset();
+  static char big[650];
+  for (int i = 0; i < 650; i++)
+    big[i] = 'x';
+  stub_fs_put("0:/b.bin", big, 650);
+  TEST_ASSERT_EQ(run("hexdump b.bin 0 650 > dump.txt"), 0); /* ~3 KB */
+  const char *d = stub_fs_get("0:/dump.txt", &len);
+  TEST_ASSERT(d != NULL && len > 1900 && len <= 2048);
+  int found = 0;
+  for (int i = 0; i + 15 <= len && !found; i++)
+    found = memcmp(d + i, "output cut here", 15) == 0;
+  TEST_ASSERT(found);
 }
 
 static void test_uptime(void) {
@@ -715,6 +764,8 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_kill),
     TEST_CASE(test_ctrl_c_interrupts),
     TEST_CASE(test_uptime),
+    TEST_CASE(test_redirect),
+    TEST_CASE(test_redirect_overflow),
     TEST_CASE(test_loglevel),
     TEST_CASE(test_reboot),
     TEST_CASE(test_find_unknown_and_empty),

@@ -47,6 +47,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* vsh does all its I/O through file descriptors, so it needs devfs; Kconfig
+   makes VAIOS_MODULE_SHELL depend on it. A build that has the CMake module on
+   with devfs off (the no-HAL QEMU smoke) gets nothing from this file, rather
+   than calls to a v_printf that was never declared. */
+#if VAIOS_DEVFS
+
 #ifndef SHELL_LOG
 #define SHELL_LOG(fmt, ...)                                                    \
   v_log(SHELL_LOG_LEVEL, "[SHELL] " fmt, ##__VA_ARGS__)
@@ -593,7 +599,7 @@ static int cmd_perf(shell_t *sh, int argc, char **argv) {
   (void)sh;
   const char *sub = (argc > 1) ? argv[1] : "show";
   if (v_strcmp(sub, "show") == 0) {
-    v_perf_dump();
+    v_perf_dump_to(v_printf); /* through fd 1, so > can catch it */
     return 0;
   }
   if (v_strcmp(sub, "reset") == 0) {
@@ -885,7 +891,9 @@ static int bus_sub(shell_t *sh, const char *topic, long count) {
       }
     }
     line[o] = '\0';
-    v_printf("  [%d] %s\r\n", (int)rx.len, line);
+    v_printf("  [%d] ", (int)rx.len);
+    sh_puts(line); /* up to 3 x 64 characters: past one v_printf */
+    v_printf("\r\n");
     got++;
   }
   v_file_close(fd);
@@ -1234,7 +1242,7 @@ static int cmd_tail(shell_t *sh, int argc, char **argv) {
   if (want == 0)
     k = n;
   buf[n] = '\0';
-  v_printf("%s", buf + k);
+  sh_puts(buf + k); /* not v_printf: that formats into 128 bytes */
   return 0;
 }
 
@@ -1394,6 +1402,7 @@ void shell_init(shell_t *sh, const Command_t *cmds, int count) {
   sh->esc = 0;
   sh->prev_cr = 0;
   sh->req_fd = sh->done_fd = -1;
+  sh->capture = 0;
 #if VAIOS_MODULE_VFS
   sh_copy(sh->cwd, "0:/", CMD_MAX_LEN);
 #endif
@@ -1416,6 +1425,7 @@ static const Command_t *priv_nth(const Command_t *table, int count, int n) {
 
 typedef struct {
   int16_t index;          /* which privileged command */
+  uint8_t capture;        /* its output is redirected: write to /dev/capture */
   char line[CMD_MAX_LEN]; /* the arguments, re-joined: a copy, not a pointer */
 } shell_req_t;
 
@@ -1439,6 +1449,7 @@ static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
   }
   shell_req_t r;
   r.index = (int16_t)priv_index(sh, c);
+  r.capture = sh->capture;
   int n = 0;
   for (int a = 0; a < argc; a++) {
     if (a && n < CMD_MAX_LEN - 1)
@@ -1478,11 +1489,87 @@ void shell_helper_run(void *args) {
         priv_nth(cfg ? cfg->cmds : NULL, cfg ? cfg->count : 0, r.index);
     char *argv[SHELL_MAX_ARGV];
     int argc = shell_tokenize(r.line, argv, SHELL_MAX_ARGV);
+    /* A redirected command's output goes where the shell's would: point our
+       fd 1 at the capture device for the call, as the shell did its own. */
+    int cap = -1, saved = -1;
+    if (r.capture) {
+      cap = v_file_open("/dev/capture", 0);
+      saved = v_file_dup(1);
+      if (cap >= 0 && saved >= 0)
+        v_file_dup2(cap, 1);
+    }
     int rc = (c && argc > 0) ? c->fn(NULL, argc, argv) : 1;
+    if (saved >= 0) {
+      v_file_dup2(saved, 1);
+      v_file_close(saved);
+    }
+    if (cap >= 0)
+      v_file_close(cap);
     v_queue_send(dfd, &rc, V_WAIT_FOREVER);
   }
 }
 #endif /* VAIOS_MPU_USER_SEPARATION */
+
+static int run_one(shell_t *sh, const Command_t *c, int argc, char **argv) {
+  if (!(c->flags & SHELL_CMD_PRIV))
+    return c->fn(sh, argc, argv);
+#if VAIOS_MPU_USER_SEPARATION
+  if (!v_port_is_privileged())
+    return via_helper(sh, c, argc, argv);
+#endif
+  return c->fn(NULL, argc, argv); /* privileged already: run it here */
+}
+
+#if VAIOS_MODULE_VFS
+/* `cmd ... > file` / `>> file`, the redirect as the last two words. Output
+   cannot be written to a file while the command runs -- a write to fd 1 is a
+   syscall, and the filesystem cannot be used inside one -- so fd 1 points at
+   /dev/capture for the command, and what it caught goes into the file after.
+   The file is opened FIRST, so a bad path fails before anything runs. */
+static int run_redirected(shell_t *sh, const Command_t *c, int argc,
+                          char **argv, const char *target, int append) {
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "vsh", target, path, sizeof path))
+    return 1;
+  int vf = v_vfs_open(path,
+                      VFS_O_WRONLY | VFS_O_CREAT |
+                          (append ? VFS_O_APPEND : VFS_O_TRUNC),
+                      SHELL_IO_TICKS);
+  if (vf < 0) {
+    v_printf("vsh: %s: error %d\r\n", sh_display_path(path), vf);
+    return 1;
+  }
+  int cap = v_file_open("/dev/capture", 0);
+  int saved = v_file_dup(1);
+  if (cap < 0 || saved < 0 || v_file_dup2(cap, 1) < 0) {
+    v_printf("vsh: cannot redirect (no free descriptor)\r\n");
+    if (cap >= 0)
+      v_file_close(cap);
+    if (saved >= 0)
+      v_file_close(saved);
+    v_vfs_close(vf, SHELL_IO_TICKS);
+    return 1;
+  }
+  sh->capture = 1;
+  int rc = run_one(sh, c, argc, argv);
+  sh->capture = 0;
+  v_file_dup2(saved, 1); /* the console again, before anything is said */
+  v_file_close(saved);
+  char buf[128];
+  int n;
+  while ((n = v_file_read(cap, buf, sizeof buf)) > 0)
+    if (v_vfs_write(vf, buf, (uint32_t)n, SHELL_IO_TICKS) != n) {
+      v_printf("vsh: %s: write failed\r\n", sh_display_path(path));
+      rc = 1;
+      while (v_file_read(cap, buf, sizeof buf) > 0)
+        ; /* empty it for the next command */
+      break;
+    }
+  v_file_close(cap);
+  v_vfs_close(vf, SHELL_IO_TICKS);
+  return rc;
+}
+#endif
 
 int shell_exec(shell_t *sh, char *line) {
   char *argv[SHELL_MAX_ARGV];
@@ -1495,14 +1582,21 @@ int shell_exec(shell_t *sh, char *line) {
     return -1;
   }
   int rc;
-  if (!(c->flags & SHELL_CMD_PRIV))
-    rc = c->fn(sh, argc, argv);
-#if VAIOS_MPU_USER_SEPARATION
-  else if (!v_port_is_privileged())
-    rc = via_helper(sh, c, argc, argv);
+#if VAIOS_MODULE_VFS
+  int redir = 0;
+  for (int a = 1; a < argc; a++)
+    if (v_strcmp(argv[a], ">") == 0 || v_strcmp(argv[a], ">>") == 0)
+      redir = a;
+  if (redir) {
+    if (redir != argc - 2) {
+      v_printf("vsh: > and >> take one file, last: cmd ... > file\r\n");
+      return 1;
+    }
+    rc = run_redirected(sh, c, redir, argv, argv[redir + 1],
+                        argv[redir][1] == '>');
+  } else
 #endif
-  else
-    rc = c->fn(NULL, argc, argv); /* privileged already: run it here */
+    rc = run_one(sh, c, argc, argv);
   if (rc != 0 && rc != SHELL_INTERRUPTED)
     v_printf("%s: exit %d\r\n", argv[0], rc);
   return rc;
@@ -1530,3 +1624,5 @@ void shell_run(void *args) {
     sh_prompt(&sh);
   }
 }
+
+#endif /* VAIOS_DEVFS */
