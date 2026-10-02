@@ -7,6 +7,10 @@
  *          arrives already split. Commands used to receive the raw line as a
  *          void* and parse it themselves.
  *
+ *   Commands are a const table, in flash, handed to the shell task. With the
+ *          shell's mutable state on its own stack, that is what lets it run
+ *          unprivileged under VAIOS_MPU_USER_SEPARATION.
+ *
  *   Commands run IN THE SHELL TASK, synchronously. That is what a shell is, and
  *          it is why the argument pointers are safe to use for the duration of
  *          the call. The cost is that a command which never returns wedges the
@@ -29,14 +33,16 @@
 #include "vaios_config.h"
 #include "vfile.h"
 
-static int cmd_echo(int argc, char **argv) {
+static int cmd_echo(shell_t *sh, int argc, char **argv) {
+  (void)sh;
   for (int i = 1; i < argc; i++)
     v_printf(i + 1 < argc ? "%s " : "%s", argv[i]);
   v_printf("\r\n");
   return 0;
 }
 
-static int cmd_ticks(int argc, char **argv) {
+static int cmd_ticks(shell_t *sh, int argc, char **argv) {
+  (void)sh;
   (void)argc;
   (void)argv;
   v_printf("%d\r\n", (int)v_get_ticks());
@@ -44,20 +50,24 @@ static int cmd_ticks(int argc, char **argv) {
 }
 
 /* The long-work pattern: the body runs in a task of its own so the shell stays
-   responsive, and the command itself returns immediately. */
+   responsive, and the command itself returns immediately. The child is spawned,
+   not task_create()d: task_create is not a syscall, and the shell may be
+   unprivileged. A spawned child is unprivileged too and cannot outrank us. */
 static void spinner(void *arg) {
   (void)arg;
   for (int i = 0; i < 5; i++) {
-    v_log(LOG_INFO, "spinner: %d", i);
+    v_printf("spinner: %d\r\n", i);
     v_delay(500);
   }
   task_exit();
 }
 
-static int cmd_spin(int argc, char **argv) {
+static int cmd_spin(shell_t *sh, int argc, char **argv) {
+  (void)sh;
   (void)argc;
   (void)argv;
-  if (task_create(spinner, NULL, 512, 1) == 0) {
+  v_task_spawn_t d = {spinner, NULL, 512, 1, "spinner"};
+  if (v_task_spawn(&d) <= 0) {
     v_printf("spin: could not create the task\r\n");
     return 1;
   }
@@ -65,11 +75,24 @@ static int cmd_spin(int argc, char **argv) {
   return 0;
 }
 
+/* The startup commands, and what the shell task is started with. Both const,
+   so both are in flash: the shell reads them however unprivileged it is. A
+   command can still add more at runtime with shell_register_command(sh, ...);
+   those go into the shell task's own memory. */
+static const Command_t commands[] = {
+    {cmd_echo, "echo", "print the arguments"},
+    {cmd_ticks, "ticks", "kernel tick count"},
+    {cmd_spin, "spin", "start a background task"},
+};
+static const shell_config_t shell_cfg = {
+    commands, (int)(sizeof commands / sizeof commands[0])};
+
 /* Console output from a task is queued by the write syscall and put on the wire
    here, in thread mode: inside the syscall the USB interrupt that completes a
    CDC transfer is masked. Privileged, because it drives the hardware; above the
    shell's priority, so a write is drained before the shell runs on and output
-   stays in order. */
+   stays in order. 1024: it peaked at 348 bytes on CDC, and under MPU
+   separation a task block must be a power of two. */
 static void console_writer(void *arg) {
   (void)arg;
   for (;;)
@@ -94,17 +117,13 @@ int main(void) {
      not a thing to depend on. */
   v_system_init(&cfg);
 
-  shell_init();
-  shell_register_command(cmd_echo, "echo", "print the arguments");
-  shell_register_command(cmd_ticks, "ticks", "kernel tick count");
-  shell_register_command(cmd_spin, "spin", "start a background task");
-
 #if VAIOS_MPU_USER_SEPARATION
-  task_create_privileged(console_writer, NULL, 768, 2, "conout");
+  task_create_privileged(console_writer, NULL, 1024, 2, "conout");
 #else
-  task_create_named(console_writer, NULL, 768, 2, "conout");
+  task_create_named(console_writer, NULL, 1024, 2, "conout");
 #endif
-  task_create_named(shell_run, NULL, SHELL_TASK_STACK_SIZE, 1, "shell");
+  task_create_named(shell_run, (void *)&shell_cfg, SHELL_TASK_STACK_SIZE, 1,
+                    "shell");
   scheduler_start();
   while (1)
     ;

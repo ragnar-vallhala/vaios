@@ -9,8 +9,9 @@
  * the editing) made the whole thing ordinary code that a test can drive by
  * feeding bytes.
  *
- * shell_init() clears the registry, re-registers the built-ins and resets the
- * editor, so each test calls it first for a deterministic start.
+ * Every test resets one shell_t, the way shell_run keeps one on the shell
+ * task's stack, so each starts clean. Nothing here touches shell.c statics:
+ * there are none left.
  */
 #include "framework.h"
 #include "shell.h"
@@ -20,7 +21,11 @@
 
 extern int g_stub_prompts;
 
-static int dummy_cb(int argc, char **argv) {
+static shell_t g_sh;
+static void shell_reset(void) { shell_init(&g_sh, NULL, 0); }
+
+static int dummy_cb(shell_t *sh, int argc, char **argv) {
+  (void)sh;
   (void)argc;
   (void)argv;
   return 0;
@@ -29,23 +34,23 @@ static int dummy_cb(int argc, char **argv) {
 /* Feed a NUL-terminated string as if it arrived byte by byte on the UART. */
 static void feed(const char *s) {
   while (*s)
-    shell_feed(*s++);
+    shell_feed(&g_sh, *s++);
 }
 
 /* --- registry -------------------------------------------------------------- */
 
-static void test_init_registers_builtins(void) {
-  shell_init();
-  TEST_ASSERT(shell_find_command("help") != NULL);
-  TEST_ASSERT(shell_find_command("clear") != NULL);
-  TEST_ASSERT(shell_find_command("version") != NULL);
-  TEST_ASSERT(shell_find_command("history") != NULL);
+static void test_init_has_builtins(void) {
+  shell_reset();
+  TEST_ASSERT(shell_find_command(&g_sh, "help") != NULL);
+  TEST_ASSERT(shell_find_command(&g_sh, "clear") != NULL);
+  TEST_ASSERT(shell_find_command(&g_sh, "version") != NULL);
+  TEST_ASSERT(shell_find_command(&g_sh, "history") != NULL);
 }
 
 static void test_register_then_find(void) {
-  shell_init();
-  TEST_ASSERT_EQ(shell_register_command(dummy_cb, "mine", "a help line"), 0);
-  Command_t *c = shell_find_command("mine");
+  shell_reset();
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, dummy_cb, "mine", "a help line"), 0);
+  const Command_t *c = shell_find_command(&g_sh, "mine");
   TEST_ASSERT(c != NULL);
   TEST_ASSERT(c->fn == dummy_cb);
   TEST_ASSERT_EQ(v_strcmp(c->help, "a help line"), 0);
@@ -54,26 +59,26 @@ static void test_register_then_find(void) {
 /* A name longer than the line buffer could never be matched, so it is refused
  * at registration rather than accepted and silently lost. */
 static void test_register_rejects_overlong_name(void) {
-  shell_init();
+  shell_reset();
   static char big[CMD_MAX_LEN + 8];
   for (unsigned i = 0; i < sizeof(big) - 1; i++)
     big[i] = 'x';
   big[sizeof(big) - 1] = '\0';
-  TEST_ASSERT_EQ(shell_register_command(dummy_cb, big, NULL), 1);
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, dummy_cb, big, NULL), 1);
 }
 
 /* But a long-ish name that DOES fit must work: this is the case the old lookup
  * broke, because it sized its token buffer by the history depth. */
 static void test_find_long_command_name(void) {
-  shell_init();
-  TEST_ASSERT_EQ(shell_register_command(dummy_cb, "diagnostics", NULL), 0);
-  Command_t *c = shell_find_command("diagnostics");
+  shell_reset();
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, dummy_cb, "diagnostics", NULL), 0);
+  const Command_t *c = shell_find_command(&g_sh, "diagnostics");
   TEST_ASSERT(c != NULL);
   TEST_ASSERT_EQ(v_strcmp(c->name, "diagnostics"), 0);
 }
 
 static void test_register_full_returns_1(void) {
-  shell_init();
+  shell_reset();
   static const char *names[MAX_CMD_NUMBER + 4] = {0};
   static char store[MAX_CMD_NUMBER + 4][8];
   int accepted = 0;
@@ -83,28 +88,84 @@ static void test_register_full_returns_1(void) {
     store[i][2] = (char)('a' + (i / 26));
     store[i][3] = '\0';
     names[i] = store[i];
-    if (shell_register_command(dummy_cb, names[i], NULL) == 0)
+    if (shell_register_command(&g_sh, dummy_cb, names[i], NULL) == 0)
       accepted++;
     else
       break;
   }
-  /* The built-ins already occupy slots, so this stops short of MAX. */
-  TEST_ASSERT(accepted < MAX_CMD_NUMBER);
-  TEST_ASSERT_EQ(shell_register_command(dummy_cb, "zzz", NULL), 1);
+  /* The built-ins are in flash now, so every runtime slot is the caller's. */
+  TEST_ASSERT_EQ(accepted, MAX_CMD_NUMBER);
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, dummy_cb, "zzz", NULL), 1);
+}
+
+/* Startup commands come from a const table -- in flash on target, readable by
+ * an unprivileged shell -- and are found alongside the built-ins. */
+static int other_cb(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  (void)argc;
+  (void)argv;
+  return 7;
+}
+static const Command_t startup_cmds[] = {
+    {dummy_cb, "echo", "print the arguments"},
+    {other_cb, "ticks", NULL},
+};
+static void test_startup_table_found(void) {
+  shell_init(&g_sh, startup_cmds, 2);
+  const Command_t *c = shell_find_command(&g_sh, "ticks");
+  TEST_ASSERT(c == &startup_cmds[1]); /* the flash entry itself, not a copy */
+  TEST_ASSERT(shell_find_command(&g_sh, "echo") != NULL);
+  TEST_ASSERT(shell_find_command(&g_sh, "help") != NULL); /* built-ins too */
+  /* The runtime table is separate, and empty. */
+  TEST_ASSERT_EQ(g_sh.extra_count, 0);
+}
+
+/* A command reaches its shell through its first argument, which is how one
+ * can register another at runtime -- into the shell's own memory. */
+static int adder_cb(shell_t *sh, int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  return shell_register_command(sh, other_cb, "added", NULL);
+}
+static void test_command_registers_at_runtime(void) {
+  shell_reset();
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, adder_cb, "add", NULL), 0);
+  TEST_ASSERT(shell_find_command(&g_sh, "added") == NULL);
+  const Command_t *c = shell_find_command(&g_sh, "add");
+  TEST_ASSERT_EQ(c->fn(&g_sh, 0, NULL), 0);
+  c = shell_find_command(&g_sh, "added");
+  TEST_ASSERT(c != NULL);
+  TEST_ASSERT_EQ(c->fn(&g_sh, 0, NULL), 7);
+}
+
+/* Two shells share nothing: the state is the shell_t, not file scope. */
+static void test_shells_are_independent(void) {
+  static shell_t other;
+  shell_reset();
+  shell_init(&other, NULL, 0);
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, dummy_cb, "mine", NULL), 0);
+  TEST_ASSERT(shell_find_command(&other, "mine") == NULL);
+  char out[CMD_MAX_LEN];
+  feed("half");
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
+  shell_feed(&other, 'x');
+  shell_feed(&other, '\n');
+  TEST_ASSERT_EQ(shell_poll(&other, out, sizeof out), 1);
+  TEST_ASSERT_EQ(v_strcmp(out, "x"), 0); /* g_sh's half line did not leak */
 }
 
 static void test_find_unknown_and_empty(void) {
-  shell_init();
-  TEST_ASSERT(shell_find_command("nope") == NULL);
-  TEST_ASSERT(shell_find_command("") == NULL);
-  TEST_ASSERT(shell_find_command(NULL) == NULL);
+  shell_reset();
+  TEST_ASSERT(shell_find_command(&g_sh, "nope") == NULL);
+  TEST_ASSERT(shell_find_command(&g_sh, "") == NULL);
+  TEST_ASSERT(shell_find_command(&g_sh, NULL) == NULL);
 }
 
 static void test_register_rejects_null(void) {
-  shell_init();
-  TEST_ASSERT_EQ(shell_register_command(NULL, "x", NULL), 1);
-  TEST_ASSERT_EQ(shell_register_command(dummy_cb, NULL, NULL), 1);
-  TEST_ASSERT_EQ(shell_register_command(dummy_cb, "", NULL), 1);
+  shell_reset();
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, NULL, "x", NULL), 1);
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, dummy_cb, NULL, NULL), 1);
+  TEST_ASSERT_EQ(shell_register_command(&g_sh, dummy_cb, "", NULL), 1);
 }
 
 /* --- tokenizer ------------------------------------------------------------- */
@@ -144,77 +205,77 @@ static void test_tokenize_empty_and_bounds(void) {
  * ESCAPE_SEQ_LEN long, then chopped that many bytes off, so a short command
  * never ran and the line ending was assumed rather than handled. */
 static void test_editor_short_line_submits(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("ls\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "ls"), 0);
 }
 
 static void test_editor_accepts_cr_and_crlf(void) {
   char out[CMD_MAX_LEN];
-  shell_init();
+  shell_reset();
   feed("help\r");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
 
-  shell_init();
+  shell_reset();
   feed("help\r\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
   /* The trailing LF must not submit a second, empty line -- nor reprompt as
      if one had been entered, which doubled the prompt on CRLF terminals. */
   g_stub_prompts = 0;
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   TEST_ASSERT_EQ(g_stub_prompts, 0);
 
   /* A bare LF on its own is still an empty line and reprompts. */
   feed("\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   TEST_ASSERT_EQ(g_stub_prompts, 1);
 }
 
 static void test_editor_incomplete_line_waits(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("vers");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   feed("ion\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "version"), 0);
 }
 
 static void test_editor_backspace(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("helq\b\bp\n"); /* "helq" -> backspace twice -> "he" -> 'p' -> "hep" */
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "hep"), 0);
 }
 
 static void test_editor_backspace_on_empty_is_harmless(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("\b\b\bok\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "ok"), 0);
 }
 
 static void test_editor_ctrl_c_abandons(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("garbage\003");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   feed("help\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
 }
 
 static void test_editor_empty_line_does_not_dispatch(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("\n\n\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
 }
 
 /* A line longer than CMD_MAX_LEN stops accepting characters rather than
@@ -225,15 +286,15 @@ static void test_editor_empty_line_does_not_dispatch(void) {
  * FIFO and the '\n' is among what gets dropped -- see the next test, which is
  * about that on purpose. */
 static void test_editor_overlong_line_is_truncated(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   for (int i = 0; i < CMD_MAX_LEN + 32; i++) {
-    shell_feed('a');
+    shell_feed(&g_sh, 'a');
     if ((i % 16) == 15)
-      TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+      TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   }
-  shell_feed('\n');
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  shell_feed(&g_sh, '\n');
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   /* Truncated to what the line can hold, NUL-terminated, never overrun. */
   TEST_ASSERT_EQ((int)v_strlen(out), CMD_MAX_LEN - 1);
 }
@@ -242,84 +303,84 @@ static void test_editor_overlong_line_is_truncated(void) {
  * producer is an interrupt, so it drops rather than waits. What must NOT happen
  * is corruption -- the shell stays usable and the next line is clean. */
 static void test_editor_survives_fifo_overflow(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   for (int i = 0; i < SHELL_INPUT_FIFO_SIZE * 3; i++)
-    shell_feed('z');
-  shell_feed('\n'); /* dropped with the rest of the tail */
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+    shell_feed(&g_sh, 'z');
+  shell_feed(&g_sh, '\n'); /* dropped with the rest of the tail */
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
 
   /* The partial line survives, as it would on any terminal where you typed a
      lot and never pressed Enter -- and because it is now full, further
      characters are refused rather than overrunning. ^C is the way out, and
      after it the shell is clean. */
   feed("help\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT(v_strcmp(out, "help") != 0); /* the z-line, not "help" */
 
-  shell_feed(0x03);
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  shell_feed(&g_sh, 0x03);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   feed("help\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
 }
 
 /* --- history -------------------------------------------------------------- */
 
 static void test_history_up_recalls(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("first\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   feed("second\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
 
   /* Up twice reaches "first"; submitting it yields it again. */
   feed("\033[A\033[A\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "first"), 0);
 }
 
 static void test_history_down_returns_to_fresh_line(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("only\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   /* Up to "only", then down past it: the line is empty again, so Enter does
      not dispatch. */
   feed("\033[A\033[B\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
 }
 
 static void test_history_up_at_start_is_harmless(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("\033[A\033[A");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 0);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
   feed("help\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
 }
 
 /* An unknown escape must be swallowed, not typed into the line. */
 static void test_editor_unknown_escape_swallowed(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("a\033[Cb\n"); /* ESC [ C is right-arrow, which we do not implement */
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "ab"), 0);
 }
 
 static void test_history_dedupes_immediate_repeat(void) {
-  shell_init();
+  shell_reset();
   char out[CMD_MAX_LEN];
   feed("same\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   feed("same\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   /* One entry, so a second Up cannot go further back. */
   feed("\033[A\033[A\n");
-  TEST_ASSERT_EQ(shell_poll(out, sizeof out), 1);
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
   TEST_ASSERT_EQ(v_strcmp(out, "same"), 0);
 }
 
@@ -329,7 +390,7 @@ static void test_history_dedupes_immediate_repeat(void) {
  * otherwise wedge it on semihosting and the host port. */
 extern uint32_t g_stub_sem_last_ticks;
 static void test_wait_without_rx_irq_polls(void) {
-  shell_init();
+  shell_reset();
   g_stub_sem_last_ticks = 0;
   TEST_ASSERT_EQ(v_file_wait(0, V_WAIT_FOREVER), -1);
   TEST_ASSERT_EQ(g_stub_sem_last_ticks, MS_TO_TICKS(10));
@@ -337,11 +398,14 @@ static void test_wait_without_rx_irq_polls(void) {
 
 static const test_case_t shell_cases[] = {
     TEST_CASE(test_wait_without_rx_irq_polls),
-    TEST_CASE(test_init_registers_builtins),
+    TEST_CASE(test_init_has_builtins),
     TEST_CASE(test_register_then_find),
     TEST_CASE(test_register_rejects_overlong_name),
     TEST_CASE(test_find_long_command_name),
     TEST_CASE(test_register_full_returns_1),
+    TEST_CASE(test_startup_table_found),
+    TEST_CASE(test_command_registers_at_runtime),
+    TEST_CASE(test_shells_are_independent),
     TEST_CASE(test_find_unknown_and_empty),
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),

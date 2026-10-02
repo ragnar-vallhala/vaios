@@ -585,7 +585,8 @@ config CMD_BUFFER_SIZE
     default 10
     help
       How many submitted lines the up/down arrows can walk back through. Costs
-      CMD_BUFFER_SIZE * CMD_MAX_LEN bytes of static kernel RAM.
+      CMD_BUFFER_SIZE * CMD_MAX_LEN bytes of the shell task's stack (the shell's
+      state lives there, not in kernel RAM -- see SHELL_TASK_STACK_SIZE).
 
       This is a LINE COUNT, not a byte size. The lookup used to size its token
       buffer by this symbol, which made any command name longer than
@@ -600,22 +601,22 @@ config CMD_MAX_LEN
       The whole line, command and arguments together. 32 was tight once
       arguments existed (`perf save /mnt/0:perf.csv` is 26).
 config MAX_CMD_NUMBER
-    int "Maximum registered commands"
+    int "Maximum commands registered at runtime"
     range 4 64
     default 16
     help
-      Includes the built-ins (help, clear, version, history, and perf when
-      VAIOS_MODULE_PERF is on), so the default leaves room for a dozen of your
-      own. shell_register_command returns 1 once this is reached.
+      Slots for shell_register_command, in the shell task's own memory (12
+      bytes each, on its stack). The built-ins and the startup table handed to
+      shell_run are const tables in flash and take none of them.
+      shell_register_command returns 1 once this is reached.
 config SHELL_INPUT_FIFO_SIZE
     int "Shell input FIFO (bytes)"
     range 16 512
     default 64
     help
-      The lock-free SPSC buffer between the console RX interrupt and the shell
-      task. It only has to absorb what arrives between two polls of the shell,
-      so it is small; a paste larger than this loses the tail rather than
-      making the ISR wait.
+      Staging between a read of fd 0 and the line editor, in the shell task's
+      memory. The console's own 128-byte ring absorbs bursts; this only holds
+      what one read hands over, so it is small.
 config SHELL_MAX_ARGV
     int "Maximum tokens per command line"
     range 2 32
@@ -623,9 +624,17 @@ config SHELL_MAX_ARGV
 config SHELL_TASK_STACK_SIZE
     int "Shell task stack size (bytes)"
     range 512 8192
-    default 2048
+    default 4096
     help
-      Measured on an F401 with `perf show`, the shell task's high-water mark was
+      The shell's whole state is on this stack now -- history, line, input
+      staging and the runtime registry, about 1 KiB at the defaults -- so it can
+      run unprivileged. Measured on an F401 with it there, the high-water mark
+      was 1828 bytes: 89% of the old 2048, with a command's own frame still to
+      come on top. Under VAIOS_MPU_USER_SEPARATION a task block must be a power
+      of two (an MPU region), so the next size up is 4096 -- 3072 is refused at
+      task creation.
+
+      Before that, measured on an F401 with `perf show`, the high-water mark was
       948 bytes of a 1024-byte stack -- 93%, with 76 bytes spare. That is too
       close to trust: shell_run holds the line buffer (CMD_MAX_LEN) and the argv
       array on its own frame, the print path adds a 128-byte local on top, and a

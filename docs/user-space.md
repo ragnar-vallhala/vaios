@@ -69,8 +69,10 @@ as that one task's own region — not a syscall.
 
 **Because the kernel would end up calling user code with privilege:**
 `v_pbus_submit` and the cyclic-job API (a job carries `start`/`done` function
-pointers), `shell_register_command`, the bus's callback notification mode. A
-task that wants callback semantics blocks in a thread of its own.
+pointers), the bus's callback notification mode. A task that wants callback
+semantics blocks in a thread of its own. (The shell is not on this list: it runs
+in its own task, from a command table in flash and state on its own stack, and
+calls commands in that task's context -- the kernel calls nothing.)
 
 **Because the handle cannot be validated:** the raw-handle IPC API
 (`v_semaphore_take`/`give`, `v_mutex_lock`/`unlock`) is refused with `-EPERM` for
