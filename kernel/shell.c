@@ -318,6 +318,14 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       continue;
     }
 
+    if (c == 0x0C) { /* ^L: redraw -- typed, or a host attaching (port.h) */
+      /* A fresh prompt with the line so far, not readline's clear-screen: on
+         attach the terminal has just opened, and wiping it would also wipe
+         what the terminal printed about the connection. `clear` clears. */
+      v_printf("\r\n" SHELL_PROMPT "%s", sh->line);
+      continue;
+    }
+
     if (c == '\b' || c == 0x7F) { /* backspace / DEL */
       if (sh->len > 0) {
         sh->len--;

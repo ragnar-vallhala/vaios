@@ -155,9 +155,49 @@ extern void v_kernel_tick(void);
 #ifdef NAVHAL
 void hal_timebase_tick(void); // NavHAL timebase.c; not in the public navhal.h
 #endif
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+static void (*_console_rx_sink)(const uint8_t *, uint16_t);
+
+/* A host opening the port raises DTR, and the console reports that the way a
+ * terminal would ask for a redraw: one form feed (^L) into the RX path, which
+ * the shell answers with a fresh prompt. Without it the prompt was printed once
+ * at boot, before anyone listened, and the first thing a user saw was nothing.
+ *
+ * Polled from the tick because NavHAL tracks DTR (SET_CONTROL_LINE_STATE) but
+ * has no callback for it -- one load per tick, and nothing wakes until a host
+ * actually attaches. The OTG_FS interrupt (level 8) feeds the same sink and
+ * outranks SysTick (14), so the push is made with it masked: the sink's ring has
+ * one producer at a time. */
+/* Not at the edge itself, but this long after it, and only if DTR is still up.
+ * Linux raises DTR inside open(), while the tty is still in its default cooked,
+ * echoing mode; the terminal program switches it to raw a moment later. A
+ * prompt sent into that gap is echoed straight back as typing -- seen on the
+ * F401 as "vaios> v" fragments in the line. */
+#define CONSOLE_ATTACH_SETTLE_TICKS (100000u / TICK_PERIOD_US) /* 100 ms */
+
+static void console_attach_poll(void) {
+  static uint32_t up; /* ticks DTR has been high; 0 = down */
+  if (!_console_rx_sink)
+    return;
+  if (!hal_usb_cdc_connected()) {
+    up = 0;
+    return;
+  }
+  if (up <= CONSOLE_ATTACH_SETTLE_TICKS && ++up == CONSOLE_ATTACH_SETTLE_TICKS) {
+    static const uint8_t ff = 0x0C;
+    uint32_t st = ENTER_CRITICAL_FROM_ISR();
+    _console_rx_sink(&ff, 1);
+    EXIT_CRITICAL_FROM_ISR(st);
+  }
+}
+#endif
+
 void SysTick_Handler(void) {
 #ifdef NAVHAL
   hal_timebase_tick();
+#endif
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  console_attach_poll();
 #endif
   v_kernel_tick();
 }
@@ -296,7 +336,9 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
     return 0;
 #if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   /* The CDC driver calls this from the OTG_FS interrupt instead of queueing
-     for hal_usb_cdc_read. Its callback type is exactly this signature. */
+     for hal_usb_cdc_read. Its callback type is exactly this signature. Kept
+     here as well, for the attach ^L (console_attach_poll). */
+  _console_rx_sink = sink;
   return hal_usb_cdc_set_rx_callback(sink) == HAL_OK;
 #elif defined(CONSOLE_UART_RX_IRQ)
   _console_rx_sink = sink;

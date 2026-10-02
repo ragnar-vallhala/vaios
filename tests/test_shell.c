@@ -296,6 +296,21 @@ static void test_editor_accepts_cr_and_crlf(void) {
   TEST_ASSERT_EQ(g_stub_prompts, 1);
 }
 
+/* ^L redraws: one fresh prompt, and the line being typed survives it. It is
+ * also what the CDC console delivers when a host attaches, so a terminal
+ * opened after boot gets a prompt without pressing anything. */
+static void test_editor_ctrl_l_redraws(void) {
+  shell_reset();
+  char out[CMD_MAX_LEN];
+  feed("he\014");
+  g_stub_prompts = 0;
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0);
+  TEST_ASSERT_EQ(g_stub_prompts, 1);
+  feed("lp\n");
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
+  TEST_ASSERT_EQ(v_strcmp(out, "help"), 0);
+}
+
 static void test_editor_incomplete_line_waits(void) {
   shell_reset();
   char out[CMD_MAX_LEN];
@@ -477,6 +492,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_tokenize_empty_and_bounds),
     TEST_CASE(test_editor_short_line_submits),
     TEST_CASE(test_editor_accepts_cr_and_crlf),
+    TEST_CASE(test_editor_ctrl_l_redraws),
     TEST_CASE(test_editor_incomplete_line_waits),
     TEST_CASE(test_editor_backspace),
     TEST_CASE(test_editor_backspace_on_empty_is_harmless),
