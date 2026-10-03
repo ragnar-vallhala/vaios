@@ -366,7 +366,7 @@ int v_console_writer_step(uint32_t ticks) {
  * instead of waiting for a signal nobody will send.
  */
 #ifndef CONSOLE_RX_SIZE
-#define CONSOLE_RX_SIZE 128 /* holds a pasted line at 115200 with room to spare */
+#define CONSOLE_RX_SIZE 256 /* a UART DMA half-ring (128) arrives in one piece */
 #endif
 #define CONSOLE_POLL_TICKS MS_TO_TICKS(10)
 

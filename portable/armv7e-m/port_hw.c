@@ -156,12 +156,14 @@ extern void v_kernel_tick(void);
 void hal_timebase_tick(void); // NavHAL timebase.c; not in the public navhal.h
 #endif
 #if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
-/* Console input on a UART. With UART DMA the receive costs no interrupt at
- * all: DMA fills a circular ring by itself, and the tick hands what arrived to
- * the console every CONSOLE_RX_POLL ticks -- one register read when nothing
- * did. Without DMA, one RXNE interrupt per byte. (NavHAL's USART vectors are
- * defined only with UART DMA, but Default_Handler dispatches to whatever is
- * attached, so the RXNE path works without them -- navhal todo 171.) */
+/* Console input on a UART. With UART DMA, DMA fills a circular ring by
+ * itself and the console is handed what arrived on three events: the line
+ * going idle after a burst, and the ring reaching its half-way and wrap
+ * points -- so a burst costs a handful of interrupts, not one a byte, and one
+ * longer than the ring is drained before DMA can overwrite it. Without DMA,
+ * one RXNE interrupt per byte. (NavHAL's USART vectors are defined only with
+ * UART DMA, but Default_Handler dispatches to whatever is attached, so the
+ * RXNE path works without them -- navhal todo 171.) */
 #define CONSOLE_UART_RX_IRQ 1
 static void (*_console_rx_sink)(const uint8_t *, uint16_t);
 
@@ -176,21 +178,20 @@ static void console_uart_rx_isr(void) {
 #if NAVHAL_CONFIG_DRV_DMA && NAVHAL_CONFIG_DRV_UART_DMA
 #define CONSOLE_RX_DMA 1
 /* A whole number of cache lines, line-aligned: on the F7 the ring is
-   invalidated before it is read, and invalidation works on whole lines. 256
-   holds what arrives between two drains (8 ms is ~92 bytes at 115200) with
-   room for a burst. */
+   invalidated before it is read, and invalidation works on whole lines. The
+   half-way interrupt drains it every 128 bytes whatever the line does. */
 #ifndef NAVHAL_CACHE_LINE
 #define NAVHAL_CACHE_LINE 32
 #endif
 #define CONSOLE_RX_RING 256
-#define CONSOLE_RX_POLL 8 /* ticks between drains */
 static uint8_t _console_rx_ring[CONSOLE_RX_RING]
     __attribute__((aligned(NAVHAL_CACHE_LINE)));
 static uint16_t _console_rx_tail;
-static uint8_t _console_rx_dma_on;
 
-/* SysTick only, so there is one producer. Hands the console every byte DMA has
-   written since last time, in at most two pieces when the ring wrapped. */
+/* From the idle-line and the DMA half/wrap interrupts, which share one
+   priority and so never interrupt each other: one producer at a time. Hands
+   the console every byte DMA has written since last time, in at most two
+   pieces when the ring wrapped. */
 static void console_rx_dma_drain(void) {
   uint16_t head;
   if (hal_uart_dma_rx_index(BOARD_CONSOLE_UART, &head) != HAL_OK ||
@@ -251,13 +252,6 @@ void SysTick_Handler(void) {
 #endif
 #if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   console_attach_poll();
-#endif
-#if defined(CONSOLE_RX_DMA)
-  static uint8_t rx_div;
-  if (_console_rx_dma_on && ++rx_div >= CONSOLE_RX_POLL) {
-    rx_div = 0;
-    console_rx_dma_drain();
-  }
 #endif
   v_kernel_tick();
 }
@@ -419,11 +413,19 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
 #elif defined(CONSOLE_UART_RX_IRQ)
   _console_rx_sink = sink;
 #if defined(CONSOLE_RX_DMA)
-  if (hal_uart_init_dma_rx(BOARD_CONSOLE_UART, _console_rx_ring,
-                           CONSOLE_RX_RING) == HAL_OK) {
-    _console_rx_dma_on = 1; /* the tick drains it from here on */
+  /* Wire the events first and start DMA last: once DMA is reading the data
+     register the RXNE fallback could never see a byte, so DMA starts only when
+     everything that drains it is in place, and anything wired is undone if it
+     cannot. */
+  if (hal_uart_attach_idle_callback(BOARD_CONSOLE_UART, console_rx_dma_drain) ==
+          HAL_OK &&
+      hal_uart_dma_rx_attach_callback(BOARD_CONSOLE_UART,
+                                      console_rx_dma_drain) == HAL_OK &&
+      hal_uart_init_dma_rx(BOARD_CONSOLE_UART, _console_rx_ring,
+                           CONSOLE_RX_RING) == HAL_OK)
     return 1;
-  }
+  hal_uart_dma_rx_attach_callback(BOARD_CONSOLE_UART, NULL);
+  hal_uart_detach_idle_callback(BOARD_CONSOLE_UART);
   /* no DMA stream for it: fall back to an interrupt per byte */
 #endif
   if (hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ,

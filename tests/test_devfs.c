@@ -183,12 +183,12 @@ static void test_console_wait(void) {
  * overwriting what the reader has not taken yet. */
 static void test_console_rx_full_drops(void) {
   reset();
-  uint8_t in[200], out[200];
-  for (int i = 0; i < 200; i++)
+  uint8_t in[300], out[300];
+  for (int i = 0; i < 300; i++)
     in[i] = (uint8_t)i;
-  g_stub_console_rx_sink(in, 200);
+  g_stub_console_rx_sink(in, 300);
   int n = v_file_read(0, out, sizeof out);
-  TEST_ASSERT_EQ(n, 127); /* CONSOLE_RX_SIZE 128, one slot kept empty */
+  TEST_ASSERT_EQ(n, 255); /* CONSOLE_RX_SIZE 256, one slot kept empty */
   TEST_ASSERT_EQ(memcmp(out, in, (size_t)n), 0);
 }
 
