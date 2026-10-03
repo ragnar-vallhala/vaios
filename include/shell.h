@@ -79,8 +79,12 @@ typedef struct Command {
  * When the shell itself is unprivileged (VAIOS_MPU_USER_SEPARATION), such a
  * command runs in the helper task (shell_helper_run) instead: the shell sends it
  * the command's index and a copy of the line, never a pointer, and waits for the
- * return code. Either way a privileged command gets sh == NULL -- the shell's
- * state is not the helper's to touch -- and argv from its own copy of the line.
+ * return code (the working directory travels as a copy too). A privileged
+ * command gets a shell whose working directory is the caller's, so a relative
+ * path means what it means to the user -- `perf save p.csv` lands where `ls`
+ * looks. Run directly, that is the shell itself; in the helper it is the
+ * helper's own context, so the user's line, history and registrations are never
+ * reached from there. argv comes from its own copy of the line.
  */
 #define SHELL_CMD_PRIV 0x1
 

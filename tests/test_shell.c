@@ -163,8 +163,7 @@ static void test_shells_are_independent(void) {
 
 /* shell_exec runs a line end to end. An ordinary command gets its shell; a
  * privileged one -- run here directly, since this build has no MPU separation
- * and so no helper -- gets NULL, exactly as it would in the helper, so a
- * command that works in one place works in the other. */
+ * and so no helper -- gets it too: its working directory is the user's. */
 static shell_t *seen_sh;
 static int seen_argc;
 static char seen_arg1[16];
@@ -191,7 +190,9 @@ static void test_exec_routes_by_privilege(void) {
 
   char l2[] = "priv x";
   TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 3);
-  TEST_ASSERT(seen_sh == NULL); /* the shell's state is not the helper's */
+  /* run directly (no MPU separation here, so no helper): the shell itself,
+     so a relative path means what it means to the user */
+  TEST_ASSERT(seen_sh == &g_sh);
   TEST_ASSERT_EQ(v_strcmp(seen_arg1, "x"), 0);
 
   char l3[] = "nosuch";

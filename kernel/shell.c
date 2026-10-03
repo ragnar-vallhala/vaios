@@ -613,6 +613,10 @@ static int cmd_history(shell_t *sh, int argc, char **argv) {
   return 0;
 }
 
+#if VAIOS_MODULE_PERF && VAIOS_MODULE_VFS
+static int sh_arg_path(const shell_t *sh, const char *cmd, const char *arg,
+                       char *out, int cap);
+#endif
 #if VAIOS_MODULE_PERF
 /* `perf [show|reset|save <path>]`. No hand-rolled argument splitting: argv[1]
    is the subcommand and argv[2] is the path, because the shell tokenized. */
@@ -634,7 +638,10 @@ static int cmd_perf(shell_t *sh, int argc, char **argv) {
       v_printf("usage: perf save <path>\r\n");
       return 1;
     }
-    int rc = v_perf_dump_to_file(argv[2]);
+    char path[CMD_MAX_LEN];
+    if (sh_arg_path(sh, "perf", argv[2], path, sizeof path))
+      return 1; /* relative to the user's working directory, like ls */
+    int rc = v_perf_dump_to_file(path);
     v_printf(rc == 0 ? "perf: saved to %s\r\n" : "perf: save failed (is VFS "
                                                   "mounted?) %s\r\n",
               argv[2]);
@@ -1736,6 +1743,9 @@ typedef struct {
   int16_t index;          /* which privileged command */
   uint8_t capture;        /* its output is redirected: write to /dev/capture */
   char line[CMD_MAX_LEN]; /* the arguments, re-joined: a copy, not a pointer */
+#if VAIOS_MODULE_VFS
+  char cwd[CMD_MAX_LEN]; /* where the user is: relative paths resolve here */
+#endif
 } shell_req_t;
 
 static int priv_index(const shell_t *sh, const Command_t *c) {
@@ -1759,6 +1769,9 @@ static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
   shell_req_t r;
   r.index = (int16_t)priv_index(sh, c);
   r.capture = sh->capture;
+#if VAIOS_MODULE_VFS
+  sh_copy(r.cwd, sh->cwd, CMD_MAX_LEN);
+#endif
   int n = 0;
   for (int a = 0; a < argc; a++) {
     if (a && n < CMD_MAX_LEN - 1)
@@ -1781,8 +1794,11 @@ static mpmc_queue_t _req_q, _done_q;
 static shell_req_t _req_buf[1];
 static int _done_buf[1];
 
+static shell_t _view; /* what a privileged command sees as its shell */
+
 void shell_helper_run(void *args) {
   const shell_config_t *cfg = (const shell_config_t *)args;
+  shell_init(&_view, cfg ? cfg->cmds : NULL, cfg ? cfg->count : 0);
   mpmc_init(&_req_q, _req_buf, 1, sizeof(shell_req_t));
   mpmc_init(&_done_q, _done_buf, 1, sizeof(int));
   v_queue_register("shell.req", &_req_q);
@@ -1807,7 +1823,13 @@ void shell_helper_run(void *args) {
       if (cap >= 0 && saved >= 0)
         v_file_dup2(cap, 1);
     }
-    int rc = (c && argc > 0) ? c->fn(NULL, argc, argv) : 1;
+    /* The command's shell: the helper's own context, in kernel memory it may
+       touch, carrying the user's working directory and nothing else of theirs. */
+#if VAIOS_MODULE_VFS
+    sh_copy(_view.cwd, r.cwd, CMD_MAX_LEN);
+    _view.cwd[CMD_MAX_LEN - 1] = '\0';
+#endif
+    int rc = (c && argc > 0) ? c->fn(&_view, argc, argv) : 1;
     if (saved >= 0) {
       v_file_dup2(saved, 1);
       v_file_close(saved);
@@ -1826,7 +1848,7 @@ static int run_one(shell_t *sh, const Command_t *c, int argc, char **argv) {
   if (!v_port_is_privileged())
     return via_helper(sh, c, argc, argv);
 #endif
-  return c->fn(NULL, argc, argv); /* privileged already: run it here */
+  return c->fn(sh, argc, argv); /* privileged already: run it here */
 }
 
 #if VAIOS_MODULE_VFS
