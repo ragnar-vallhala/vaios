@@ -26,6 +26,7 @@
  * CONSOLE_BAUDRATE that matters on the UART route. Type `help`.
  */
 #include "memory.h"
+#include "port.h" // v_port_hw_rtc_start
 #include "shell.h"
 #include "task.h"
 #include "utils.h"
@@ -156,6 +157,18 @@ static void vfsio(void *arg) {
 }
 #endif
 
+/* The RTC, started off the boot path: a cold 32.768 kHz crystal takes
+   seconds to settle, and nothing should wait for it. At idle priority, so its
+   wait only ever uses time nobody else wanted; later boots adopt the running
+   calendar at once. Until it is up, files get FatFs's fallback date and `date`
+   says no clock is running. Privileged: the RTC is the port's. */
+static void rtc_start(void *arg) {
+  (void)arg;
+  if (v_port_hw_rtc_start() != 0)
+    v_log(LOG_WARN, "rtc: no clock (no RTC, or its crystal did not start)");
+  task_exit();
+}
+
 int main(void) {
   /* The SD card only when the filesystem is built in (CONFIG_VAIOS_MODULE_VFS),
      which is what gives the shell `ls` and `cat`. */
@@ -194,6 +207,11 @@ int main(void) {
 #else
   task_create_named(vfsio, NULL, 2048, 1, "vfsio");
 #endif
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+  task_create_privileged(rtc_start, NULL, 1024, 0, "rtc");
+#else
+  task_create_named(rtc_start, NULL, 1024, 0, "rtc");
 #endif
   task_create_named(shell_run, (void *)&shell_cfg, SHELL_TASK_STACK_SIZE, 1,
                     "shell");

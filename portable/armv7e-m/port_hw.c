@@ -450,6 +450,59 @@ void v_port_hw_system_reset(void) {
     ;
 }
 
+#if defined(NAVHAL) && NAVHAL_CONFIG_DRV_RTC
+/* The crystal: a marginal one takes ten seconds from cold (the NAVIXSM's
+   measured 7-10). No LSI fallback -- an RC that drifts ~5% makes a clock that
+   looks right and is not. */
+#define RTC_LSE_TIMEOUT_MS 15000
+
+int v_port_hw_rtc_start(void) {
+  hal_rtc_config_t cfg = {.clock = HAL_RTC_CLOCK_LSE,
+                          .lse_timeout_ms = RTC_LSE_TIMEOUT_MS};
+  return hal_rtc_init(&cfg) == HAL_OK ? 0 : -1;
+}
+
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  hal_rtc_datetime_t dt;
+  if (!out || hal_rtc_get_datetime(&dt) != HAL_OK)
+    return -1;
+  out->year = dt.year;
+  out->month = dt.month;
+  out->day = dt.day;
+  out->hour = dt.hour;
+  out->minute = dt.minute;
+  out->second = dt.second;
+  return hal_rtc_is_set() ? 0 : 1;
+}
+
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  if (!in || in->year < 2000 || in->year > 2099)
+    return -1;
+  /* The calendar keeps a weekday too: Sakamoto's method, 1 = Monday. */
+  static const uint8_t t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  int y = in->year - (in->month < 3);
+  int w = (y + y / 4 - y / 100 + y / 400 + t[(in->month - 1) % 12] + in->day) % 7;
+  hal_rtc_datetime_t dt = {.year = in->year,
+                           .month = in->month,
+                           .day = in->day,
+                           .weekday = (uint8_t)(w == 0 ? 7 : w),
+                           .hour = in->hour,
+                           .minute = in->minute,
+                           .second = in->second};
+  return hal_rtc_set_datetime(&dt) == HAL_OK ? 0 : -1;
+}
+#else
+int v_port_hw_rtc_start(void) { return -1; }
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  (void)out;
+  return -1;
+}
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  (void)in;
+  return -1;
+}
+#endif
+
 uint32_t v_port_hw_cpu_hz(void) {
 #ifdef NAVHAL
   return hal_clock_get_sysclk();

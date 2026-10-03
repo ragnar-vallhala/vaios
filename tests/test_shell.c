@@ -16,6 +16,7 @@
 #include "framework.h"
 #include <string.h>
 #include "shell.h"
+#include "v_time.h"
 #include "utils.h" /* v_strcmp, v_strlen */
 #include "task.h"  /* V_WAIT_FOREVER, MS_TO_TICKS */
 #include "vfile.h" /* v_file_wait */
@@ -558,6 +559,36 @@ static void test_mv_and_df(void) {
   TEST_ASSERT(strstr(g_stub_out, "0:       30.0G    1.5G   28.5G    5%") != NULL);
 }
 
+/* date: shows the clock, says when it was never set or is not running, and
+ * sets it only from a whole, valid YYYY-MM-DD HH:MM:SS. */
+extern v_datetime_t g_stub_rtc;
+extern int g_stub_rtc_state;
+static void test_date(void) {
+  shell_reset();
+  g_stub_rtc_state = -1;
+  TEST_ASSERT_EQ(run("date"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "no clock running") != NULL);
+  g_stub_rtc_state = 1; /* running since power-up, never set */
+  g_stub_rtc = (v_datetime_t){2000, 1, 1, 0, 0, 7};
+  TEST_ASSERT_EQ(run("date"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "2000-01-01 00:00:07  (not set") != NULL);
+  TEST_ASSERT_EQ(run("date 2026-10-03 14:05:09"), 0);
+  TEST_ASSERT(out_is("2026-10-03 14:05:09\r\n"));
+  TEST_ASSERT_EQ(g_stub_rtc_state, 0);
+  TEST_ASSERT_EQ(run("date 2028-02-29 00:00:00"), 0); /* a leap day */
+  TEST_ASSERT_EQ(run("date 2026-02-29 00:00:00"), 1); /* not a leap year */
+  TEST_ASSERT_EQ(run("date 2026-13-01 00:00:00"), 1);
+  TEST_ASSERT_EQ(run("date 2026-10-03 24:00:00"), 1);
+  TEST_ASSERT_EQ(run("date 1999-12-31 23:59:59"), 1); /* the RTC's range */
+  TEST_ASSERT_EQ(run("date 2026-10-3 14:05:09"), 1);  /* two digits */
+  TEST_ASSERT_EQ(run("date 2026-10-03 14:05:09x"), 1);
+  TEST_ASSERT_EQ(run("date tomorrow"), 1);
+  TEST_ASSERT_EQ(run("date 2026 x"), 1);  /* cut short: never read past it */
+  TEST_ASSERT_EQ(run("date 2026-10 1"), 1);
+  TEST_ASSERT_EQ(g_stub_rtc.year, 2028); /* none of those touched it */
+  g_stub_rtc_state = -1;
+}
+
 static void test_uptime(void) {
   shell_reset();
   TEST_ASSERT_EQ(run("uptime"), 0);
@@ -878,6 +909,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_kill),
     TEST_CASE(test_ctrl_c_interrupts),
     TEST_CASE(test_uptime),
+    TEST_CASE(test_date),
     TEST_CASE(test_mv_and_df),
     TEST_CASE(test_i2c_scan),
     TEST_CASE(test_tab_completes_commands),

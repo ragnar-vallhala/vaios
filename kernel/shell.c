@@ -243,6 +243,7 @@ static int cmd_perf(shell_t *sh, int argc, char **argv);
 static int cmd_ps(shell_t *sh, int argc, char **argv);
 static int cmd_heap(shell_t *sh, int argc, char **argv);
 static int cmd_uptime(shell_t *sh, int argc, char **argv);
+static int cmd_date(shell_t *sh, int argc, char **argv);
 static int cmd_reboot(shell_t *sh, int argc, char **argv);
 static int cmd_loglevel(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_PERF
@@ -287,6 +288,8 @@ static const Command_t builtins[] = {
     {cmd_ps, "ps", "tasks", SHELL_CMD_PRIV},
     {cmd_heap, "heap", "kernel heap in use", SHELL_CMD_PRIV},
     {cmd_uptime, "uptime", "time since boot", 0},
+    {cmd_date, "date", "[YYYY-MM-DD HH:MM:SS] the clock, or set it",
+     SHELL_CMD_PRIV},
     {cmd_reboot, "reboot", "reset the board", SHELL_CMD_PRIV},
     {cmd_loglevel, "loglevel", "[trace|debug|info|warn|error|fatal] log threshold",
      SHELL_CMD_PRIV},
@@ -749,6 +752,72 @@ static int cmd_uptime(shell_t *sh, int argc, char **argv) {
   else
     v_printf("up %dh %dm %ds\r\n", (int)(t / 3600u), (int)(t / 60u % 60u),
              (int)(t % 60u));
+  return 0;
+}
+
+/* Exactly `n` digits at *p, as a number; -1 if they are not. Stops at the
+   first non-digit, so *p never runs past the string's end. */
+static int digits(const char **p, int n) {
+  int v = 0;
+  for (int i = 0; i < n; i++, (*p)++) {
+    if (**p < '0' || **p > '9')
+      return -1;
+    v = v * 10 + (**p - '0');
+  }
+  return v;
+}
+
+/* The separator `c` at *p: step over it and say so, or leave *p alone. */
+static int sep(const char **p, char c) {
+  if (**p != c)
+    return 0;
+  (*p)++;
+  return 1;
+}
+
+/* `date` shows the RTC's time; `date YYYY-MM-DD HH:MM:SS` sets it. Privileged:
+   the RTC is the port's. The clock keeps time across resets but not across a
+   power loss (no backup battery), so after one it says it needs setting. */
+static int cmd_date(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  v_datetime_t t;
+  if (argc == 3) {
+    const char *d = argv[1], *h = argv[2];
+    int y = digits(&d, 4), mo = sep(&d, '-') ? digits(&d, 2) : -1;
+    int da = sep(&d, '-') ? digits(&d, 2) : -1;
+    int hh = digits(&h, 2), mi = sep(&h, ':') ? digits(&h, 2) : -1;
+    int ss = sep(&h, ':') ? digits(&h, 2) : -1;
+    static const uint8_t mdays[] = {31, 28, 31, 30, 31, 30,
+                                    31, 31, 30, 31, 30, 31};
+    int leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    if (*d || *h || y < 2000 || y > 2099 || mo < 1 || mo > 12 || da < 1 ||
+        da > mdays[mo - 1] + (mo == 2 && leap) || hh < 0 || hh > 23 || mi < 0 ||
+        mi > 59 || ss < 0 || ss > 59) {
+      v_printf("date: want YYYY-MM-DD HH:MM:SS, 2000-2099\r\n");
+      return 1;
+    }
+    t.year = (uint16_t)y;
+    t.month = (uint8_t)mo;
+    t.day = (uint8_t)da;
+    t.hour = (uint8_t)hh;
+    t.minute = (uint8_t)mi;
+    t.second = (uint8_t)ss;
+    if (v_port_hw_rtc_set(&t) != 0) {
+      v_printf("date: no clock to set (the RTC has not started)\r\n");
+      return 1;
+    }
+  } else if (argc != 1) {
+    v_printf("usage: date [YYYY-MM-DD HH:MM:SS]\r\n");
+    return 1;
+  }
+  int rc = v_port_hw_rtc_get(&t);
+  if (rc < 0) {
+    v_printf("date: no clock running (still starting, or none on this board)\r\n");
+    return 1;
+  }
+  v_printf("%d-%02d-%02d %02d:%02d:%02d%s\r\n", (int)t.year, (int)t.month,
+           (int)t.day, (int)t.hour, (int)t.minute, (int)t.second,
+           rc == 1 ? "  (not set since power-up: date YYYY-MM-DD HH:MM:SS)" : "");
   return 0;
 }
 

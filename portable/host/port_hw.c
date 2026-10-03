@@ -84,6 +84,16 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
 
 uint32_t v_port_hw_cpu_hz(void) { return 0; }
 void v_port_hw_system_reset(void) { exit(0); } /* a host "reset" ends the run */
+/* No RTC on the host port. */
+int v_port_hw_rtc_start(void) { return -1; }
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  (void)out;
+  return -1;
+}
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  (void)in;
+  return -1;
+}
 
 // No non-blocking stdin either: a reader on this port gets its bytes some other
 // way (the unit tests feed the shell directly).

@@ -74,6 +74,25 @@ uint32_t v_port_hw_cpu_hz(void) { return 0; }
 int g_stub_resets;
 void v_port_hw_system_reset(void) { g_stub_resets++; }
 
+/* An RTC for `date`: g_stub_rtc_state -1 (none), 0 (set), 1 (running, unset);
+   set stores into g_stub_rtc and makes it "set". */
+v_datetime_t g_stub_rtc = {2000, 1, 1, 0, 0, 0};
+int g_stub_rtc_state = -1;
+int v_port_hw_rtc_start(void) { return g_stub_rtc_state < 0 ? -1 : 0; }
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  if (g_stub_rtc_state < 0)
+    return -1;
+  *out = g_stub_rtc;
+  return g_stub_rtc_state;
+}
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  if (g_stub_rtc_state < 0 || in->year < 2000 || in->year > 2099)
+    return -1;
+  g_stub_rtc = *in;
+  g_stub_rtc_state = 0;
+  return 0;
+}
+
 int v_port_hw_sdio_init(void) { return -1; }
 int v_port_hw_sdio_card_present(void) { return 0; }
 int v_port_hw_sdio_card_init(void) { return -1; }
