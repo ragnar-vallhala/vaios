@@ -200,9 +200,22 @@ void v_port_free_task_stack(TCB *task);
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
+// Create a task. Returns its task id, which is nonzero, or 0 if it was NOT
+// created — ALWAYS check that. The id is the only report: nothing is logged that a
+// build with LOGGING_ENABLED=n will see, and a task that silently does not exist
+// surfaces far from here, as current_task == NULL in the first-task launch.
+//
+// 0 means one of:
+//   - the heap had no room for the TCB or the stack
+//   - `size` is below VAIOS_ARCH_MIN_STACK (the port's exception frame will not fit)
+//   - `size` is not a power of two AND a per-task MPU region is in use
+//     (VAIOS_MPU_STACK_GUARD / VAIOS_MPU_USER_SEPARATION): each stack maps onto one
+//     region, so the size is rejected rather than silently rounded, which would
+//     desync the caller's view of its own stack from the region geometry.
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority);
-// As task_create, but also tags the task with a human-readable name for
+// As task_create — including the 0 return and every reason for it — but also tags
+// the task with a human-readable name for
 // diagnostics (perf dumps, telemetry). `name` must point at storage that
 // outlives the task — typically a string literal in flash; the TCB keeps the
 // pointer, not a copy. Pass NULL or "" for an unnamed task. task_create() is a
