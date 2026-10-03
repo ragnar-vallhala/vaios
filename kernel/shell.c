@@ -129,14 +129,8 @@ static void sh_banner(void) {
   v_printf("\r\n");
 }
 
-/* A path as a person reads it: the drive prefix FatFs needs ("0:") is not
-   shown for the first drive, the only one there usually is. */
-static const char *sh_display_path(const char *p) {
-  return (p[0] == '0' && p[1] == ':') ? p + 2 : p;
-}
-
 static void sh_prompt(const shell_t *sh) {
-  v_printf(SHELL_PROMPT_FMT, ":", sh_display_path(sh->cwd));
+  v_printf(SHELL_PROMPT_FMT, ":", sh->cwd);
 }
 
 /* --- ^C while a command runs ----------------------------------------------
@@ -252,6 +246,7 @@ static int cmd_hexdump(shell_t *sh, int argc, char **argv);
 static int cmd_touch(shell_t *sh, int argc, char **argv);
 static int cmd_write(shell_t *sh, int argc, char **argv);
 static int cmd_cp(shell_t *sh, int argc, char **argv);
+static int cmd_mount(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_VFS
 static int cmd_mkdir(shell_t *sh, int argc, char **argv);
 static int cmd_rm(shell_t *sh, int argc, char **argv);
@@ -303,6 +298,7 @@ static const Command_t builtins[] = {
     {cmd_touch, "touch", "<file> create it if it is not there", 0},
     {cmd_write, "write", "<file> <text...> append a line", 0},
     {cmd_cp, "cp", "<src> <dst> copy a file", 0},
+    {cmd_mount, "mount", "what is mounted where", 0},
 #if VAIOS_MODULE_VFS
     {cmd_mkdir, "mkdir", "<dir> make a directory", 0},
     {cmd_rm, "rm", "<path> remove a file or an empty directory", 0},
@@ -1116,57 +1112,33 @@ static int cmd_bus(shell_t *sh, int argc, char **argv) {
 #endif
 
 /* --- files -----------------------------------------------------------------
- * One tree, as on Unix: the card at /, and devfs's nodes under /dev -- mounted
- * over any /dev of the card's own, which it hides. A build with no card has
- * just /dev. Paths are kept as FatFs writes them ("0:/logs"), and "0:/dev..."
- * is devfs. A file on the card goes through the VFS worker; a device through
- * the fd table. Both are syscalls, so none of this needs privilege. */
+ * One tree, as on Linux. devfs's registry is the mount table: each node is a
+ * device ("/dev/kmsg") or a mount point ("/mnt/sd/", '/'-ended), and / is the
+ * directories that lead to them -- a read-only root holding dev/ and mnt/.
+ * Below a mount point is a filesystem, reached through the VFS worker, which
+ * resolves the mount itself; a device goes through the fd table. Both are
+ * syscalls, so none of this needs privilege. No card, no /mnt/sd: it is
+ * simply not in the tree. */
 #define SHELL_IO_TICKS 500 /* how long a file call waits for the VFS worker */
 
-/* `arg` against the working directory, folded into `out` as a FatFs path.
-   Drive-qualified ("0:/a") or under the mount ("/mnt/0:a") is absolute; a
-   leading '/' is the current drive's root; anything else is relative. "." and
-   ".." fold, never climbing above the drive's root. 0, or -1 if it does not
+/* `arg` against the working directory, folded into `out` as an absolute path:
+   "." and ".." resolved, never climbing above /. 0, or -1 if it does not
    fit. */
 static int sh_path(const shell_t *sh, const char *arg, char *out, int cap) {
   char full[2 * CMD_MAX_LEN];
   int n = 0;
   if (!arg)
     arg = "";
-  if (arg[0] == '/' && arg[1] == 'm' && arg[2] == 'n' && arg[3] == 't' &&
-      arg[4] == '/')
-    arg += 5; /* the VFS would strip it too */
-  const char *colon = arg;
-  while (*colon && *colon != ':' && *colon != '/')
-    colon++;
-  if (*colon == ':') { /* drive-qualified: absolute */
-    sh_copy(full, arg, (int)sizeof full);
-  } else {
-    const char *c = sh->cwd;
-    if (arg[0] == '/') /* the drive's root: just the cwd's drive */
-      while (*c && *c != ':' && n < (int)sizeof full - 1)
-        full[n++] = *c++;
-    else
-      while (*c && n < (int)sizeof full - 1)
-        full[n++] = *c++;
-    if (arg[0] == '/')
-      full[n++] = ':';
+  if (arg[0] != '/') {
+    for (const char *c = sh->cwd; *c && n < (int)sizeof full - 1;)
+      full[n++] = *c++;
     if (n < (int)sizeof full - 1)
       full[n++] = '/';
-    sh_copy(full + n, arg, (int)sizeof full - n);
   }
+  sh_copy(full + n, arg, (int)sizeof full - n);
 
-  /* fold: out = drive, then "/component" per surviving component */
   const char *p = full;
   int o = 0;
-  while (*p && *p != ':' && o < cap - 1)
-    out[o++] = *p++;
-  if (*p != ':')
-    return -1; /* no drive: nothing to resolve against */
-  if (o >= cap - 1)
-    return -1;
-  out[o++] = *p++;
-  int root = o;
   while (*p) {
     while (*p == '/')
       p++;
@@ -1177,9 +1149,9 @@ static int sh_path(const shell_t *sh, const char *arg, char *out, int cap) {
     if (len == 0 || (len == 1 && b[0] == '.'))
       continue;
     if (len == 2 && b[0] == '.' && b[1] == '.') {
-      while (o > root && out[o - 1] != '/')
+      while (o > 0 && out[o - 1] != '/')
         o--;
-      if (o > root)
+      if (o > 0)
         o--; /* and the '/' before it */
       continue;
     }
@@ -1189,7 +1161,7 @@ static int sh_path(const shell_t *sh, const char *arg, char *out, int cap) {
     for (int k = 0; k < len; k++)
       out[o++] = b[k];
   }
-  if (o == root) /* the root itself */
+  if (o == 0) /* the root itself */
     out[o++] = '/';
   out[o] = '\0';
   return 0;
@@ -1204,81 +1176,113 @@ static int sh_arg_path(const shell_t *sh, const char *cmd, const char *arg,
   return -1;
 }
 
-/* "/dev/kmsg" for a resolved path under /dev ("/dev" itself included), or
-   NULL for one on the card. */
-static const char *sh_devpath(const char *p) {
-  if (p[0] != '0' || p[1] != ':' || p[2] != '/' || p[3] != 'd' || p[4] != 'e' ||
-      p[5] != 'v' || (p[6] && p[6] != '/'))
-    return NULL;
-  return p + 2;
+static int sh_starts(const char *s, const char *pre, int n) {
+  for (int i = 0; i < n; i++)
+    if (s[i] != pre[i])
+      return 0;
+  return 1;
 }
 
-static int sh_is_root(const char *p) { return p[0] == '0' && p[2] == '/' && !p[3]; }
+/* What an absolute path names. */
+enum {
+  SH_NONE, /* nothing */
+  SH_DIR,  /* a directory of the root: /, /dev, /mnt */
+  SH_DEV,  /* a device: /dev/kmsg */
+  SH_MPT,  /* a mount point itself: /mnt/sd */
+  SH_MNT   /* something below one: /mnt/sd/logs */
+};
 
-/* Whether devfs has the node `dev` ("/dev/kmsg"). */
-static int sh_devnode(const char *dev) {
+static int sh_where(const char *p) {
   char n[CMD_MAX_LEN];
-  for (int i = 0; v_devfs_node(i, n, sizeof n) == 0; i++)
-    if (v_strcmp(n, dev) == 0)
-      return 1;
-  return 0;
+  int plen = (int)v_strlen(p), root = p[0] == '/' && !p[1], what = SH_NONE;
+  for (int i = 0; v_devfs_node(i, n, sizeof n) == 0; i++) {
+    int nlen = (int)v_strlen(n);
+    if (nlen > 1 && n[nlen - 1] == '/') { /* a mount point */
+      if (sh_starts(p, n, nlen - 1) && (!p[nlen - 1] || p[nlen - 1] == '/'))
+        return p[nlen - 1] ? SH_MNT : SH_MPT;
+    } else if (v_strcmp(p, n) == 0) {
+      return SH_DEV;
+    }
+    if (!root && nlen > plen && sh_starts(n, p, plen) && n[plen] == '/')
+      what = SH_DIR; /* on the way to a node */
+  }
+  return root ? SH_DIR : what;
 }
 
-/* A directory being listed: the card's, devfs's /dev, or both at the root. */
+/* The name of node `n` one level below directory `dir` ("dev" in "/dev/kmsg"
+   for "/"): its length, 0 when `n` is not below `dir`. *is_dir says whether
+   anything comes after it. */
+static int sh_child(const char *n, const char *dir, const char **name,
+                    int *is_dir) {
+  int dlen = dir[1] ? (int)v_strlen(dir) : 0; /* "/" is the empty prefix */
+  if (!sh_starts(n, dir, dlen) || n[dlen] != '/')
+    return 0;
+  const char *c = n + dlen + 1;
+  int len = 0;
+  while (c[len] && c[len] != '/')
+    len++;
+  *name = c;
+  *is_dir = c[len] == '/';
+  return len;
+}
+
+/* A directory being listed: one on a filesystem, or one of the root's. */
 typedef struct {
-  int vd;          /* the card's listing, or -1 */
-  int node;        /* /dev: the next devfs node to look at; -1 otherwise */
-  uint8_t add_dev; /* the root: dev/ is still to come */
+  int vd;           /* the filesystem's listing, or -1 */
+  int node;         /* the root's: the next devfs node to look at */
+  const char *path; /* ... and which of its directories */
 } sh_dir_t;
 
 /* 0, or < 0 if `path` is not a directory that is there. */
 static int sh_diropen(const char *path, sh_dir_t *d) {
+  int w = sh_where(path);
   d->vd = -1;
   d->node = -1;
-  d->add_dev = (uint8_t)sh_is_root(path);
-  const char *dev = sh_devpath(path);
-  if (dev) {
-    if (dev[4])
-      return -1; /* a device, not a directory */
+  d->path = path;
+  if (w == SH_DIR) {
     d->node = 0;
     return 0;
   }
-  int rc = -1;
 #if VAIOS_MODULE_VFS
-  rc = d->vd = v_vfs_diropen(path, SHELL_IO_TICKS);
+  if (w == SH_MPT || w == SH_MNT)
+    return (d->vd = v_vfs_diropen(path, SHELL_IO_TICKS)) < 0 ? d->vd : 0;
 #endif
-  return (rc >= 0 || d->add_dev) ? 0 : rc; /* no card: / still has dev/ */
+  return -1;
 }
 
-/* The next entry: 1 for one on the card, 2 for a device, 0 at the end. */
+/* The next entry: 1 for a directory or a file, 2 for a device, 0 at the
+   end. */
 static int sh_dirnext(sh_dir_t *d, vfs_dirent_t *e) {
 #if VAIOS_MODULE_VFS
-  while (d->vd >= 0) {
-    if (v_vfs_dirnext(d->vd, e, SHELL_IO_TICKS) != 1) {
-      v_vfs_close(d->vd, SHELL_IO_TICKS);
-      d->vd = -1;
-    } else if (!d->add_dev || lc(e->name[0]) != 'd' || lc(e->name[1]) != 'e' ||
-               lc(e->name[2]) != 'v' || e->name[3]) {
-      return 1; /* (the card's own /dev, hidden under devfs's, is skipped) */
-    }
+  if (d->vd >= 0) {
+    if (v_vfs_dirnext(d->vd, e, SHELL_IO_TICKS) == 1)
+      return 1;
+    v_vfs_close(d->vd, SHELL_IO_TICKS);
+    d->vd = -1;
+    return 0;
   }
 #endif
-  if (d->add_dev) {
-    d->add_dev = 0;
-    sh_copy(e->name, "dev", (int)sizeof e->name);
-    e->is_dir = 1;
+  char n[CMD_MAX_LEN], m[CMD_MAX_LEN];
+  while (d->node >= 0 && v_devfs_node(d->node, n, sizeof n) == 0) {
+    int at = d->node++, is_dir, seen = 0, d2;
+    const char *name, *other;
+    int len = sh_child(n, d->path, &name, &is_dir);
+    if (!len)
+      continue;
+    for (int j = 0; j < at && !seen; j++) /* /dev once, not once a device */
+      if (v_devfs_node(j, m, sizeof m) == 0 &&
+          sh_child(m, d->path, &other, &d2) == len &&
+          sh_starts(other, name, len))
+        seen = 1;
+    if (seen)
+      continue;
+    int k = 0;
+    for (; k < len && k < (int)sizeof e->name - 1; k++)
+      e->name[k] = name[k];
+    e->name[k] = '\0';
+    e->is_dir = (uint8_t)is_dir;
     e->size = 0;
-    return 1;
-  }
-  char n[CMD_MAX_LEN];
-  while (d->node >= 0 && v_devfs_node(d->node++, n, sizeof n) == 0) {
-    if (n[0] != '/' || n[1] != 'd' || n[2] != 'e' || n[3] != 'v' ||
-        n[4] != '/' || !n[5])
-      continue; /* a mount elsewhere (/mnt/), not a node under /dev */
-    sh_copy(e->name, n + 5, (int)sizeof e->name);
-    e->is_dir = 0;
-    e->size = 0;
-    return 2;
+    return is_dir ? 1 : 2;
   }
   return 0;
 }
@@ -1293,21 +1297,18 @@ static void sh_dirclose(sh_dir_t *d) {
 
 typedef struct {
   uint8_t exists, is_dir, is_dev;
-  uint32_t size, mtime; /* the card's: mtime packed as FAT keeps it */
+  uint32_t size, mtime; /* a file's: mtime packed as FAT keeps it */
 } sh_stat_t;
 
 static void sh_stat(const char *path, sh_stat_t *st) {
   *st = (sh_stat_t){0};
-  const char *dev = sh_devpath(path);
-  if (dev || sh_is_root(path)) { /* FatFs has nothing to say of its root */
-    st->is_dir = !dev || !dev[4];
-    st->is_dev = !st->is_dir;
-    st->exists = st->is_dir || sh_devnode(dev);
-    return;
-  }
+  int w = sh_where(path);
+  st->is_dir = w == SH_DIR || w == SH_MPT; /* (FatFs cannot stat a root) */
+  st->is_dev = w == SH_DEV;
+  st->exists = st->is_dir || st->is_dev;
 #if VAIOS_MODULE_VFS
   vfs_stat_t v;
-  if (v_vfs_info(path, &v, SHELL_IO_TICKS) == 0 && v.exists) {
+  if (w == SH_MNT && v_vfs_info(path, &v, SHELL_IO_TICKS) == 0 && v.exists) {
     st->exists = 1;
     st->is_dir = v.is_dir;
     st->size = v.size;
@@ -1316,20 +1317,20 @@ static void sh_stat(const char *path, sh_stat_t *st) {
 #endif
 }
 
-/* An open file: on the card, or a device. */
+/* An open file: on a filesystem, or a device. */
 typedef struct {
   int fd;
   uint8_t dev;
 } sh_file_t;
 
 static int sh_fopen(const char *path, int flags, sh_file_t *f) {
-  const char *dev = sh_devpath(path);
-  f->dev = dev != NULL;
+  int w = sh_where(path);
+  f->dev = w == SH_DEV;
   f->fd = -1;
-  if (dev)
-    f->fd = dev[4] ? v_file_open(dev, flags) : -1; /* /dev: a directory */
+  if (f->dev)
+    f->fd = v_file_open(path, flags);
 #if VAIOS_MODULE_VFS
-  else
+  else if (w == SH_MNT)
     f->fd = v_vfs_open(path, flags, SHELL_IO_TICKS);
 #endif
   return f->fd < 0 ? (f->fd < -1 ? f->fd : -1) : 0;
@@ -1396,17 +1397,20 @@ static void sh_fclose(sh_file_t *f) {
   f->fd = -1;
 }
 
-/* Why `path` would not open, as a person reads it. */
-static void sh_ferr(const char *cmd, const char *path, int rc) {
+/* Why `path` would not open, as a person reads it. Nothing is made outside a
+   mounted filesystem: the root and devfs are what the kernel built. */
+static void sh_ferr(const char *cmd, const char *path, int rc, int create) {
   sh_stat_t st;
   sh_stat(path, &st);
-  const char *why = st.is_dir ? "is a directory"
-                  : !st.exists ? "no such file or directory"
-                               : NULL;
+  const char *why = st.is_dir    ? "is a directory"
+                    : st.exists ? NULL
+                    : create && sh_where(path) != SH_MNT
+                        ? "read-only file system"
+                        : "no such file or directory";
   if (why)
-    v_printf("%s: %s: %s\r\n", cmd, sh_display_path(path), why);
+    v_printf("%s: %s: %s\r\n", cmd, path, why);
   else
-    v_printf("%s: %s: error %d\r\n", cmd, sh_display_path(path), rc);
+    v_printf("%s: %s: error %d\r\n", cmd, path, rc);
 }
 
 /* Open argv's file through the working directory, or say why not. */
@@ -1417,7 +1421,7 @@ static int sh_open(shell_t *sh, const char *cmd, const char *arg, int flags,
     return -1;
   int rc = sh_fopen(path, flags, f);
   if (rc < 0)
-    sh_ferr(cmd, path, rc);
+    sh_ferr(cmd, path, rc, (flags & VFS_O_CREAT) != 0);
   return rc;
 }
 
@@ -1431,10 +1435,10 @@ static int cmd_ls(shell_t *sh, int argc, char **argv) {
     sh_stat_t st; /* not a directory: a file or a device is listed as itself */
     sh_stat(path, &st);
     if (!st.exists) {
-      v_printf("ls: %s: no such file or directory\r\n", sh_display_path(path));
+      v_printf("ls: %s: no such file or directory\r\n", path);
       return 1;
     }
-    const char *base = sh_display_path(path);
+    const char *base = path;
     for (const char *q = base; *q; q++)
       if (*q == '/')
         base = q + 1;
@@ -1487,7 +1491,7 @@ static int cmd_cd(shell_t *sh, int argc, char **argv) {
   if (sh_diropen(path, &d) < 0) {
     sh_stat_t st;
     sh_stat(path, &st);
-    v_printf("cd: %s: %s\r\n", sh_display_path(path),
+    v_printf("cd: %s: %s\r\n", path,
              st.exists ? "not a directory" : "no such directory");
     return 1;
   }
@@ -1499,7 +1503,7 @@ static int cmd_cd(shell_t *sh, int argc, char **argv) {
 static int cmd_pwd(shell_t *sh, int argc, char **argv) {
   (void)argc;
   (void)argv;
-  v_printf("%s\r\n", sh_display_path(sh->cwd));
+  v_printf("%s\r\n", sh->cwd);
   return 0;
 }
 
@@ -1514,13 +1518,13 @@ static int cmd_stat(shell_t *sh, int argc, char **argv) {
   sh_stat_t st;
   sh_stat(path, &st);
   if (!st.exists) {
-    v_printf("stat: %s: no such file or directory\r\n", sh_display_path(path));
+    v_printf("stat: %s: no such file or directory\r\n", path);
     return 1;
   }
   /* FAT packs the date and time: (fdate << 16) | ftime, fdate = year-1980:7
      month:4 day:5, ftime = hour:5 minute:6 second/2:5. */
   uint32_t d = st.mtime >> 16, t = st.mtime & 0xFFFFu;
-  v_printf("  path      %s\r\n", sh_display_path(path));
+  v_printf("  path      %s\r\n", path);
   v_printf("  type      %s\r\n", st.is_dir   ? "directory"
                                  : st.is_dev ? "character device"
                                              : "file");
@@ -1685,20 +1689,20 @@ static int cmd_cp(shell_t *sh, int argc, char **argv) {
   sh_file_t in, out;
   int r = sh_fopen(src, VFS_O_RDONLY, &in);
   if (r < 0) {
-    sh_ferr("cp", src, r);
+    sh_ferr("cp", src, r, 0);
     return 1;
   }
   r = sh_fopen(dst, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &out);
   if (r < 0) {
     sh_fclose(&in);
-    sh_ferr("cp", dst, r);
+    sh_ferr("cp", dst, r, 1);
     return 1;
   }
   uint8_t buf[128];
   int n, rc = 0;
   while ((n = sh_fread(&in, buf, sizeof buf)) > 0) {
     if (sh_fwrite(&out, buf, (uint32_t)n) != n) {
-      v_printf("cp: %s: write failed\r\n", sh_display_path(dst));
+      v_printf("cp: %s: write failed\r\n", dst);
       rc = 1;
       break;
     }
@@ -1714,15 +1718,34 @@ static int cmd_cp(shell_t *sh, int argc, char **argv) {
   return rc;
 }
 
-#if VAIOS_MODULE_VFS
-/* The card's alone: making, removing, renaming, seeking, its free space. */
+/* The mount table, as mount(8) lists it: devfs at /dev, and each mounted
+   filesystem -- vfat, the only kind v_vfs_mount makes. */
+static int cmd_mount(shell_t *sh, int argc, char **argv) {
+  (void)sh;
+  (void)argc;
+  (void)argv;
+  char n[CMD_MAX_LEN];
+  v_printf("devfs on /dev type devfs\r\n");
+  for (int i = 0; v_devfs_node(i, n, sizeof n) == 0; i++) {
+    int len = (int)v_strlen(n);
+    if (len < 2 || n[len - 1] != '/')
+      continue;
+    n[len - 1] = '\0';
+    v_printf("vfat on %s type vfat\r\n", n);
+  }
+  return 0;
+}
 
-/* devfs's nodes are what the kernel registered: nothing is made, removed or
-   renamed there. 1 (and said so) for a path under /dev. */
-static int sh_devfs_ro(const char *cmd, const char *path) {
-  if (!sh_devpath(path))
+#if VAIOS_MODULE_VFS
+/* A mounted filesystem's alone: making, removing, renaming, seeking, free
+   space. */
+
+/* Only a mounted filesystem is written: the root and devfs are what the
+   kernel built. 1 (and said so) for a path anywhere else. */
+static int sh_ro(const char *cmd, const char *path) {
+  if (sh_where(path) == SH_MNT)
     return 0;
-  v_printf("%s: %s: read-only file system\r\n", cmd, sh_display_path(path));
+  v_printf("%s: %s: read-only file system\r\n", cmd, path);
   return 1;
 }
 
@@ -1733,7 +1756,7 @@ static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
   }
   char path[CMD_MAX_LEN];
   if (sh_arg_path(sh, "mkdir", argv[1], path, sizeof path) ||
-      sh_devfs_ro("mkdir", path))
+      sh_ro("mkdir", path))
     return 1;
   int rc = v_vfs_makedir(path, SHELL_IO_TICKS);
   if (rc < 0) {
@@ -1750,13 +1773,13 @@ static int cmd_rm(shell_t *sh, int argc, char **argv) {
   }
   char path[CMD_MAX_LEN];
   if (sh_arg_path(sh, "rm", argv[1], path, sizeof path) ||
-      sh_devfs_ro("rm", path))
+      sh_ro("rm", path))
     return 1;
   int rc = v_vfs_remove(path, SHELL_IO_TICKS);
   if (rc < 0) {
     /* FatFs refuses a directory that still has something in it */
     v_printf("rm: %s: error %d (a directory must be empty)\r\n",
-             sh_display_path(path), rc);
+             path, rc);
     return 1;
   }
   return 0;
@@ -1827,7 +1850,7 @@ static int cmd_mv(shell_t *sh, int argc, char **argv) {
   char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
   if (sh_arg_path(sh, "mv", argv[1], src, sizeof src) ||
       sh_arg_path(sh, "mv", argv[2], dst, sizeof dst) ||
-      sh_devfs_ro("mv", src) || sh_devfs_ro("mv", dst))
+      sh_ro("mv", src) || sh_ro("mv", dst))
     return 1;
   vfs_stat_t st;
   if (v_vfs_info(dst, &st, SHELL_IO_TICKS) == 0 && st.exists && st.is_dir) {
@@ -1848,7 +1871,7 @@ static int cmd_mv(shell_t *sh, int argc, char **argv) {
   if (rc < 0) {
     v_printf(rc == -8 ? "mv: %s: already exists\r\n" /* FR_EXIST */
                       : "mv: %s: error %d\r\n",
-             sh_display_path(rc == -8 ? dst : src), rc);
+             rc == -8 ? dst : src, rc);
     return 1;
   }
   return 0;
@@ -1871,31 +1894,44 @@ static void human(char *out, int cap, uint32_t kib) {
                   units[u]);
 }
 
+/* Each mounted filesystem, as df -h shows them. */
 static int cmd_df(shell_t *sh, int argc, char **argv) {
+  (void)sh;
   (void)argc;
   (void)argv;
-  char drive[4] = {sh->cwd[0], ':', '\0', '\0'};
-  vfs_space_t sp;
-  /* the first call after a mount may scan the whole FAT: allow for it */
-  int rc = v_vfs_space(drive, &sp, MS_TO_TICKS(30000));
-  if (rc < 0) {
-    v_printf("df: %s: error %d\r\n", drive, rc);
-    return 1;
+  char n[CMD_MAX_LEN];
+  int any = 0;
+  for (int i = 0; v_devfs_node(i, n, sizeof n) == 0; i++) {
+    int len = (int)v_strlen(n);
+    if (len < 2 || n[len - 1] != '/')
+      continue; /* a device, not a mount */
+    n[len - 1] = '\0';
+    if (!any++)
+      v_printf("  Size    Used   Avail  Use%%  Mounted on\r\n");
+    vfs_space_t sp;
+    /* the first call after a mount may scan the whole FAT: allow for it */
+    int rc = v_vfs_space(n, &sp, MS_TO_TICKS(30000));
+    if (rc < 0) {
+      v_printf("  df: %s: error %d\r\n", n, rc);
+      continue;
+    }
+    uint32_t used = sp.total_kib - sp.free_kib;
+    char size[12], usd[12], avail[12], pct[8];
+    human(size, sizeof size, sp.total_kib);
+    human(usd, sizeof usd, used);
+    human(avail, sizeof avail, sp.free_kib);
+    print_fmt_buf(pct, sizeof pct, "%d%%",
+                  sp.total_kib ? (int)((uint64_t)used * 100u / sp.total_kib)
+                               : 0);
+    char row[80], *p = row, *end = row + sizeof row - 1;
+    cell(&p, end, size, 6, 1);
+    cell(&p, end, usd, 8, 1);
+    cell(&p, end, avail, 8, 1);
+    cell(&p, end, pct, 6, 1);
+    v_printf("%s  %s\r\n", row, n);
   }
-  uint32_t used = sp.total_kib - sp.free_kib;
-  char size[12], usd[12], avail[12], pct[8];
-  human(size, sizeof size, sp.total_kib);
-  human(usd, sizeof usd, used);
-  human(avail, sizeof avail, sp.free_kib);
-  print_fmt_buf(pct, sizeof pct, "%d%%",
-                sp.total_kib ? (int)((uint64_t)used * 100u / sp.total_kib) : 0);
-  char row[80], *p = row, *end = row + sizeof row - 1;
-  cell(&p, end, drive, 6, 0);
-  cell(&p, end, size, 8, 1);
-  cell(&p, end, usd, 8, 1);
-  cell(&p, end, avail, 8, 1);
-  cell(&p, end, pct, 6, 1);
-  v_printf("  Drive    Size    Used   Avail  Use%%\r\n  %s\r\n", row);
+  if (!any)
+    v_printf("df: nothing mounted (no card?)\r\n");
   return 0;
 }
 #endif /* VAIOS_MODULE_VFS */
@@ -1918,7 +1954,7 @@ void shell_init(shell_t *sh, const Command_t *cmds, int count) {
   sh->prev_cr = 0;
   sh->req_fd = sh->done_fd = -1;
   sh->capture = 0;
-  sh_copy(sh->cwd, "0:/", CMD_MAX_LEN);
+  sh_copy(sh->cwd, "/", CMD_MAX_LEN);
 }
 
 /* --- tab completion --------------------------------------------------------
@@ -2216,8 +2252,7 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
   char path[CMD_MAX_LEN];
   if (sh_arg_path(sh, "vsh", target, path, sizeof path))
     return 1;
-  const char *dev = sh_devpath(path);
-  if (dev && v_strcmp(dev, "/dev/capture") == 0) {
+  if (v_strcmp(path, "/dev/capture") == 0) {
     v_printf("vsh: /dev/capture: is what > itself writes through\r\n");
     return 1;
   }
@@ -2227,7 +2262,7 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
                        (append ? VFS_O_APPEND : VFS_O_TRUNC),
                    &out);
   if (r < 0) {
-    sh_ferr("vsh", path, r);
+    sh_ferr("vsh", path, r, 1);
     return 1;
   }
   int cap = v_file_open("/dev/capture", 0);
@@ -2252,7 +2287,7 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
   v_file_dup2(saved, 1); /* the console again, before anything is said */
   v_file_close(saved);
   if (sh->cap_err) {
-    v_printf("vsh: %s: write failed\r\n", sh_display_path(path));
+    v_printf("vsh: %s: write failed\r\n", path);
     rc = 1;
   }
   v_file_close(cap);

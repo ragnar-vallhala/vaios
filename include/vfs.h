@@ -118,9 +118,13 @@ int vfs_closedir(vfs_dir_t d);
 #define V_VFS_EAGAIN (-11)  /* no worker is running to service the request */
 #define V_VFS_ETIMEDOUT (-110)
 
-/* Privileged, at init: publish the VFS under a devfs path prefix (which must end
- * in '/', e.g. "/mnt/"). VA_PASS or V_VFS_EINVAL. */
-int v_vfs_mount(const char *prefix);
+/* Privileged, at init: mount FatFs drive `drive` ("0:") at `point`
+ * ("/mnt/sd"), as mount(8) would. Every task then reaches it by that path --
+ * "/mnt/sd/logs/a.csv" -- and never by its drive letter. The point shows up
+ * in devfs's registry (v_devfs_node) as "/mnt/sd/", which is how a listing of /
+ * finds it. v_system_init mounts the SD card at /mnt/sd when one answers.
+ * VA_PASS or V_VFS_EINVAL. */
+int v_vfs_mount(const char *point, const char *drive);
 
 /* One file operation, as a task hands it to the kernel. It lives in the
  * CALLER's memory and is validated there; everything the worker needs is copied
@@ -171,7 +175,7 @@ int v_vfs_makedir(const char *path, uint32_t ticks);
 int v_vfs_remove(const char *path, uint32_t ticks);
 /* Rename or move, on the same drive; `to` must not exist yet. */
 int v_vfs_rename(const char *from, const char *to, uint32_t ticks);
-/* Size and free space of `drive` ("0:", or under the mount, "/mnt/0:"). The
+/* Size and free space of the drive `drive` is on ("/mnt/sd"). The
    first call after a mount may scan the whole FAT: give it ticks to match. */
 int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks);
 int v_vfs_diropen(const char *path, uint32_t ticks);

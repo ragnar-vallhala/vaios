@@ -100,12 +100,12 @@ boundary: no name, no access.
 v_bus_init(&bus, pool_blocks, pool_desc, 32, 40);
 v_bus_topic_declare(&bus, &imu, "imu.raw", &OVERWRITE);
 v_queue_register("/q/telem", &telem_q);
-v_vfs_mount("/mnt/");
+/* the SD card: v_system_init mounts it at /mnt/sd when one answers */
 
 /* task, unprivileged */
 int s = v_bus_open("imu.raw", V_BUS_RD);
 int q = v_queue_open("/q/telem", V_Q_WR);
-int f = v_file_open("/mnt/log.csv", VFS_O_WRONLY | VFS_O_CREAT);
+int f = v_vfs_open("/mnt/sd/log.csv", VFS_O_WRONLY | VFS_O_CREAT, 500);
 ```
 
 **Sleep, don't poll.** `v_bus_recv_wait(fd, &rx, ticks)` and
@@ -219,15 +219,14 @@ blocks on that slot through the scheduler, and a task you run yourself does the
 transfer in thread mode with interrupts enabled.
 
 ```c
-/* init, privileged */
-v_vfs_mount("/mnt/");
+/* init, privileged -- the card is already at /mnt/sd (v_system_init) */
 /* PRIVILEGED: the worker touches the request slots, FatFs and the SDIO
    peripheral. task_create_privileged is reachable only from privileged code,
    because task_create* is not a syscall. */
 task_create_privileged(vfsio_task, NULL, 2048, 1, "vfsio"); /* for(;;) v_vfs_worker_step(100); */
 
 /* task, unprivileged */
-int fd = v_vfs_open("/mnt/0:log.dat", VFS_O_WRONLY | VFS_O_CREAT, 500);
+int fd = v_vfs_open("/mnt/sd/log.dat", VFS_O_WRONLY | VFS_O_CREAT, 500);
 v_vfs_write(fd, rec, sizeof rec, 500);
 v_vfs_close(fd, 500);
 ```
@@ -242,7 +241,9 @@ chunked through a fixed bounce buffer, so kernel memory does not grow with what 
 task asks for, and a task that dies with a file open has it CLOSED by the worker —
 flushed, not leaked.
 
-The devfs mount (`v_file_open("/mnt/…")`) still exists, but only for
+Paths are one tree, as on Linux: the card at `/mnt/sd`, devices under `/dev`,
+and no drive letters (`v_vfs_mount(point, drive)` mounts another drive). The
+devfs side of a mount (`v_file_open("/mnt/sd/…")`) still exists, but only for
 **privileged** callers in thread mode, such as the bus snapshotter, where inline
 I/O is safe.
 

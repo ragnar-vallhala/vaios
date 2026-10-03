@@ -28,10 +28,10 @@ typedef struct v_file_ops {
   int (*close)(void *priv);
   // Optional. A plain device hands every opener the same `priv` it registered
   // with; a node that needs per-open state (a FILE, not a device) provides this
-  // instead and returns the state for this open. `tail` is the path after the
-  // node's name, which is how a MOUNT works: register "/mnt/" and every path
-  // under it reaches this hook with the rest of the path.
-  int (*open)(const char *tail, int flags, void **priv_out);
+  // instead and returns the state for this open. This is how a MOUNT works:
+  // register "/mnt/sd/" and every path under it reaches this hook -- whole,
+  // so the filesystem can tell which of its mounts it names.
+  int (*open)(const char *path, int flags, void **priv_out);
   // Optional. Park the caller until a read would return data, or `ticks`
   // pass. 0 when data is (or became) ready, < 0 on timeout. Reads stay
   // non-blocking; this is the separate wait, split from the transfer for the

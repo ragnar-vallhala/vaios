@@ -27,8 +27,15 @@
 static TCB _shell_test_task;
 TCB *current_task = &_shell_test_task;
 
+#if VAIOS_MODULE_VFS
+static const v_file_ops _mnt_ops; /* never opened here: v_vfs_* is the fake */
+#endif
+
 void shell_test_env_init(void) {
   v_devfs_init();
+#if VAIOS_MODULE_VFS
+  v_devfs_register("/mnt/sd/", &_mnt_ops, NULL); /* the card, mounted */
+#endif
   v_fd_table_init(&_shell_test_task);
 }
 
@@ -197,7 +204,21 @@ const char *stub_fs_get(const char *path, int *len) {
    `path`, in that order. One open listing at a time is all the shell needs. */
 static char _ls_dir[64];
 static int _ls_pos;
+/* What the kernel's VFS does before FatFs sees a path: /mnt/sd is drive 0
+   (v_system_init's mount). The fake card is keyed by FatFs paths, as the
+   real one is reached, so the tests that seed it read like the card does. */
+static const char *kpath(const char *path) {
+  static char b[4][80];
+  static int k;
+  if (strncmp(path, "/mnt/sd", 7) != 0 || (path[7] && path[7] != '/'))
+    return path; /* under no mount: no such file, as the kernel says */
+  char *o = b[k++ & 3];
+  snprintf(o, sizeof b[0], "0:%s", path[7] ? path + 7 : "/");
+  return o;
+}
+
 int v_vfs_diropen(const char *path, uint32_t ticks) {
+  path = kpath(path);
   (void)ticks;
   for (unsigned i = 0; i < sizeof _dirs / sizeof _dirs[0]; i++)
     if (strcmp(path, _dirs[i]) == 0) {
@@ -247,6 +268,7 @@ int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks) {
   return 0;
 }
 int v_vfs_open(const char *path, int flags, uint32_t ticks) {
+  path = kpath(path);
   (void)ticks;
   sfile_t *f = ffind(path);
   if (!f && !(flags & VFS_O_CREAT))
@@ -306,6 +328,7 @@ long v_vfs_size(int fd, uint32_t ticks) {
   return _files[_fds[fd - 10].file].len;
 }
 int v_vfs_remove(const char *path, uint32_t ticks) {
+  path = kpath(path);
   (void)ticks;
   sfile_t *f = ffind(path);
   if (!f)
@@ -314,6 +337,7 @@ int v_vfs_remove(const char *path, uint32_t ticks) {
   return 0;
 }
 int v_vfs_info(const char *path, vfs_stat_t *st, uint32_t ticks) {
+  path = kpath(path);
   (void)ticks;
   memset(st, 0, sizeof *st);
   sfile_t *f = ffind(path);
@@ -331,6 +355,7 @@ int v_vfs_info(const char *path, vfs_stat_t *st, uint32_t ticks) {
   return -4;
 }
 int v_vfs_makedir(const char *path, uint32_t ticks) {
+  path = kpath(path);
   (void)ticks;
   strncpy(g_stub_mkdir_path, path, sizeof g_stub_mkdir_path - 1);
   return 0;
@@ -362,6 +387,8 @@ int v_pbus_xfer(int fd, const v_pbus_xfer_t *x, uint8_t prio, uint32_t ticks) {
 /* mv / df on the fake card: a rename moves the entry; the card is 30 GiB with
    1.5 GiB in use. */
 int v_vfs_rename(const char *from, const char *to, uint32_t ticks) {
+  from = kpath(from);
+  to = kpath(to);
   (void)ticks;
   sfile_t *f = ffind(from);
   if (!f)
@@ -372,8 +399,9 @@ int v_vfs_rename(const char *from, const char *to, uint32_t ticks) {
   return 0;
 }
 int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks) {
+  drive = kpath(drive);
   (void)ticks;
-  if (strcmp(drive, "0:") != 0)
+  if (strncmp(drive, "0:", 2) != 0) /* any path on drive 0, as the kernel */
     return -11; /* FR_INVALID_DRIVE */
   out->total_kib = 30u * 1024u * 1024u;
   out->free_kib = out->total_kib - 1536u * 1024u;

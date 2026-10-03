@@ -200,8 +200,7 @@ int main(void) {
   v_bus_topic_declare(&demo_bus, &echo_topic, "demo.echo", NULL);
 #endif
 #if VAIOS_MODULE_VFS
-  if (v_vfs_mount("/mnt/") != VA_PASS)
-    v_log(LOG_ERROR, "shell: no SD card mounted; ls and cat will fail");
+  /* The card is at /mnt/sd if v_system_init found one; this serves it. */
 #if VAIOS_MPU_USER_SEPARATION
   task_create_privileged(vfsio, NULL, 2048, 1, "vfsio");
 #else

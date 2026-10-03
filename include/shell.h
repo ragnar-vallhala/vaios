@@ -126,9 +126,8 @@ struct shell {
   int cap_fd, out_fd; /* while it is: /dev/capture, and where it drains to */
   uint8_t out_dev;    /* ... a device (fd table) rather than a card file */
   uint8_t cap_err;    /* a write to it failed */
-  /* This shell's working directory, as a FatFs path ("0:/logs"; "0:/dev" is
-     devfs). The shell's own, not FatFs's f_chdir, which is one global for
-     every task. */
+  /* This shell's working directory, an absolute path ("/mnt/sd/logs"). The
+     shell's own, not FatFs's f_chdir, which is one global for every task. */
   char cwd[CMD_MAX_LEN];
 };
 

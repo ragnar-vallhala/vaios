@@ -8,6 +8,7 @@
 #if VAIOS_MODULE_VFS
 #include "vfile.h"
 #include "vfs.h"
+#include "ipc.h" // VA_PASS (v_vfs_mount)
 #endif
 #include "perf.h"
 #include <stddef.h>
@@ -259,25 +260,20 @@ void v_system_init(vaios_init_config_t *cfg) {
         ;
     }
 
-    if (!v_port_hw_sdio_card_present()) {
-      v_log(LOG_ERROR, "SD slot is empty (card-detect reads no card).");
-      while (1)
-        ;
-    }
-
-    if (v_port_hw_sdio_card_init() != 0) {
-      v_log(LOG_ERROR, "SD Card Handshake Failed!");
-      while (1)
-        ;
-    }
-
+    /* The card, if there is one, mounted where Linux puts removable media:
+       /mnt/sd. One that is absent, does not answer or holds no FAT filesystem
+       leaves the system running without it -- /mnt/sd simply is not there. */
+    if (!v_port_hw_sdio_card_present())
+      v_log(LOG_WARN, "sd: no card in the slot; /mnt/sd not mounted");
+    else if (v_port_hw_sdio_card_init() != 0)
+      v_log(LOG_ERROR, "sd: the card did not answer; /mnt/sd not mounted");
 #if VAIOS_MODULE_VFS
-    /* Mount FatFS via the thread-safe VFS layer */
-    if (vfs_init() != 0) {
-      v_log(LOG_ERROR, "Failed to initialize VFS.");
-      while (1)
-        ;
-    }
+    else if (vfs_init() != 0)
+      v_log(LOG_ERROR, "sd: no FAT filesystem on it; /mnt/sd not mounted");
+#if VAIOS_DEVFS
+    else if (v_vfs_mount("/mnt/sd", "0:") != VA_PASS)
+      v_log(LOG_ERROR, "sd: cannot mount at /mnt/sd");
+#endif
 #endif
   }
 

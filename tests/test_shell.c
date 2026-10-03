@@ -31,6 +31,14 @@ static void sh_copy_test(char *dst, const char *src) {
     ;
 }
 static void shell_reset(void) { shell_init(&g_sh, NULL, 0); }
+#if VAIOS_MODULE_VFS
+static void cd_to(const char *where);
+/* A fresh shell, standing in the card: where the file tests' paths start. */
+static void card_reset(void) {
+  shell_reset();
+  cd_to("/mnt/sd");
+}
+#endif
 
 static int dummy_cb(shell_t *sh, int argc, char **argv) {
   (void)sh;
@@ -235,26 +243,30 @@ static void cd_to(const char *where) {
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_cd_and_paths(void) {
   shell_reset();
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
-  cd_to("LOGS");
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/"), 0); /* the root, not the card */
+  cd_to("mnt");
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/mnt"), 0);
+  cd_to("sd/LOGS");
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/mnt/sd/LOGS"), 0);
   cd_to("A");
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS/A"), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/mnt/sd/LOGS/A"), 0);
   cd_to("../.././LOGS/./A/..");
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
-  cd_to("../../../..");                  /* never above the root */
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
-  cd_to("/mnt/0:LOGS");                  /* the mount prefix, drive-qualified */
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/mnt/sd/LOGS"), 0);
+  cd_to("../../../../../..");            /* never above the root */
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/"), 0);
+  cd_to("/mnt/sd/LOGS");
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/mnt/sd/LOGS"), 0);
   cd_to("nope");                         /* refused: stays where it was */
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/LOGS"), 0);
-  char l[] = "cd";                       /* no argument: the card's root */
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/mnt/sd/LOGS"), 0);
+  cd_to("/mnt/sdx");                     /* not under the mount: not there */
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/mnt/sd/LOGS"), 0);
+  char l[] = "cd";                       /* no argument: the root */
   shell_exec(&g_sh, l);
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/"), 0);
 }
 #endif
 
-/* The prompt is vsh's and carries where it is, without FatFs's "0:". */
+/* The prompt is vsh's and carries where it is. */
 extern char g_stub_last_prompt[80];
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_prompt_shows_cwd(void) {
@@ -263,10 +275,10 @@ static void test_prompt_shows_cwd(void) {
   feed("\n");
   shell_poll(&g_sh, out, sizeof out);
   TEST_ASSERT_EQ(v_strcmp(g_stub_last_prompt, "vsh:/> "), 0);
-  cd_to("LOGS");
+  cd_to("/mnt/sd/LOGS");
   feed("\n");
   shell_poll(&g_sh, out, sizeof out);
-  TEST_ASSERT_EQ(v_strcmp(g_stub_last_prompt, "vsh:/LOGS> "), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_stub_last_prompt, "vsh:/mnt/sd/LOGS> "), 0);
 }
 #endif
 
@@ -275,11 +287,11 @@ extern char g_stub_mkdir_path[64];
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_mkdir_is_relative(void) {
   shell_reset();
-  cd_to("LOGS");
+  cd_to("/mnt/sd/LOGS");
   char l[] = "mkdir run1";
   TEST_ASSERT_EQ(shell_exec(&g_sh, l), 0);
-  TEST_ASSERT_EQ(v_strcmp(g_stub_mkdir_path, "0:/LOGS/run1"), 0);
-  char l2[] = "mkdir /top";
+  TEST_ASSERT_EQ(v_strcmp(g_stub_mkdir_path, "0:/LOGS/run1"), 0); /* drive 0 */
+  char l2[] = "mkdir /mnt/sd/top";
   TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 0);
   TEST_ASSERT_EQ(v_strcmp(g_stub_mkdir_path, "0:/top"), 0);
 }
@@ -305,9 +317,40 @@ static void put(const char *path, const char *text) {
 #endif
 static int out_is(const char *want) { return v_strcmp(g_stub_out, want) == 0; }
 
+#if VAIOS_MODULE_VFS
+/* The tree: a read-only root of the directories leading to what is mounted
+ * -- dev/ and mnt/ -- and the card's own files below /mnt/sd. */
+static void test_tree_and_mounts(void) {
+  shell_reset();
+  stub_fs_reset();
+  TEST_ASSERT_EQ(run("ls /"), 0);
+  TEST_ASSERT(out_is("  dev/\r\n  mnt/\r\n"));
+  TEST_ASSERT_EQ(run("ls /mnt"), 0);
+  TEST_ASSERT(out_is("  sd/\r\n"));
+  TEST_ASSERT_EQ(run("stat /mnt/sd"), 0); /* a mount point is a directory */
+  TEST_ASSERT(strstr(g_stub_out, "type      directory") != NULL);
+  TEST_ASSERT_EQ(run("mount"), 0);
+  TEST_ASSERT(out_is("devfs on /dev type devfs\r\nvfat on /mnt/sd type vfat\r\n"));
+  TEST_ASSERT_EQ(run("df"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "Mounted on") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "  /mnt/sd\r\n") != NULL);
+  /* nothing is made, removed or renamed outside a mounted filesystem */
+  TEST_ASSERT_EQ(run("touch /a.txt"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "read-only file system") != NULL);
+  TEST_ASSERT_EQ(run("mkdir /mnt/usb"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "read-only file system") != NULL);
+  TEST_ASSERT_EQ(run("rm /mnt"), 1);
+  TEST_ASSERT_EQ(run("uptime > /up.txt"), 1);
+  TEST_ASSERT_EQ(run("cat /nope"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "no such file or directory") != NULL);
+  TEST_ASSERT_EQ(run("cat /mnt"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "is a directory") != NULL);
+}
+#endif
+
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_head_and_tail(void) {
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   put("0:/f.txt", "one\ntwo\nthree\nfour\n");
   TEST_ASSERT_EQ(run("head -n 2 f.txt"), 0);
@@ -348,7 +391,7 @@ static void test_head_and_tail(void) {
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_write_cp_rm_touch(void) {
   int len;
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   TEST_ASSERT_EQ(run("write log.txt hello there"), 0);
   TEST_ASSERT_EQ(run("write log.txt again"), 0); /* appends */
@@ -371,15 +414,15 @@ static void test_write_cp_rm_touch(void) {
 
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_stat_and_hexdump(void) {
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   put("0:/LOGS/h.bin", "ABC\001");
   cd_to("LOGS");
   TEST_ASSERT_EQ(run("stat h.bin"), 0);
   TEST_ASSERT(strstr(g_stub_out, "size      4 bytes") != NULL);
   TEST_ASSERT(strstr(g_stub_out, "modified  2026-10-03 14:05") != NULL);
-  TEST_ASSERT(strstr(g_stub_out, "path      /LOGS/h.bin") != NULL);
-  TEST_ASSERT_EQ(run("stat /LOGS"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "path      /mnt/sd/LOGS/h.bin") != NULL);
+  TEST_ASSERT_EQ(run("stat /mnt/sd/LOGS"), 0);
   TEST_ASSERT(strstr(g_stub_out, "type      directory") != NULL);
   TEST_ASSERT_EQ(run("stat nope"), 1);
   TEST_ASSERT_EQ(run("hexdump h.bin"), 0);
@@ -407,7 +450,7 @@ static void test_kill(void) {
 extern void (*g_stub_console_rx_sink)(const uint8_t *, uint16_t);
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_ctrl_c_interrupts(void) {
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   TEST_ASSERT_EQ(shell_interrupted(&g_sh), 0);
   g_stub_console_rx_sink((const uint8_t *)"x", 1);
@@ -458,7 +501,7 @@ static void test_reboot(void) {
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_redirect(void) {
   int len;
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   TEST_ASSERT_EQ(run("uptime > up.txt"), 0);
   const char *d = stub_fs_get("0:/up.txt", &len);
@@ -485,7 +528,7 @@ static void test_redirect(void) {
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_redirect_overflow(void) {
   int len;
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   static char big[650];
   for (int i = 0; i < 650; i++)
@@ -530,7 +573,7 @@ static void test_tab_completes_commands(void) {
 
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_tab_completes_paths(void) {
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   put("0:/LOGS/run1.csv", "1");
   put("0:/LOGS/run2.csv", "2");
@@ -540,7 +583,9 @@ static void test_tab_completes_paths(void) {
   TEST_ASSERT_EQ(v_strcmp(after_tab("cat LOGS/r"), "cat LOGS/run"), 0);
   TEST_ASSERT_EQ(v_strcmp(after_tab("cat LOGS/run1"), "cat LOGS/run1.csv "),
                  0);
-  TEST_ASSERT_EQ(v_strcmp(after_tab("cat /LO"), "cat /LOGS/"), 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat /mnt/sd/LO"), "cat /mnt/sd/LOGS/"),
+                 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat /m"), "cat /mnt/"), 0); /* the root's */
   /* cd completes directories only: A/ is the one among two files */
   TEST_ASSERT_EQ(v_strcmp(after_tab("cd LOGS/"), "cd LOGS/A/"), 0);
   TEST_ASSERT_EQ(v_strcmp(after_tab("cat LOGS/"), "cat LOGS/"), 0); /* three */
@@ -572,6 +617,12 @@ static void test_dev_tree(void) {
   stub_fs_reset();
   TEST_ASSERT_EQ(run("ls /"), 0);
   TEST_ASSERT(strstr(g_stub_out, "  dev/\r\n") != NULL);
+#if !VAIOS_MODULE_VFS /* no card: the root is devfs's alone */
+  TEST_ASSERT(out_is("  dev/\r\n"));
+  TEST_ASSERT_EQ(run("mount"), 0);
+  TEST_ASSERT(out_is("devfs on /dev type devfs\r\n"));
+  TEST_ASSERT_EQ(run("ls /mnt"), 1);
+#endif
   TEST_ASSERT_EQ(run("ls /dev"), 0);
   TEST_ASSERT(out_is("  console\r\n  kmsg\r\n  capture\r\n"));
   TEST_ASSERT_EQ(run("ls /dev/kmsg"), 0); /* a device lists as itself */
@@ -580,7 +631,7 @@ static void test_dev_tree(void) {
   TEST_ASSERT(strstr(g_stub_out, "no such file or directory") != NULL);
 
   TEST_ASSERT_EQ(run("cd /dev"), 0);
-  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/dev"), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "/dev"), 0);
   TEST_ASSERT_EQ(run("pwd"), 0);
   TEST_ASSERT(out_is("/dev\r\n"));
   TEST_ASSERT_EQ(run("cd kmsg"), 1);
@@ -627,14 +678,14 @@ static void test_dev_tree(void) {
   /* between the card and a device either way */
   int len;
   kmsg_holds("line one\n");
-  TEST_ASSERT_EQ(run("cp kmsg /boot.log"), 0);
+  TEST_ASSERT_EQ(run("cp kmsg /mnt/sd/boot.log"), 0);
   const char *d = stub_fs_get("0:/boot.log", &len);
   TEST_ASSERT(d && len == 9 && memcmp(d, "line one\n", 9) == 0);
   console_clear();
-  TEST_ASSERT_EQ(run("cp /boot.log console"), 0);
+  TEST_ASSERT_EQ(run("cp /mnt/sd/boot.log console"), 0);
   TEST_ASSERT(strstr(g_stub_console_out, "line one\r\n") != NULL);
   kmsg_holds("logged\n");
-  TEST_ASSERT_EQ(run("cat kmsg > /k.txt"), 0); /* a device, redirected */
+  TEST_ASSERT_EQ(run("cat kmsg > /mnt/sd/k.txt"), 0); /* a device, redirected */
   d = stub_fs_get("0:/k.txt", &len);
   TEST_ASSERT(d && len >= 7 && memcmp(d, "logged\n", 7) == 0);
 
@@ -643,8 +694,8 @@ static void test_dev_tree(void) {
   TEST_ASSERT(strstr(g_stub_out, "read-only file system") != NULL);
   TEST_ASSERT_EQ(run("mkdir x"), 1);
   TEST_ASSERT(strstr(g_stub_out, "read-only file system") != NULL);
-  TEST_ASSERT_EQ(run("mv kmsg /k"), 1);
-  TEST_ASSERT_EQ(run("mv /boot.log /dev/boot"), 1);
+  TEST_ASSERT_EQ(run("mv kmsg /mnt/sd/k"), 1);
+  TEST_ASSERT_EQ(run("mv /mnt/sd/boot.log /dev/boot"), 1);
   TEST_ASSERT(stub_fs_get("0:/boot.log", &len) != NULL); /* left alone */
   TEST_ASSERT_EQ(run("tail kmsg"), 1);
   TEST_ASSERT(strstr(g_stub_out, "no end to read back from") != NULL);
@@ -672,7 +723,7 @@ static void test_i2c_scan(void) {
 #if VAIOS_MODULE_VFS /* needs the card */
 static void test_mv_and_df(void) {
   int len;
-  shell_reset();
+  card_reset();
   stub_fs_reset();
   put("0:/a.txt", "A");
   put("0:/b.txt", "B");
@@ -685,7 +736,8 @@ static void test_mv_and_df(void) {
   TEST_ASSERT(strstr(g_stub_out, "already exists") != NULL);
   TEST_ASSERT_EQ(run("mv nope.txt x"), 1);
   TEST_ASSERT_EQ(run("df"), 0);
-  TEST_ASSERT(strstr(g_stub_out, "0:       30.0G    1.5G   28.5G    5%") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, " 30.0G    1.5G   28.5G    5%  /mnt/sd\r\n") !=
+              NULL);
 }
 #endif
 
@@ -760,13 +812,13 @@ static void test_register_rejects_null(void) {
 /* --- tokenizer ------------------------------------------------------------- */
 
 static void test_tokenize_splits(void) {
-  char line[] = "perf save /mnt/0:p.csv";
+  char line[] = "perf save /mnt/sd/p.csv";
   char *argv[8];
   int argc = shell_tokenize(line, argv, 8);
   TEST_ASSERT_EQ(argc, 3);
   TEST_ASSERT_EQ(v_strcmp(argv[0], "perf"), 0);
   TEST_ASSERT_EQ(v_strcmp(argv[1], "save"), 0);
-  TEST_ASSERT_EQ(v_strcmp(argv[2], "/mnt/0:p.csv"), 0);
+  TEST_ASSERT_EQ(v_strcmp(argv[2], "/mnt/sd/p.csv"), 0);
 }
 
 static void test_tokenize_collapses_whitespace(void) {
@@ -1032,6 +1084,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_inspection_builtins),
 #if VAIOS_MODULE_VFS
     TEST_CASE(test_cd_and_paths),
+    TEST_CASE(test_tree_and_mounts),
 #endif
 #if VAIOS_MODULE_VFS
     TEST_CASE(test_mkdir_is_relative),

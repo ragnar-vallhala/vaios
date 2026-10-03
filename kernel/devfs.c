@@ -158,7 +158,7 @@ int v_file_open(const char *path, int flags) {
     return v_fd_alloc(node->ops, node->priv); // a device: one shared priv
   }
   void *priv = NULL; // a mount: per-open state, from the node itself
-  int r = node->ops->open(tail, flags, &priv);
+  int r = node->ops->open(path, flags, &priv); // the whole path: names its mount
   if (r < 0)
     return r;
   int fd = v_fd_alloc(node->ops, priv);
