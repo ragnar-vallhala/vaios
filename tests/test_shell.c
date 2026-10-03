@@ -232,6 +232,7 @@ static void cd_to(const char *where) {
   sh_copy_test(l + 3, where);
   shell_exec(&g_sh, l);
 }
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_cd_and_paths(void) {
   shell_reset();
   TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
@@ -251,9 +252,11 @@ static void test_cd_and_paths(void) {
   shell_exec(&g_sh, l);
   TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/"), 0);
 }
+#endif
 
 /* The prompt is vsh's and carries where it is, without FatFs's "0:". */
 extern char g_stub_last_prompt[80];
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_prompt_shows_cwd(void) {
   shell_reset();
   char out[CMD_MAX_LEN];
@@ -265,9 +268,11 @@ static void test_prompt_shows_cwd(void) {
   shell_poll(&g_sh, out, sizeof out);
   TEST_ASSERT_EQ(v_strcmp(g_stub_last_prompt, "vsh:/LOGS> "), 0);
 }
+#endif
 
 /* mkdir resolves against the working directory too. */
 extern char g_stub_mkdir_path[64];
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_mkdir_is_relative(void) {
   shell_reset();
   cd_to("LOGS");
@@ -278,6 +283,7 @@ static void test_mkdir_is_relative(void) {
   TEST_ASSERT_EQ(shell_exec(&g_sh, l2), 0);
   TEST_ASSERT_EQ(v_strcmp(g_stub_mkdir_path, "0:/top"), 0);
 }
+#endif
 
 /* --- the file commands, over the fake card (shell_stubs.c) ---------------- */
 extern char g_stub_out[4096];
@@ -292,11 +298,14 @@ static int run(const char *line) {
   stub_out_reset();
   return shell_exec(&g_sh, l);
 }
+#if VAIOS_MODULE_VFS
 static void put(const char *path, const char *text) {
   stub_fs_put(path, text, (int)v_strlen(text));
 }
+#endif
 static int out_is(const char *want) { return v_strcmp(g_stub_out, want) == 0; }
 
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_head_and_tail(void) {
   shell_reset();
   stub_fs_reset();
@@ -334,7 +343,9 @@ static void test_head_and_tail(void) {
   TEST_ASSERT_EQ(run("head -n x f.txt"), 1); /* not a number */
   TEST_ASSERT_EQ(run("head nope.txt"), 1);
 }
+#endif
 
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_write_cp_rm_touch(void) {
   int len;
   shell_reset();
@@ -356,7 +367,9 @@ static void test_write_cp_rm_touch(void) {
   TEST_ASSERT(stub_fs_get("0:/copy.txt", &len) == NULL);
   TEST_ASSERT_EQ(run("rm copy.txt"), 1);
 }
+#endif
 
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_stat_and_hexdump(void) {
   shell_reset();
   stub_fs_reset();
@@ -375,6 +388,7 @@ static void test_stat_and_hexdump(void) {
   TEST_ASSERT_EQ(run("hexdump h.bin 0x1 2"), 0);
   TEST_ASSERT(out_is("00000001  42 43                                             |BC|\r\n"));
 }
+#endif
 
 /* kill reports which refusal the kernel gave. */
 static void test_kill(void) {
@@ -391,6 +405,7 @@ static void test_kill(void) {
  * typed AHEAD of it are dropped with it; a byte that is not ^C stays for the
  * editor. */
 extern void (*g_stub_console_rx_sink)(const uint8_t *, uint16_t);
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_ctrl_c_interrupts(void) {
   shell_reset();
   stub_fs_reset();
@@ -413,6 +428,7 @@ static void test_ctrl_c_interrupts(void) {
   feed("\n");
   TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 0); /* "ls" was dropped */
 }
+#endif
 
 static void test_loglevel(void) {
   shell_reset();
@@ -439,6 +455,7 @@ static void test_reboot(void) {
 /* > and >>: the command's output lands in the file, with Unix line endings;
  * >> appends; the console has it back afterwards; a > with no file, or not
  * last, is refused before anything runs. */
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_redirect(void) {
   int len;
   shell_reset();
@@ -460,10 +477,12 @@ static void test_redirect(void) {
   stub_fs_get("0:/up.txt", &len);
   TEST_ASSERT_EQ(len, 12);
 }
+#endif
 
 /* More output than /dev/capture holds (2 KiB): hexdump asks about ^C between
  * rows, and the shell moves what was caught into the file each time, so all
  * of it arrives -- 41 rows, 3233 bytes -- with no "cut here" in it. */
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_redirect_overflow(void) {
   int len;
   shell_reset();
@@ -482,6 +501,7 @@ static void test_redirect_overflow(void) {
   TEST_ASSERT(!cut);
   TEST_ASSERT(d[len - 2] == '|' && d[len - 1] == '\n');
 }
+#endif
 
 /* Tab: what the line reads after typing `typed` and pressing it. */
 static const char *after_tab(const char *typed) {
@@ -508,6 +528,7 @@ static void test_tab_completes_commands(void) {
               strstr(g_stub_out, "hexdump"));
 }
 
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_tab_completes_paths(void) {
   shell_reset();
   stub_fs_reset();
@@ -528,6 +549,113 @@ static void test_tab_completes_paths(void) {
   cd_to("LOGS");
   TEST_ASSERT_EQ(v_strcmp(after_tab("cat ../LO"), "cat ../LOGS/"), 0);
 }
+#endif
+
+extern char g_stub_console_out[];
+extern int g_stub_console_out_len;
+extern char g_stub_kmsg[256];
+extern int g_stub_kmsg_pos;
+static void kmsg_holds(const char *text) {
+  strcpy(g_stub_kmsg, text);
+  g_stub_kmsg_pos = 0;
+}
+static void console_clear(void) {
+  g_stub_console_out_len = 0;
+  g_stub_console_out[0] = '\0';
+}
+
+/* /dev, as on Unix: devfs's nodes in the same tree as the card -- listed,
+ * read, written, copied, stat'ed, redirected to and completed like anything
+ * else, and nothing made, removed or renamed there. */
+static void test_dev_tree(void) {
+  shell_reset();
+  stub_fs_reset();
+  TEST_ASSERT_EQ(run("ls /"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "  dev/\r\n") != NULL);
+  TEST_ASSERT_EQ(run("ls /dev"), 0);
+  TEST_ASSERT(out_is("  console\r\n  kmsg\r\n  capture\r\n"));
+  TEST_ASSERT_EQ(run("ls /dev/kmsg"), 0); /* a device lists as itself */
+  TEST_ASSERT(out_is("  kmsg\r\n"));
+  TEST_ASSERT_EQ(run("ls /dev/nope"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "no such file or directory") != NULL);
+
+  TEST_ASSERT_EQ(run("cd /dev"), 0);
+  TEST_ASSERT_EQ(v_strcmp(g_sh.cwd, "0:/dev"), 0);
+  TEST_ASSERT_EQ(run("pwd"), 0);
+  TEST_ASSERT(out_is("/dev\r\n"));
+  TEST_ASSERT_EQ(run("cd kmsg"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "/dev/kmsg: not a directory") != NULL);
+
+  /* the kernel log reads like a file, and drains as it does for dmesg */
+  kmsg_holds("booted\n");
+  TEST_ASSERT_EQ(run("cat kmsg"), 0); /* relative to /dev */
+  TEST_ASSERT(out_is("booted\n\r\n"));
+  TEST_ASSERT_EQ(run("cat kmsg"), 0);
+  TEST_ASSERT(out_is("\r\n"));
+  kmsg_holds("a\nb\nc\n");
+  TEST_ASSERT_EQ(run("head -n 2 /dev/kmsg"), 0);
+  TEST_ASSERT(out_is("a\nb\n"));
+  kmsg_holds("0123456789abcdefXY"); /* a device is skipped into by reading */
+  TEST_ASSERT_EQ(run("hexdump kmsg 16"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "00000010  58 59 ") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "|XY|") != NULL);
+
+  TEST_ASSERT_EQ(run("stat kmsg"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "type      character device") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "size") == NULL);
+  TEST_ASSERT_EQ(run("stat ."), 0);
+  TEST_ASSERT(strstr(g_stub_out, "type      directory") != NULL);
+  TEST_ASSERT_EQ(run("stat /"), 0); /* FatFs cannot stat its root; / is one */
+  TEST_ASSERT(strstr(g_stub_out, "type      directory") != NULL);
+  TEST_ASSERT_EQ(run("stat nope"), 1);
+
+  /* written, through the fd table */
+  console_clear();
+  TEST_ASSERT_EQ(run("write console hello there"), 0);
+  TEST_ASSERT(strstr(g_stub_console_out, "hello there\r\n") != NULL);
+  TEST_ASSERT_EQ(run("write kmsg x"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "not writable") != NULL);
+  TEST_ASSERT_EQ(run("touch nope"), 1); /* nothing is made in devfs */
+
+  /* a redirect to a device; never into the one > itself goes through */
+  console_clear();
+  TEST_ASSERT_EQ(run("uptime > console"), 0);
+  TEST_ASSERT(strstr(g_stub_console_out, "up 0h 0m 0s\r\n") != NULL);
+  TEST_ASSERT_EQ(run("uptime > capture"), 1);
+
+#if VAIOS_MODULE_VFS
+  /* between the card and a device either way */
+  int len;
+  kmsg_holds("line one\n");
+  TEST_ASSERT_EQ(run("cp kmsg /boot.log"), 0);
+  const char *d = stub_fs_get("0:/boot.log", &len);
+  TEST_ASSERT(d && len == 9 && memcmp(d, "line one\n", 9) == 0);
+  console_clear();
+  TEST_ASSERT_EQ(run("cp /boot.log console"), 0);
+  TEST_ASSERT(strstr(g_stub_console_out, "line one\r\n") != NULL);
+  kmsg_holds("logged\n");
+  TEST_ASSERT_EQ(run("cat kmsg > /k.txt"), 0); /* a device, redirected */
+  d = stub_fs_get("0:/k.txt", &len);
+  TEST_ASSERT(d && len >= 7 && memcmp(d, "logged\n", 7) == 0);
+
+  /* nothing made, removed or renamed in devfs; no tail of a stream */
+  TEST_ASSERT_EQ(run("rm kmsg"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "read-only file system") != NULL);
+  TEST_ASSERT_EQ(run("mkdir x"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "read-only file system") != NULL);
+  TEST_ASSERT_EQ(run("mv kmsg /k"), 1);
+  TEST_ASSERT_EQ(run("mv /boot.log /dev/boot"), 1);
+  TEST_ASSERT(stub_fs_get("0:/boot.log", &len) != NULL); /* left alone */
+  TEST_ASSERT_EQ(run("tail kmsg"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "no end to read back from") != NULL);
+#endif
+
+  /* completed like any directory */
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat km"), "cat kmsg "), 0);
+  cd_to("/");
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cat /dev/co"), "cat /dev/console "), 0);
+  TEST_ASSERT_EQ(v_strcmp(after_tab("cd de"), "cd dev/"), 0);
+}
 
 static void test_i2c_scan(void) {
   shell_reset();
@@ -541,6 +669,7 @@ static void test_i2c_scan(void) {
   TEST_ASSERT(strstr(g_stub_out, "\n00:                         -- -- -- -- -- -- -- --\r") != NULL);
 }
 
+#if VAIOS_MODULE_VFS /* needs the card */
 static void test_mv_and_df(void) {
   int len;
   shell_reset();
@@ -558,6 +687,7 @@ static void test_mv_and_df(void) {
   TEST_ASSERT_EQ(run("df"), 0);
   TEST_ASSERT(strstr(g_stub_out, "0:       30.0G    1.5G   28.5G    5%") != NULL);
 }
+#endif
 
 /* date: shows the clock, says when it was never set or is not running, and
  * sets it only from a whole, valid YYYY-MM-DD HH:MM:SS. */
@@ -900,22 +1030,45 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_exec_routes_by_privilege),
     TEST_CASE(test_runtime_command_is_never_privileged),
     TEST_CASE(test_inspection_builtins),
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_cd_and_paths),
+#endif
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_mkdir_is_relative),
+#endif
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_prompt_shows_cwd),
+#endif
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_head_and_tail),
+#endif
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_write_cp_rm_touch),
+#endif
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_stat_and_hexdump),
+#endif
     TEST_CASE(test_kill),
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_ctrl_c_interrupts),
+#endif
     TEST_CASE(test_uptime),
     TEST_CASE(test_date),
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_mv_and_df),
+#endif
     TEST_CASE(test_i2c_scan),
     TEST_CASE(test_tab_completes_commands),
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_tab_completes_paths),
+#endif
+    TEST_CASE(test_dev_tree),
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_redirect),
+#endif
+#if VAIOS_MODULE_VFS
     TEST_CASE(test_redirect_overflow),
+#endif
     TEST_CASE(test_loglevel),
     TEST_CASE(test_reboot),
     TEST_CASE(test_ps_has_no_fixed_limit),

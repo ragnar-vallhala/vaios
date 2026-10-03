@@ -77,6 +77,10 @@ static void test_unpriv_read_bad_ptr_efault(void) {
   (void)syscall_set_caller(BLOCK_SZ, 1);
   TEST_ASSERT_EQ(call(SYS_read, 0, BAD_PTR, 16), T_EFAULT);
 }
+static void test_unpriv_devfs_node_bad_ptr_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_devfs_node, 0, BAD_PTR, 16), T_EFAULT);
+}
 static void test_unpriv_open_bad_str_efault(void) {
   (void)syscall_set_caller(BLOCK_SZ, 1);
   /* SYS_open validates args[0] as a NUL-bounded string in the block. */
@@ -438,6 +442,7 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_mutex_unlock_denied),
     TEST_CASE(test_unpriv_write_bad_ptr_efault),
     TEST_CASE(test_unpriv_read_bad_ptr_efault),
+    TEST_CASE(test_unpriv_devfs_node_bad_ptr_efault),
     TEST_CASE(test_unpriv_open_bad_str_efault),
     TEST_CASE(test_unpriv_wait_bad_ptr_efault),
     TEST_CASE(test_unpriv_write_valid_ptr_passes),

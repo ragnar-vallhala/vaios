@@ -44,6 +44,20 @@ int v_devfs_register(const char *name, const v_file_ops *ops, void *priv) {
   return 0;
 }
 
+int v_devfs_node(int i, char *name, uint32_t cap) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc3(SYS_devfs_node, (uint32_t)i, (uintptr_t)name, cap);
+#endif
+  if (i < 0 || i >= dev_node_count || !name || cap == 0)
+    return -1;
+  uint32_t k = 0;
+  for (const char *n = dev_nodes[i].name; *n && k + 1 < cap; n++)
+    name[k++] = *n;
+  name[k] = '\0';
+  return 0;
+}
+
 // Exact match, or — for a node whose name ends in '/' — a prefix match, which
 // is what makes a MOUNT: "/mnt/" claims every path under it. *tail is set to the
 // rest of the path for a prefix match, and to "" for an exact one.

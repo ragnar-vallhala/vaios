@@ -32,10 +32,15 @@ void shell_test_env_init(void) {
   v_fd_table_init(&_shell_test_task);
 }
 
+/* The kernel log: what a test puts here, drained by reading as the real
+   ring is. */
+char g_stub_kmsg[256];
+int g_stub_kmsg_pos;
 int v_kmsg_read(char *out, uint32_t len) {
-  (void)out;
-  (void)len;
-  return 0;
+  uint32_t n = 0;
+  while (n < len && g_stub_kmsg[g_stub_kmsg_pos])
+    out[n++] = g_stub_kmsg[g_stub_kmsg_pos++];
+  return (int)n;
 }
 
 /* Counts prompts printed, which is the one piece of output a test needs: a
@@ -374,3 +379,4 @@ int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks) {
   out->free_kib = out->total_kib - 1536u * 1024u;
   return 0;
 }
+

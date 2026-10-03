@@ -123,15 +123,13 @@ struct shell {
   int prev_cr;    /* last byte was CR: an LF now ends the same line */
   int req_fd, done_fd; /* the helper's queues, opened on first use; -1 until */
   uint8_t capture; /* this command's output is redirected (> file) */
-#if VAIOS_MODULE_VFS
-  int cap_fd, out_vf; /* while it is: /dev/capture, and the file it drains to */
-  uint8_t cap_err;    /* a write to the file failed */
-#endif
-#if VAIOS_MODULE_VFS
-  /* This shell's working directory, as a FatFs path ("0:/logs"). The shell's
-     own, not FatFs's f_chdir, which is one global for every task. */
+  int cap_fd, out_fd; /* while it is: /dev/capture, and where it drains to */
+  uint8_t out_dev;    /* ... a device (fd table) rather than a card file */
+  uint8_t cap_err;    /* a write to it failed */
+  /* This shell's working directory, as a FatFs path ("0:/logs"; "0:/dev" is
+     devfs). The shell's own, not FatFs's f_chdir, which is one global for
+     every task. */
   char cwd[CMD_MAX_LEN];
-#endif
 };
 
 /** @brief Reset @p sh: empty line, history and runtime registry, with

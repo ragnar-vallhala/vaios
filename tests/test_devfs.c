@@ -301,7 +301,29 @@ static void test_wait_unsupported(void) {
   TEST_ASSERT_EQ(v_file_wait(fd, 1), -1);
 }
 
+/* ls /dev: every node, in the order registered, then -1. A name that does
+ * not fit is cut, and always terminated. */
+static void test_devfs_node_lists_in_order(void) {
+  reset();
+  char n[32];
+  TEST_ASSERT_EQ(v_devfs_node(0, n, sizeof n), 0);
+  TEST_ASSERT(strcmp(n, "/dev/console") == 0);
+  TEST_ASSERT_EQ(v_devfs_node(1, n, sizeof n), 0);
+  TEST_ASSERT(strcmp(n, "/dev/kmsg") == 0);
+  TEST_ASSERT_EQ(v_devfs_node(2, n, sizeof n), 0);
+  TEST_ASSERT(strcmp(n, "/dev/capture") == 0);
+  TEST_ASSERT_EQ(v_devfs_node(3, n, sizeof n), 0);
+  TEST_ASSERT(strcmp(n, "/dev/cap") == 0);
+  TEST_ASSERT_EQ(v_devfs_node(4, n, sizeof n), -1);
+  TEST_ASSERT_EQ(v_devfs_node(-1, n, sizeof n), -1);
+  TEST_ASSERT_EQ(v_devfs_node(0, n, 0), -1);
+  char small[6] = "xxxxx";
+  TEST_ASSERT_EQ(v_devfs_node(1, small, sizeof small), 0);
+  TEST_ASSERT(strcmp(small, "/dev/") == 0);
+}
+
 static const test_case_t devfs_cases[] = {
+    TEST_CASE(test_devfs_node_lists_in_order),
     TEST_CASE(test_console_write_direct_without_writer),
     TEST_CASE(test_console_rx_reaches_fd0),
     TEST_CASE(test_console_wait),

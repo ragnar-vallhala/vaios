@@ -53,6 +53,10 @@ struct Task_Control_Block;
 // Register a device node, e.g. "/dev/console". Returns 0 or a negative error.
 int v_devfs_register(const char *name, const v_file_ops *ops, void *priv);
 
+// The name of registered node `i` (0, 1, ...), for a listing: "/dev/kmsg", or a
+// mount's "/mnt/". Cut to fit `cap`, always terminated. 0, or -1 past the last.
+int v_devfs_node(int i, char *name, uint32_t cap);
+
 // Kernel-side file API (called from the syscall dispatch, privileged). Each
 // operates on the current task's fd table. Return an fd / byte count, or a
 // negative error.

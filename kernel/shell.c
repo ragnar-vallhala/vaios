@@ -37,9 +37,7 @@
 #if VAIOS_MODULE_BUS
 #include "bus.h"
 #endif
-#if VAIOS_MODULE_VFS
-#include "vfs.h"
-#endif
+#include "vfs.h" /* its flags and entry type; the card's calls need VFS */
 #include "task.h"
 #include "utils.h"
 #include "vfile.h" // v_file_read — console input through fd 0
@@ -59,8 +57,7 @@
   v_log(SHELL_LOG_LEVEL, "[SHELL] " fmt, ##__VA_ARGS__)
 #endif
 
-/* The prompt: the shell's name, vsh, and -- with a filesystem -- where it is.
-   "vsh:/logs> ". The format is a constant so the tests can find a prompt among
+/* The prompt: the shell's name, vsh, and where it is: "vsh:/logs> ". The format is a constant so the tests can find a prompt among
    everything else printed. */
 #define SHELL_PROMPT_FMT "vsh%s%s> "
 
@@ -112,6 +109,8 @@ static void sh_copy(char *dst, const char *src, int cap) {
   dst[i] = '\0';
 }
 
+static int lc(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+
 static void sh_putc(char c) {
   char b[2] = {c, '\0'};
   v_printf("%s", b);
@@ -130,21 +129,14 @@ static void sh_banner(void) {
   v_printf("\r\n");
 }
 
-#if VAIOS_MODULE_VFS
 /* A path as a person reads it: the drive prefix FatFs needs ("0:") is not
    shown for the first drive, the only one there usually is. */
 static const char *sh_display_path(const char *p) {
   return (p[0] == '0' && p[1] == ':') ? p + 2 : p;
 }
-#endif
 
 static void sh_prompt(const shell_t *sh) {
-#if VAIOS_MODULE_VFS
   v_printf(SHELL_PROMPT_FMT, ":", sh_display_path(sh->cwd));
-#else
-  (void)sh;
-  v_printf(SHELL_PROMPT_FMT, "", "");
-#endif
 }
 
 /* --- ^C while a command runs ----------------------------------------------
@@ -155,19 +147,15 @@ static void sh_prompt(const shell_t *sh) {
  * asking still cannot be stopped: those spawn a task (see `spin`). sh may be
  * NULL for a privileged command in the helper, which has no editor to keep
  * input for. */
-#if VAIOS_MODULE_VFS
 static void sh_capture_drain(shell_t *sh);
-#endif
 
 int shell_interrupted(shell_t *sh) {
   char rx[16];
   int n, hit = 0;
-#if VAIOS_MODULE_VFS
   /* A long command asks between chunks -- the place to move its redirected
      output into the file before /dev/capture fills. */
   if (sh && sh->capture)
     sh_capture_drain(sh);
-#endif
   while ((n = v_file_read(0, rx, (uint32_t)sizeof rx)) > 0)
     for (int i = 0; i < n; i++) {
       if (rx[i] == 0x03)
@@ -254,20 +242,20 @@ static int cmd_i2c(shell_t *sh, int argc, char **argv);
 #if VAIOS_MODULE_BUS
 static int cmd_bus(shell_t *sh, int argc, char **argv);
 #endif
-#if VAIOS_MODULE_VFS
 static int cmd_ls(shell_t *sh, int argc, char **argv);
 static int cmd_cat(shell_t *sh, int argc, char **argv);
 static int cmd_cd(shell_t *sh, int argc, char **argv);
 static int cmd_pwd(shell_t *sh, int argc, char **argv);
-static int cmd_mkdir(shell_t *sh, int argc, char **argv);
-static int cmd_rm(shell_t *sh, int argc, char **argv);
 static int cmd_stat(shell_t *sh, int argc, char **argv);
 static int cmd_head(shell_t *sh, int argc, char **argv);
-static int cmd_tail(shell_t *sh, int argc, char **argv);
 static int cmd_hexdump(shell_t *sh, int argc, char **argv);
 static int cmd_touch(shell_t *sh, int argc, char **argv);
 static int cmd_write(shell_t *sh, int argc, char **argv);
 static int cmd_cp(shell_t *sh, int argc, char **argv);
+#if VAIOS_MODULE_VFS
+static int cmd_mkdir(shell_t *sh, int argc, char **argv);
+static int cmd_rm(shell_t *sh, int argc, char **argv);
+static int cmd_tail(shell_t *sh, int argc, char **argv);
 static int cmd_mv(shell_t *sh, int argc, char **argv);
 static int cmd_df(shell_t *sh, int argc, char **argv);
 #endif
@@ -303,21 +291,22 @@ static const Command_t builtins[] = {
     {cmd_bus, "bus", "[sub <topic> [n] | pub <topic> <text>] topics",
      SHELL_CMD_PRIV},
 #endif
-#if VAIOS_MODULE_VFS
-    /* Not privileged: the task file API goes through the VFS worker. */
+    /* Not privileged: files go through the VFS worker, devices through the
+       fd table -- both syscalls. */
     {cmd_ls, "ls", "[dir] list a directory (default: here)", 0},
     {cmd_cat, "cat", "<file> print a file", 0},
-    {cmd_cd, "cd", "[dir] change directory (default: the card's root)", 0},
+    {cmd_cd, "cd", "[dir] change directory (default: /)", 0},
     {cmd_pwd, "pwd", "where you are", 0},
-    {cmd_mkdir, "mkdir", "<dir> make a directory", 0},
-    {cmd_rm, "rm", "<path> remove a file or an empty directory", 0},
     {cmd_stat, "stat", "<path> size, type and modified time", 0},
     {cmd_head, "head", "[-n N] <file> the first N lines (10)", 0},
-    {cmd_tail, "tail", "[-n N] <file> the last N lines (10)", 0},
     {cmd_hexdump, "hexdump", "<file> [offset] [len] bytes as hex (256)", 0},
     {cmd_touch, "touch", "<file> create it if it is not there", 0},
     {cmd_write, "write", "<file> <text...> append a line", 0},
     {cmd_cp, "cp", "<src> <dst> copy a file", 0},
+#if VAIOS_MODULE_VFS
+    {cmd_mkdir, "mkdir", "<dir> make a directory", 0},
+    {cmd_rm, "rm", "<path> remove a file or an empty directory", 0},
+    {cmd_tail, "tail", "[-n N] <file> the last N lines (10)", 0},
     {cmd_mv, "mv", "<src> <dst> rename, or move into a directory", 0},
     {cmd_df, "df", "the card's size and free space", 0},
 #endif
@@ -1126,7 +1115,12 @@ static int cmd_bus(shell_t *sh, int argc, char **argv) {
 }
 #endif
 
-#if VAIOS_MODULE_VFS
+/* --- files -----------------------------------------------------------------
+ * One tree, as on Unix: the card at /, and devfs's nodes under /dev -- mounted
+ * over any /dev of the card's own, which it hides. A build with no card has
+ * just /dev. Paths are kept as FatFs writes them ("0:/logs"), and "0:/dev..."
+ * is devfs. A file on the card goes through the VFS worker; a device through
+ * the fd table. Both are syscalls, so none of this needs privilege. */
 #define SHELL_IO_TICKS 500 /* how long a file call waits for the VFS worker */
 
 /* `arg` against the working directory, folded into `out` as a FatFs path.
@@ -1210,25 +1204,254 @@ static int sh_arg_path(const shell_t *sh, const char *cmd, const char *arg,
   return -1;
 }
 
+/* "/dev/kmsg" for a resolved path under /dev ("/dev" itself included), or
+   NULL for one on the card. */
+static const char *sh_devpath(const char *p) {
+  if (p[0] != '0' || p[1] != ':' || p[2] != '/' || p[3] != 'd' || p[4] != 'e' ||
+      p[5] != 'v' || (p[6] && p[6] != '/'))
+    return NULL;
+  return p + 2;
+}
+
+static int sh_is_root(const char *p) { return p[0] == '0' && p[2] == '/' && !p[3]; }
+
+/* Whether devfs has the node `dev` ("/dev/kmsg"). */
+static int sh_devnode(const char *dev) {
+  char n[CMD_MAX_LEN];
+  for (int i = 0; v_devfs_node(i, n, sizeof n) == 0; i++)
+    if (v_strcmp(n, dev) == 0)
+      return 1;
+  return 0;
+}
+
+/* A directory being listed: the card's, devfs's /dev, or both at the root. */
+typedef struct {
+  int vd;          /* the card's listing, or -1 */
+  int node;        /* /dev: the next devfs node to look at; -1 otherwise */
+  uint8_t add_dev; /* the root: dev/ is still to come */
+} sh_dir_t;
+
+/* 0, or < 0 if `path` is not a directory that is there. */
+static int sh_diropen(const char *path, sh_dir_t *d) {
+  d->vd = -1;
+  d->node = -1;
+  d->add_dev = (uint8_t)sh_is_root(path);
+  const char *dev = sh_devpath(path);
+  if (dev) {
+    if (dev[4])
+      return -1; /* a device, not a directory */
+    d->node = 0;
+    return 0;
+  }
+  int rc = -1;
+#if VAIOS_MODULE_VFS
+  rc = d->vd = v_vfs_diropen(path, SHELL_IO_TICKS);
+#endif
+  return (rc >= 0 || d->add_dev) ? 0 : rc; /* no card: / still has dev/ */
+}
+
+/* The next entry: 1 for one on the card, 2 for a device, 0 at the end. */
+static int sh_dirnext(sh_dir_t *d, vfs_dirent_t *e) {
+#if VAIOS_MODULE_VFS
+  while (d->vd >= 0) {
+    if (v_vfs_dirnext(d->vd, e, SHELL_IO_TICKS) != 1) {
+      v_vfs_close(d->vd, SHELL_IO_TICKS);
+      d->vd = -1;
+    } else if (!d->add_dev || lc(e->name[0]) != 'd' || lc(e->name[1]) != 'e' ||
+               lc(e->name[2]) != 'v' || e->name[3]) {
+      return 1; /* (the card's own /dev, hidden under devfs's, is skipped) */
+    }
+  }
+#endif
+  if (d->add_dev) {
+    d->add_dev = 0;
+    sh_copy(e->name, "dev", (int)sizeof e->name);
+    e->is_dir = 1;
+    e->size = 0;
+    return 1;
+  }
+  char n[CMD_MAX_LEN];
+  while (d->node >= 0 && v_devfs_node(d->node++, n, sizeof n) == 0) {
+    if (n[0] != '/' || n[1] != 'd' || n[2] != 'e' || n[3] != 'v' ||
+        n[4] != '/' || !n[5])
+      continue; /* a mount elsewhere (/mnt/), not a node under /dev */
+    sh_copy(e->name, n + 5, (int)sizeof e->name);
+    e->is_dir = 0;
+    e->size = 0;
+    return 2;
+  }
+  return 0;
+}
+
+static void sh_dirclose(sh_dir_t *d) {
+#if VAIOS_MODULE_VFS
+  if (d->vd >= 0)
+    v_vfs_close(d->vd, SHELL_IO_TICKS);
+#endif
+  d->vd = -1;
+}
+
+typedef struct {
+  uint8_t exists, is_dir, is_dev;
+  uint32_t size, mtime; /* the card's: mtime packed as FAT keeps it */
+} sh_stat_t;
+
+static void sh_stat(const char *path, sh_stat_t *st) {
+  *st = (sh_stat_t){0};
+  const char *dev = sh_devpath(path);
+  if (dev || sh_is_root(path)) { /* FatFs has nothing to say of its root */
+    st->is_dir = !dev || !dev[4];
+    st->is_dev = !st->is_dir;
+    st->exists = st->is_dir || sh_devnode(dev);
+    return;
+  }
+#if VAIOS_MODULE_VFS
+  vfs_stat_t v;
+  if (v_vfs_info(path, &v, SHELL_IO_TICKS) == 0 && v.exists) {
+    st->exists = 1;
+    st->is_dir = v.is_dir;
+    st->size = v.size;
+    st->mtime = v.mtime;
+  }
+#endif
+}
+
+/* An open file: on the card, or a device. */
+typedef struct {
+  int fd;
+  uint8_t dev;
+} sh_file_t;
+
+static int sh_fopen(const char *path, int flags, sh_file_t *f) {
+  const char *dev = sh_devpath(path);
+  f->dev = dev != NULL;
+  f->fd = -1;
+  if (dev)
+    f->fd = dev[4] ? v_file_open(dev, flags) : -1; /* /dev: a directory */
+#if VAIOS_MODULE_VFS
+  else
+    f->fd = v_vfs_open(path, flags, SHELL_IO_TICKS);
+#endif
+  return f->fd < 0 ? (f->fd < -1 ? f->fd : -1) : 0;
+}
+
+static int sh_fread(sh_file_t *f, void *buf, uint32_t n) {
+  if (f->dev)
+    return v_file_read(f->fd, buf, n);
+#if VAIOS_MODULE_VFS
+  return v_vfs_read(f->fd, buf, n, SHELL_IO_TICKS);
+#else
+  return -1;
+#endif
+}
+
+/* All of it, or < 0. A device may take part (the console's queue when full):
+   the rest goes again, as v_printf does. */
+static int sh_fwrite(sh_file_t *f, const void *buf, uint32_t n) {
+  if (!f->dev) {
+#if VAIOS_MODULE_VFS
+    return v_vfs_write(f->fd, buf, n, SHELL_IO_TICKS);
+#else
+    return -1;
+#endif
+  }
+  for (uint32_t done = 0; done < n;) {
+    int w = v_file_write(f->fd, (const char *)buf + done, n - done);
+    if (w < 0)
+      return w;
+    if (w == 0)
+      task_delay(1);
+    done += (uint32_t)w;
+  }
+  return (int)n;
+}
+
+/* Past the first `off` bytes: a seek on the card, read and dropped from a
+   device, which has no position to set. */
+static int sh_fskip(sh_file_t *f, long off) {
+  if (!f->dev) {
+#if VAIOS_MODULE_VFS
+    return v_vfs_seek(f->fd, off, VFS_SEEK_SET, SHELL_IO_TICKS) < 0 ? -1 : 0;
+#endif
+  }
+  char b[32];
+  while (off > 0) {
+    int n = sh_fread(f, b, off < (long)sizeof b ? (uint32_t)off : sizeof b);
+    if (n <= 0)
+      return -1;
+    off -= n;
+  }
+  return 0;
+}
+
+static void sh_fclose(sh_file_t *f) {
+  if (f->fd < 0)
+    return;
+  if (f->dev)
+    v_file_close(f->fd);
+#if VAIOS_MODULE_VFS
+  else
+    v_vfs_close(f->fd, SHELL_IO_TICKS);
+#endif
+  f->fd = -1;
+}
+
+/* Why `path` would not open, as a person reads it. */
+static void sh_ferr(const char *cmd, const char *path, int rc) {
+  sh_stat_t st;
+  sh_stat(path, &st);
+  const char *why = st.is_dir ? "is a directory"
+                  : !st.exists ? "no such file or directory"
+                               : NULL;
+  if (why)
+    v_printf("%s: %s: %s\r\n", cmd, sh_display_path(path), why);
+  else
+    v_printf("%s: %s: error %d\r\n", cmd, sh_display_path(path), rc);
+}
+
+/* Open argv's file through the working directory, or say why not. */
+static int sh_open(shell_t *sh, const char *cmd, const char *arg, int flags,
+                   sh_file_t *f) {
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, cmd, arg, path, sizeof path))
+    return -1;
+  int rc = sh_fopen(path, flags, f);
+  if (rc < 0)
+    sh_ferr(cmd, path, rc);
+  return rc;
+}
+
 static int cmd_ls(shell_t *sh, int argc, char **argv) {
   char path[CMD_MAX_LEN];
   if (sh_arg_path(sh, "ls", argc > 1 ? argv[1] : ".", path, sizeof path))
     return 1;
-  int d = v_vfs_diropen(path, SHELL_IO_TICKS);
-  if (d < 0) {
-    v_printf("ls: %s: error %d\r\n", path, d);
-    return 1;
+  sh_dir_t d;
+  int r = sh_diropen(path, &d);
+  if (r < 0) {
+    sh_stat_t st; /* not a directory: a file or a device is listed as itself */
+    sh_stat(path, &st);
+    if (!st.exists) {
+      v_printf("ls: %s: no such file or directory\r\n", sh_display_path(path));
+      return 1;
+    }
+    const char *base = sh_display_path(path);
+    for (const char *q = base; *q; q++)
+      if (*q == '/')
+        base = q + 1;
+    v_printf(st.is_dev ? "  %s\r\n" : "  %s  %d\r\n", base, (int)st.size);
+    return 0;
   }
   vfs_dirent_t e;
   int rc = 0;
-  while (v_vfs_dirnext(d, &e, SHELL_IO_TICKS) == 1) {
-    v_printf(e.is_dir ? "  %s/\r\n" : "  %s  %d\r\n", e.name, (int)e.size);
+  while ((r = sh_dirnext(&d, &e)) > 0) {
+    v_printf(e.is_dir ? "  %s/\r\n" : r == 2 ? "  %s\r\n" : "  %s  %d\r\n",
+             e.name, (int)e.size);
     if (shell_interrupted(sh)) {
       rc = SHELL_INTERRUPTED;
       break;
     }
   }
-  v_vfs_close(d, SHELL_IO_TICKS);
+  sh_dirclose(&d);
   return rc;
 }
 
@@ -1237,25 +1460,20 @@ static int cmd_cat(shell_t *sh, int argc, char **argv) {
     v_printf("usage: cat <file>\r\n");
     return 1;
   }
-  char path[CMD_MAX_LEN];
-  if (sh_arg_path(sh, "cat", argv[1], path, sizeof path))
+  sh_file_t f;
+  if (sh_open(sh, "cat", argv[1], VFS_O_RDONLY, &f) < 0)
     return 1;
-  int fd = v_vfs_open(path, VFS_O_RDONLY, SHELL_IO_TICKS);
-  if (fd < 0) {
-    v_printf("cat: %s: error %d\r\n", path, fd);
-    return 1;
-  }
   char buf[65];
   int n;
-  while ((n = v_vfs_read(fd, buf, sizeof buf - 1, SHELL_IO_TICKS)) > 0) {
+  while ((n = sh_fread(&f, buf, sizeof buf - 1)) > 0) {
     buf[n] = '\0'; /* text: an embedded NUL ends the chunk early */
     v_printf("%s", buf);
     if (shell_interrupted(sh)) {
-      v_vfs_close(fd, SHELL_IO_TICKS);
+      sh_fclose(&f);
       return SHELL_INTERRUPTED;
     }
   }
-  v_vfs_close(fd, SHELL_IO_TICKS);
+  sh_fclose(&f);
   v_printf("\r\n");
   return n < 0 ? 1 : 0;
 }
@@ -1265,12 +1483,15 @@ static int cmd_cd(shell_t *sh, int argc, char **argv) {
   if (sh_arg_path(sh, "cd", argc > 1 ? argv[1] : "/", path, sizeof path))
     return 1;
   /* It has to be a directory that is there: one that opens as one. */
-  int d = v_vfs_diropen(path, SHELL_IO_TICKS);
-  if (d < 0) {
-    v_printf("cd: %s: no such directory\r\n", path);
+  sh_dir_t d;
+  if (sh_diropen(path, &d) < 0) {
+    sh_stat_t st;
+    sh_stat(path, &st);
+    v_printf("cd: %s: %s\r\n", sh_display_path(path),
+             st.exists ? "not a directory" : "no such directory");
     return 1;
   }
-  v_vfs_close(d, SHELL_IO_TICKS);
+  sh_dirclose(&d);
   sh_copy(sh->cwd, path, CMD_MAX_LEN);
   return 0;
 }
@@ -1282,31 +1503,34 @@ static int cmd_pwd(shell_t *sh, int argc, char **argv) {
   return 0;
 }
 
-static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
+static int cmd_stat(shell_t *sh, int argc, char **argv) {
   if (argc < 2) {
-    v_printf("usage: mkdir <dir>\r\n");
+    v_printf("usage: stat <path>\r\n");
     return 1;
   }
   char path[CMD_MAX_LEN];
-  if (sh_arg_path(sh, "mkdir", argv[1], path, sizeof path))
+  if (sh_arg_path(sh, "stat", argv[1], path, sizeof path))
     return 1;
-  int rc = v_vfs_makedir(path, SHELL_IO_TICKS);
-  if (rc < 0) {
-    v_printf("mkdir: %s: error %d\r\n", path, rc);
+  sh_stat_t st;
+  sh_stat(path, &st);
+  if (!st.exists) {
+    v_printf("stat: %s: no such file or directory\r\n", sh_display_path(path));
     return 1;
   }
+  /* FAT packs the date and time: (fdate << 16) | ftime, fdate = year-1980:7
+     month:4 day:5, ftime = hour:5 minute:6 second/2:5. */
+  uint32_t d = st.mtime >> 16, t = st.mtime & 0xFFFFu;
+  v_printf("  path      %s\r\n", sh_display_path(path));
+  v_printf("  type      %s\r\n", st.is_dir   ? "directory"
+                                 : st.is_dev ? "character device"
+                                             : "file");
+  if (!st.is_dir && !st.is_dev)
+    v_printf("  size      %d bytes\r\n", (int)st.size);
+  if (d)
+    v_printf("  modified  %d-%02d-%02d %02d:%02d\r\n", (int)(1980u + (d >> 9)),
+             (int)(d >> 5 & 15u), (int)(d & 31u), (int)(t >> 11),
+             (int)(t >> 5 & 63u));
   return 0;
-}
-
-/* Open argv's file through the working directory, or say why not. */
-static int sh_open(shell_t *sh, const char *cmd, const char *arg, int flags) {
-  char path[CMD_MAX_LEN];
-  if (sh_arg_path(sh, cmd, arg, path, sizeof path))
-    return -1;
-  int fd = v_vfs_open(path, flags, SHELL_IO_TICKS);
-  if (fd < 0)
-    v_printf("%s: %s: error %d\r\n", cmd, sh_display_path(path), fd);
-  return fd;
 }
 
 /* "-n N" before the file, for head and tail. The index of the file argument,
@@ -1321,52 +1545,6 @@ static int opt_n(int argc, char **argv, long *n) {
   return (*n >= 0 && a < argc) ? a : 0;
 }
 
-static int cmd_rm(shell_t *sh, int argc, char **argv) {
-  if (argc < 2) {
-    v_printf("usage: rm <path>\r\n");
-    return 1;
-  }
-  char path[CMD_MAX_LEN];
-  if (sh_arg_path(sh, "rm", argv[1], path, sizeof path))
-    return 1;
-  int rc = v_vfs_remove(path, SHELL_IO_TICKS);
-  if (rc < 0) {
-    /* FatFs refuses a directory that still has something in it */
-    v_printf("rm: %s: error %d (a directory must be empty)\r\n",
-             sh_display_path(path), rc);
-    return 1;
-  }
-  return 0;
-}
-
-static int cmd_stat(shell_t *sh, int argc, char **argv) {
-  if (argc < 2) {
-    v_printf("usage: stat <path>\r\n");
-    return 1;
-  }
-  char path[CMD_MAX_LEN];
-  if (sh_arg_path(sh, "stat", argv[1], path, sizeof path))
-    return 1;
-  vfs_stat_t st;
-  int rc = v_vfs_info(path, &st, SHELL_IO_TICKS);
-  if (rc < 0 || !st.exists) {
-    v_printf("stat: %s: no such file or directory\r\n", sh_display_path(path));
-    return 1;
-  }
-  /* FAT packs the date and time: (fdate << 16) | ftime, fdate = year-1980:7
-     month:4 day:5, ftime = hour:5 minute:6 second/2:5. */
-  uint32_t d = st.mtime >> 16, t = st.mtime & 0xFFFFu;
-  v_printf("  path      %s\r\n", sh_display_path(path));
-  v_printf("  type      %s\r\n", st.is_dir ? "directory" : "file");
-  if (!st.is_dir)
-    v_printf("  size      %d bytes\r\n", (int)st.size);
-  if (d)
-    v_printf("  modified  %d-%02d-%02d %02d:%02d\r\n", (int)(1980u + (d >> 9)),
-             (int)(d >> 5 & 15u), (int)(d & 31u), (int)(t >> 11),
-             (int)(t >> 5 & 63u));
-  return 0;
-}
-
 static int cmd_head(shell_t *sh, int argc, char **argv) {
   long want;
   int a = opt_n(argc, argv, &want);
@@ -1374,14 +1552,13 @@ static int cmd_head(shell_t *sh, int argc, char **argv) {
     v_printf("usage: head [-n N] <file>\r\n");
     return 1;
   }
-  int fd = sh_open(sh, "head", argv[a], VFS_O_RDONLY);
-  if (fd < 0)
+  sh_file_t f;
+  if (sh_open(sh, "head", argv[a], VFS_O_RDONLY, &f) < 0)
     return 1;
   char buf[65];
   int n, rc = 0;
   long lines = 0;
-  while (lines < want && (n = v_vfs_read(fd, buf, sizeof buf - 1,
-                                         SHELL_IO_TICKS)) > 0) {
+  while (lines < want && (n = sh_fread(&f, buf, sizeof buf - 1)) > 0) {
     int k = 0;
     while (k < n && lines < want)
       if (buf[k++] == '\n')
@@ -1393,14 +1570,202 @@ static int cmd_head(shell_t *sh, int argc, char **argv) {
       break;
     }
   }
-  v_vfs_close(fd, SHELL_IO_TICKS);
+  sh_fclose(&f);
   return rc;
+}
+
+/* Offset, sixteen bytes in hex, the same as text: hexdump -C's layout. */
+static int cmd_hexdump(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: hexdump <file> [offset] [len]\r\n");
+    return 1;
+  }
+  long off = argc > 2 ? sh_num(argv[2]) : 0;
+  long len = argc > 3 ? sh_num(argv[3]) : 256;
+  if (off < 0 || len < 0) {
+    v_printf("hexdump: offset and len are numbers (0x for hex)\r\n");
+    return 1;
+  }
+  sh_file_t f;
+  if (sh_open(sh, "hexdump", argv[1], VFS_O_RDONLY, &f) < 0)
+    return 1;
+  int rc = 0;
+  if (off && sh_fskip(&f, off) < 0)
+    rc = 1;
+  static const char hx[] = "0123456789abcdef";
+  uint8_t b[16];
+  while (!rc && len > 0) {
+    int n = sh_fread(&f, b, len < 16 ? (uint32_t)len : 16u);
+    if (n <= 0)
+      break;
+    char row[80];
+    int o = 0;
+    for (int sft = 28; sft >= 0; sft -= 4)
+      row[o++] = hx[((uint32_t)off >> sft) & 15u];
+    row[o++] = ' ';
+    for (int k = 0; k < 16; k++) {
+      row[o++] = ' ';
+      if (k == 8)
+        row[o++] = ' '; /* a gap between the two halves */
+      row[o++] = k < n ? hx[b[k] >> 4] : ' ';
+      row[o++] = k < n ? hx[b[k] & 15] : ' ';
+    }
+    row[o++] = ' ';
+    row[o++] = ' ';
+    row[o++] = '|';
+    for (int k = 0; k < n; k++)
+      row[o++] = (b[k] >= 0x20 && b[k] < 0x7F) ? (char)b[k] : '.';
+    row[o++] = '|';
+    row[o] = '\0';
+    v_printf("%s\r\n", row);
+    off += n;
+    len -= n;
+    if (shell_interrupted(sh))
+      rc = SHELL_INTERRUPTED;
+  }
+  sh_fclose(&f);
+  return rc;
+}
+
+static int cmd_touch(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: touch <file>\r\n");
+    return 1;
+  }
+  sh_file_t f;
+  if (sh_open(sh, "touch", argv[1], VFS_O_WRONLY | VFS_O_CREAT, &f) < 0)
+    return 1;
+  sh_fclose(&f);
+  return 0;
+}
+
+/* Append argv[2..] as one line -- to a file, or to a device (/dev/console). */
+static int cmd_write(shell_t *sh, int argc, char **argv) {
+  if (argc < 3) {
+    v_printf("usage: write <file> <text...>\r\n");
+    return 1;
+  }
+  sh_file_t f;
+  if (sh_open(sh, "write", argv[1], VFS_O_WRONLY | VFS_O_CREAT | VFS_O_APPEND,
+              &f) < 0)
+    return 1;
+  char line[CMD_MAX_LEN + 1];
+  int o = 0;
+  for (int a = 2; a < argc; a++) {
+    if (a > 2 && o < CMD_MAX_LEN)
+      line[o++] = ' ';
+    for (const char *q = argv[a]; *q && o < CMD_MAX_LEN; q++)
+      line[o++] = *q;
+  }
+  line[o++] = '\n';
+  int w = sh_fwrite(&f, line, (uint32_t)o);
+  sh_fclose(&f);
+  if (w != o) {
+    v_printf("write: %s: %s\r\n", argv[1],
+             f.dev ? "not writable" : "write failed");
+    return 1;
+  }
+  return 0;
+}
+
+/* Between the card and devices either way: cp /dev/kmsg boot.log. */
+static int cmd_cp(shell_t *sh, int argc, char **argv) {
+  if (argc < 3) {
+    v_printf("usage: cp <src> <dst>\r\n");
+    return 1;
+  }
+  char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "cp", argv[1], src, sizeof src) ||
+      sh_arg_path(sh, "cp", argv[2], dst, sizeof dst))
+    return 1;
+  if (v_strcmp(src, dst) == 0) {
+    v_printf("cp: %s and %s are the same file\r\n", argv[1], argv[2]);
+    return 1;
+  }
+  sh_file_t in, out;
+  int r = sh_fopen(src, VFS_O_RDONLY, &in);
+  if (r < 0) {
+    sh_ferr("cp", src, r);
+    return 1;
+  }
+  r = sh_fopen(dst, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &out);
+  if (r < 0) {
+    sh_fclose(&in);
+    sh_ferr("cp", dst, r);
+    return 1;
+  }
+  uint8_t buf[128];
+  int n, rc = 0;
+  while ((n = sh_fread(&in, buf, sizeof buf)) > 0) {
+    if (sh_fwrite(&out, buf, (uint32_t)n) != n) {
+      v_printf("cp: %s: write failed\r\n", sh_display_path(dst));
+      rc = 1;
+      break;
+    }
+    if (shell_interrupted(sh)) {
+      rc = SHELL_INTERRUPTED;
+      break;
+    }
+  }
+  if (n < 0)
+    rc = 1;
+  sh_fclose(&out);
+  sh_fclose(&in);
+  return rc;
+}
+
+#if VAIOS_MODULE_VFS
+/* The card's alone: making, removing, renaming, seeking, its free space. */
+
+/* devfs's nodes are what the kernel registered: nothing is made, removed or
+   renamed there. 1 (and said so) for a path under /dev. */
+static int sh_devfs_ro(const char *cmd, const char *path) {
+  if (!sh_devpath(path))
+    return 0;
+  v_printf("%s: %s: read-only file system\r\n", cmd, sh_display_path(path));
+  return 1;
+}
+
+static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: mkdir <dir>\r\n");
+    return 1;
+  }
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "mkdir", argv[1], path, sizeof path) ||
+      sh_devfs_ro("mkdir", path))
+    return 1;
+  int rc = v_vfs_makedir(path, SHELL_IO_TICKS);
+  if (rc < 0) {
+    v_printf("mkdir: %s: error %d\r\n", path, rc);
+    return 1;
+  }
+  return 0;
+}
+
+static int cmd_rm(shell_t *sh, int argc, char **argv) {
+  if (argc < 2) {
+    v_printf("usage: rm <path>\r\n");
+    return 1;
+  }
+  char path[CMD_MAX_LEN];
+  if (sh_arg_path(sh, "rm", argv[1], path, sizeof path) ||
+      sh_devfs_ro("rm", path))
+    return 1;
+  int rc = v_vfs_remove(path, SHELL_IO_TICKS);
+  if (rc < 0) {
+    /* FatFs refuses a directory that still has something in it */
+    v_printf("rm: %s: error %d (a directory must be empty)\r\n",
+             sh_display_path(path), rc);
+    return 1;
+  }
+  return 0;
 }
 
 /* The last N lines: read back from the end a block at a time, counting
    newlines, until there are N of them -- however long the lines -- then print
    from there to the end. A final newline ends the last line rather than
-   starting another. */
+   starting another. A device has no end to read back from. */
 static int cmd_tail(shell_t *sh, int argc, char **argv) {
   long want;
   int a = opt_n(argc, argv, &want);
@@ -1408,9 +1773,16 @@ static int cmd_tail(shell_t *sh, int argc, char **argv) {
     v_printf("usage: tail [-n N] <file>\r\n");
     return 1;
   }
-  int fd = sh_open(sh, "tail", argv[a], VFS_O_RDONLY);
-  if (fd < 0)
+  sh_file_t f;
+  if (sh_open(sh, "tail", argv[a], VFS_O_RDONLY, &f) < 0)
     return 1;
+  if (f.dev) {
+    sh_fclose(&f);
+    v_printf("tail: %s: a device has no end to read back from (cat or head)\r\n",
+             argv[a]);
+    return 1;
+  }
+  int fd = f.fd;
   long size = v_vfs_size(fd, SHELL_IO_TICKS);
   long start = want == 0 ? size : 0, pos = size, lines = 0;
   char buf[129];
@@ -1441,145 +1813,7 @@ static int cmd_tail(shell_t *sh, int argc, char **argv) {
       }
     }
   }
-  v_vfs_close(fd, SHELL_IO_TICKS);
-  return rc;
-}
-
-/* Offset, sixteen bytes in hex, the same as text: hexdump -C's layout. */
-static int cmd_hexdump(shell_t *sh, int argc, char **argv) {
-  if (argc < 2) {
-    v_printf("usage: hexdump <file> [offset] [len]\r\n");
-    return 1;
-  }
-  long off = argc > 2 ? sh_num(argv[2]) : 0;
-  long len = argc > 3 ? sh_num(argv[3]) : 256;
-  if (off < 0 || len < 0) {
-    v_printf("hexdump: offset and len are numbers (0x for hex)\r\n");
-    return 1;
-  }
-  int fd = sh_open(sh, "hexdump", argv[1], VFS_O_RDONLY);
-  if (fd < 0)
-    return 1;
-  int rc = 0;
-  if (off && v_vfs_seek(fd, off, VFS_SEEK_SET, SHELL_IO_TICKS) < 0)
-    rc = 1;
-  static const char hx[] = "0123456789abcdef";
-  uint8_t b[16];
-  while (!rc && len > 0) {
-    int n = v_vfs_read(fd, b, len < 16 ? (uint32_t)len : 16u, SHELL_IO_TICKS);
-    if (n <= 0)
-      break;
-    char row[80];
-    int o = 0;
-    for (int sft = 28; sft >= 0; sft -= 4)
-      row[o++] = hx[((uint32_t)off >> sft) & 15u];
-    row[o++] = ' ';
-    for (int k = 0; k < 16; k++) {
-      row[o++] = ' ';
-      if (k == 8)
-        row[o++] = ' '; /* a gap between the two halves */
-      row[o++] = k < n ? hx[b[k] >> 4] : ' ';
-      row[o++] = k < n ? hx[b[k] & 15] : ' ';
-    }
-    row[o++] = ' ';
-    row[o++] = ' ';
-    row[o++] = '|';
-    for (int k = 0; k < n; k++)
-      row[o++] = (b[k] >= 0x20 && b[k] < 0x7F) ? (char)b[k] : '.';
-    row[o++] = '|';
-    row[o] = '\0';
-    v_printf("%s\r\n", row);
-    off += n;
-    len -= n;
-    if (shell_interrupted(sh))
-      rc = SHELL_INTERRUPTED;
-  }
-  v_vfs_close(fd, SHELL_IO_TICKS);
-  return rc;
-}
-
-static int cmd_touch(shell_t *sh, int argc, char **argv) {
-  if (argc < 2) {
-    v_printf("usage: touch <file>\r\n");
-    return 1;
-  }
-  int fd = sh_open(sh, "touch", argv[1], VFS_O_WRONLY | VFS_O_CREAT);
-  if (fd < 0)
-    return 1;
-  v_vfs_close(fd, SHELL_IO_TICKS);
-  return 0;
-}
-
-/* Append argv[2..] as one line. Until there is > redirection. */
-static int cmd_write(shell_t *sh, int argc, char **argv) {
-  if (argc < 3) {
-    v_printf("usage: write <file> <text...>\r\n");
-    return 1;
-  }
-  int fd = sh_open(sh, "write", argv[1],
-                   VFS_O_WRONLY | VFS_O_CREAT | VFS_O_APPEND);
-  if (fd < 0)
-    return 1;
-  char line[CMD_MAX_LEN + 1];
-  int o = 0;
-  for (int a = 2; a < argc; a++) {
-    if (a > 2 && o < CMD_MAX_LEN)
-      line[o++] = ' ';
-    for (const char *q = argv[a]; *q && o < CMD_MAX_LEN; q++)
-      line[o++] = *q;
-  }
-  line[o++] = '\n';
-  int w = v_vfs_write(fd, line, (uint32_t)o, SHELL_IO_TICKS);
-  v_vfs_close(fd, SHELL_IO_TICKS);
-  if (w != o) {
-    v_printf("write: error %d\r\n", w);
-    return 1;
-  }
-  return 0;
-}
-
-static int cmd_cp(shell_t *sh, int argc, char **argv) {
-  if (argc < 3) {
-    v_printf("usage: cp <src> <dst>\r\n");
-    return 1;
-  }
-  char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
-  if (sh_arg_path(sh, "cp", argv[1], src, sizeof src) ||
-      sh_arg_path(sh, "cp", argv[2], dst, sizeof dst))
-    return 1;
-  if (v_strcmp(src, dst) == 0) {
-    v_printf("cp: %s and %s are the same file\r\n", argv[1], argv[2]);
-    return 1;
-  }
-  int in = v_vfs_open(src, VFS_O_RDONLY, SHELL_IO_TICKS);
-  if (in < 0) {
-    v_printf("cp: %s: error %d\r\n", sh_display_path(src), in);
-    return 1;
-  }
-  int out = v_vfs_open(dst, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC,
-                       SHELL_IO_TICKS);
-  if (out < 0) {
-    v_vfs_close(in, SHELL_IO_TICKS);
-    v_printf("cp: %s: error %d\r\n", sh_display_path(dst), out);
-    return 1;
-  }
-  uint8_t buf[128];
-  int n, rc = 0;
-  while ((n = v_vfs_read(in, buf, sizeof buf, SHELL_IO_TICKS)) > 0) {
-    if (v_vfs_write(out, buf, (uint32_t)n, SHELL_IO_TICKS) != n) {
-      v_printf("cp: %s: write failed\r\n", sh_display_path(dst));
-      rc = 1;
-      break;
-    }
-    if (shell_interrupted(sh)) {
-      rc = SHELL_INTERRUPTED;
-      break;
-    }
-  }
-  if (n < 0)
-    rc = 1;
-  v_vfs_close(out, SHELL_IO_TICKS);
-  v_vfs_close(in, SHELL_IO_TICKS);
+  sh_fclose(&f);
   return rc;
 }
 
@@ -1592,7 +1826,8 @@ static int cmd_mv(shell_t *sh, int argc, char **argv) {
   }
   char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
   if (sh_arg_path(sh, "mv", argv[1], src, sizeof src) ||
-      sh_arg_path(sh, "mv", argv[2], dst, sizeof dst))
+      sh_arg_path(sh, "mv", argv[2], dst, sizeof dst) ||
+      sh_devfs_ro("mv", src) || sh_devfs_ro("mv", dst))
     return 1;
   vfs_stat_t st;
   if (v_vfs_info(dst, &st, SHELL_IO_TICKS) == 0 && st.exists && st.is_dir) {
@@ -1663,7 +1898,7 @@ static int cmd_df(shell_t *sh, int argc, char **argv) {
   v_printf("  Drive    Size    Used   Avail  Use%%\r\n  %s\r\n", row);
   return 0;
 }
-#endif
+#endif /* VAIOS_MODULE_VFS */
 
 /* --- lifecycle ------------------------------------------------------------ */
 
@@ -1683,14 +1918,12 @@ void shell_init(shell_t *sh, const Command_t *cmds, int count) {
   sh->prev_cr = 0;
   sh->req_fd = sh->done_fd = -1;
   sh->capture = 0;
-#if VAIOS_MODULE_VFS
   sh_copy(sh->cwd, "0:/", CMD_MAX_LEN);
-#endif
 }
 
 /* --- tab completion --------------------------------------------------------
  * The word under the cursor (the line's last): the first word against command
- * names, any later word against the card's paths -- case-insensitively, as FAT
+ * names, any later word against paths (the card's, and /dev) -- case-insensitively, as FAT
  * names are. One match fills in, with '/' after a directory and a space after
  * anything else; several fill in what they share, and when that is nothing
  * more, they are listed and the line is redrawn. */
@@ -1704,8 +1937,6 @@ typedef struct {
   int common;               /* how much every match shares with it */
   int is_dir;               /* the first match is a directory */
 } comp_t;
-
-static int lc(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
 
 static int comp_eq(const comp_t *k, char a, char b) {
   return k->nocase ? lc(a) == lc(b) : a == b;
@@ -1739,29 +1970,26 @@ static void sh_insert(shell_t *sh, const char *p, int n) {
   sh->line[sh->len] = '\0';
 }
 
-#if VAIOS_MODULE_VFS
 /* Offer each entry of `dir` (a word's directory part, as typed) -- and, when
    `list` is set, print the matching ones instead. 0, or -1 if the directory
    does not open. */
 static int comp_dir(shell_t *sh, comp_t *k, const char *dir, int list) {
   char path[CMD_MAX_LEN];
-  if (sh_path(sh, *dir ? dir : ".", path, sizeof path))
-    return -1;
-  int d = v_vfs_diropen(path, SHELL_IO_TICKS);
-  if (d < 0)
+  sh_dir_t d;
+  if (sh_path(sh, *dir ? dir : ".", path, sizeof path) ||
+      sh_diropen(path, &d) < 0)
     return -1;
   vfs_dirent_t e;
-  while (v_vfs_dirnext(d, &e, SHELL_IO_TICKS) == 1) {
+  while (sh_dirnext(&d, &e) > 0) {
     comp_t probe = *k;
     if (!comp_offer(list ? &probe : k, e.name, e.is_dir))
       continue;
     if (list)
       v_printf(e.is_dir ? "%s/  " : "%s  ", e.name);
   }
-  v_vfs_close(d, SHELL_IO_TICKS);
+  sh_dirclose(&d);
   return 0;
 }
-#endif
 
 static void sh_complete(shell_t *sh) {
   int start = sh->len;
@@ -1775,16 +2003,13 @@ static void sh_complete(shell_t *sh) {
   k.word = sh->line + start;
   k.wlen = sh->len - start;
 
-#if VAIOS_MODULE_VFS
   char dir[CMD_MAX_LEN] = "";
-#endif
   if (first_word) {
     const Command_t *c;
     for (int i = 0; (c = cmd_at(sh, i)) != NULL; i++)
       if (c->fn && c->name)
         comp_offer(&k, c->name, 0);
   } else {
-#if VAIOS_MODULE_VFS
     /* split the word at its last '/': the directory, then the name in it */
     int slash = -1;
     for (int i = 0; i < k.wlen; i++)
@@ -1803,9 +2028,6 @@ static void sh_complete(shell_t *sh) {
     k.dirs_only = sh->line[0] == 'c' && sh->line[1] == 'd' && sh->line[2] == ' ';
     if (comp_dir(sh, &k, dir, 0) < 0)
       return;
-#else
-    return;
-#endif
   }
 
   if (k.count == 0)
@@ -1831,10 +2053,8 @@ static void sh_complete(shell_t *sh) {
         v_printf("%s  ", c->name);
     }
   }
-#if VAIOS_MODULE_VFS
   else
     comp_dir(sh, &k, dir, 1);
-#endif
   v_printf("\r\n");
   sh_prompt(sh);
   v_printf("%s", sh->line);
@@ -1859,9 +2079,7 @@ typedef struct {
   int16_t index;          /* which privileged command */
   uint8_t capture;        /* its output is redirected: write to /dev/capture */
   char line[CMD_MAX_LEN]; /* the arguments, re-joined: a copy, not a pointer */
-#if VAIOS_MODULE_VFS
   char cwd[CMD_MAX_LEN]; /* where the user is: relative paths resolve here */
-#endif
 } shell_req_t;
 
 static int priv_index(const shell_t *sh, const Command_t *c) {
@@ -1885,9 +2103,7 @@ static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
   shell_req_t r;
   r.index = (int16_t)priv_index(sh, c);
   r.capture = sh->capture;
-#if VAIOS_MODULE_VFS
   sh_copy(r.cwd, sh->cwd, CMD_MAX_LEN);
-#endif
   int n = 0;
   for (int a = 0; a < argc; a++) {
     if (a && n < CMD_MAX_LEN - 1)
@@ -1900,21 +2116,15 @@ static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
   if (v_queue_send(sh->req_fd, &r, V_WAIT_FOREVER) != VA_PASS)
     return 1;
   for (;;) {
-#if VAIOS_MODULE_VFS
     /* Redirected: the helper prints into /dev/capture while we wait, so wake
        every 20 ms and move it into the file before the ring fills. */
     uint32_t t = sh->capture ? MS_TO_TICKS(20) : V_WAIT_FOREVER;
-#else
-    uint32_t t = V_WAIT_FOREVER;
-#endif
     int q = v_queue_recv(sh->done_fd, &rc, t);
     if (q == VA_PASS)
       return rc;
     if (q != VA_FAIL)
       return 1; /* a real error, not a timeout */
-#if VAIOS_MODULE_VFS
     sh_capture_drain(sh);
-#endif
   }
 }
 
@@ -1956,10 +2166,8 @@ void shell_helper_run(void *args) {
     }
     /* The command's shell: the helper's own context, in kernel memory it may
        touch, carrying the user's working directory and nothing else of theirs. */
-#if VAIOS_MODULE_VFS
     sh_copy(_view.cwd, r.cwd, CMD_MAX_LEN);
     _view.cwd[CMD_MAX_LEN - 1] = '\0';
-#endif
     int rc = (c && argc > 0) ? c->fn(&_view, argc, argv) : 1;
     if (saved >= 0) {
       v_file_dup2(saved, 1);
@@ -1982,8 +2190,7 @@ static int run_one(shell_t *sh, const Command_t *c, int argc, char **argv) {
   return c->fn(sh, argc, argv); /* privileged already: run it here */
 }
 
-#if VAIOS_MODULE_VFS
-/* Move what /dev/capture holds into the redirect's file. Called between a
+/* Move what /dev/capture holds into the redirect's target. Called between a
    command's chunks (shell_interrupted), while waiting on the helper, and at
    the end -- so output is bounded by the card, not by the capture ring. Its
    reads and the command's writes are both syscalls, which never overlap. A
@@ -1991,29 +2198,36 @@ static int run_one(shell_t *sh, const Command_t *c, int argc, char **argv) {
 static void sh_capture_drain(shell_t *sh) {
   char buf[128];
   int n;
+  sh_file_t out = {sh->out_fd, sh->out_dev};
   while ((n = v_file_read(sh->cap_fd, buf, sizeof buf)) > 0)
-    if (!sh->cap_err &&
-        v_vfs_write(sh->out_vf, buf, (uint32_t)n, SHELL_IO_TICKS) != n)
+    if (!sh->cap_err && sh_fwrite(&out, buf, (uint32_t)n) != n)
       sh->cap_err = 1;
 }
 
-/* `cmd ... > file` / `>> file`, the redirect as the last two words. Output
-   cannot be written to a file as it is printed -- a write to fd 1 is a
-   syscall, and the filesystem cannot be used inside one -- so fd 1 points at
-   /dev/capture for the command, and the shell moves what it caught into the
-   file whenever it runs (sh_capture_drain). The file is opened FIRST, so a bad
-   path fails before anything runs. */
+/* `cmd ... > file` / `>> file`, the redirect as the last two words; the file
+   may be a device (> /dev/console). Output cannot be written to a file as it
+   is printed -- a write to fd 1 is a syscall, and the filesystem cannot be
+   used inside one -- so fd 1 points at /dev/capture for the command, and the
+   shell moves what it caught to the target whenever it runs
+   (sh_capture_drain). The target is opened FIRST, so a bad path fails before
+   anything runs. */
 static int run_redirected(shell_t *sh, const Command_t *c, int argc,
                           char **argv, const char *target, int append) {
   char path[CMD_MAX_LEN];
   if (sh_arg_path(sh, "vsh", target, path, sizeof path))
     return 1;
-  int vf = v_vfs_open(path,
-                      VFS_O_WRONLY | VFS_O_CREAT |
-                          (append ? VFS_O_APPEND : VFS_O_TRUNC),
-                      SHELL_IO_TICKS);
-  if (vf < 0) {
-    v_printf("vsh: %s: error %d\r\n", sh_display_path(path), vf);
+  const char *dev = sh_devpath(path);
+  if (dev && v_strcmp(dev, "/dev/capture") == 0) {
+    v_printf("vsh: /dev/capture: is what > itself writes through\r\n");
+    return 1;
+  }
+  sh_file_t out;
+  int r = sh_fopen(path,
+                   VFS_O_WRONLY | VFS_O_CREAT |
+                       (append ? VFS_O_APPEND : VFS_O_TRUNC),
+                   &out);
+  if (r < 0) {
+    sh_ferr("vsh", path, r);
     return 1;
   }
   int cap = v_file_open("/dev/capture", 0);
@@ -2024,11 +2238,12 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
       v_file_close(cap);
     if (saved >= 0)
       v_file_close(saved);
-    v_vfs_close(vf, SHELL_IO_TICKS);
+    sh_fclose(&out);
     return 1;
   }
   sh->cap_fd = cap;
-  sh->out_vf = vf;
+  sh->out_fd = out.fd;
+  sh->out_dev = out.dev;
   sh->cap_err = 0;
   sh->capture = 1;
   int rc = run_one(sh, c, argc, argv);
@@ -2041,10 +2256,9 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
     rc = 1;
   }
   v_file_close(cap);
-  v_vfs_close(vf, SHELL_IO_TICKS);
+  sh_fclose(&out);
   return rc;
 }
-#endif
 
 int shell_exec(shell_t *sh, char *line) {
   char *argv[SHELL_MAX_ARGV];
@@ -2057,7 +2271,6 @@ int shell_exec(shell_t *sh, char *line) {
     return -1;
   }
   int rc;
-#if VAIOS_MODULE_VFS
   int redir = 0;
   for (int a = 1; a < argc; a++)
     if (v_strcmp(argv[a], ">") == 0 || v_strcmp(argv[a], ">>") == 0)
@@ -2070,7 +2283,6 @@ int shell_exec(shell_t *sh, char *line) {
     rc = run_redirected(sh, c, redir, argv, argv[redir + 1],
                         argv[redir][1] == '>');
   } else
-#endif
     rc = run_one(sh, c, argc, argv);
   if (rc != 0 && rc != SHELL_INTERRUPTED)
     v_printf("%s: exit %d\r\n", argv[0], rc);

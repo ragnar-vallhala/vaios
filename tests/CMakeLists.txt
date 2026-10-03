@@ -286,6 +286,32 @@ set_tests_properties(vaios_shell_tests PROPERTIES
     ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
 )
 
+# The same suite with no card (VAIOS_MODULE_VFS=0), as on a board without one:
+# the file commands still work, on /dev alone, and the card's own are gone.
+add_executable(vaios_shell_novfs_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/shell_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_shell.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/console_sem_stub.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/shell_stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
+    "${VAIOS_ROOT}/kernel/shell.c"
+    "${VAIOS_ROOT}/kernel/devfs.c"
+)
+target_include_directories(vaios_shell_novfs_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_shell_novfs_tests PRIVATE
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=0 VAIOS_MODULE_PERF=0)
+target_compile_options(vaios_shell_novfs_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_shell_novfs_tests COMMAND vaios_shell_novfs_tests)
+set_tests_properties(vaios_shell_novfs_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
+)
+
 add_test(NAME vaios_devfs_tests COMMAND vaios_devfs_tests)
 set_tests_properties(vaios_devfs_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"

@@ -96,6 +96,9 @@ typedef enum {
   SYS_dup = 49,         // a second fd for the same open device (plain
   SYS_dup2 = 50,        //   devices only); dup2 puts it at a chosen fd. The
                         //   shell's > redirection points fd 1 at /dev/capture.
+  SYS_devfs_node = 51,  // the i-th devfs node's name (ls /dev): the registry is
+                        //   kernel memory. args[1]/args[2] are the caller's
+                        //   buffer, written.
   SYS_MAX
 } v_syscall_t;
 
