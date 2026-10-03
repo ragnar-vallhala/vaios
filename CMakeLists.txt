@@ -141,17 +141,10 @@ if((VAIOS_EXAMPLE STREQUAL "BUS_IPC" OR VAIOS_EXAMPLE STREQUAL "BUS_USER" OR
   set(VAIOS_MODULE_BUS ON CACHE BOOL "Build the Bus IPC subsystem (in progress)" FORCE)
 endif()
 
-# The Bus IPC syscalls live in the port's dispatch (portable/), not in the
-# kernel target, so both must agree on whether the module exists: the kernel
-# target's own -D would otherwise leave portable/ reading the Kconfig default.
-add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
-# Same for the VFS: its mount + file syscalls live in the port's dispatch, so
-# portable/ must agree with the kernel target about whether the module exists.
-add_compile_definitions(VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>)
-
-message(STATUS "VAIOS modules: shell=${VAIOS_MODULE_SHELL} vfs=${VAIOS_MODULE_VFS} "
-               "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
-               "perf=${VAIOS_MODULE_PERF} bus=${VAIOS_MODULE_BUS}")
+# NOTE: the module -D definitions and the summary line are emitted AFTER the
+# Kconfig step below, not here, because a defconfig is allowed to turn a module on
+# and these capture their values at the point they run. See "Module selection" past
+# include(vaios_config.cmake).
 
 # Heap allocator selection. The facade kernel/memory/memory.c always compiles;
 # the free-block index backends kernel/memory/seglist.c (segregated fit) and
@@ -261,6 +254,44 @@ if(NOT _vaios_kconfig_rc EQUAL 0)
   message(FATAL_ERROR "vaios Kconfig generation failed (rc=${_vaios_kconfig_rc})")
 endif()
 include("${CMAKE_BINARY_DIR}/vaios_config.cmake")
+
+# ---------------------------------------------------------------------------
+# Module selection: one source of truth.
+#
+# Each VAIOS_MODULE_* exists TWICE -- as the option() above, which decides whether
+# the module's sources are COMPILED, and as a Kconfig symbol of the same name, which
+# decides the macro the code gates on. Nothing connected them, so setting
+# CONFIG_VAIOS_MODULE_BUS=y in a defconfig got you the Kconfig symbol, the header,
+# and a link error on v_bus_init: the symbol said yes and the code was absent. The
+# only way to find that was to read this file.
+#
+# Kconfig now drives the option, keeping the documented precedence (-D > Kconfig):
+# an explicit -DVAIOS_MODULE_x=ON still wins, and is reported when the two disagree
+# rather than quietly ignored.
+# ---------------------------------------------------------------------------
+foreach(_vaios_mod SHELL VFS SEMIHOSTING FIFO PERF BUS)
+  if(CONFIG_VAIOS_MODULE_${_vaios_mod} AND NOT VAIOS_MODULE_${_vaios_mod})
+    message(STATUS "VAIOS: Kconfig selects MODULE_${_vaios_mod}; compiling its "
+                   "sources to match.")
+    set(VAIOS_MODULE_${_vaios_mod} ON CACHE BOOL "Selected by Kconfig" FORCE)
+  elseif(VAIOS_MODULE_${_vaios_mod} AND NOT CONFIG_VAIOS_MODULE_${_vaios_mod})
+    # -D wins, but say so: the sources compile while the Kconfig symbol reads 0,
+    # which is exactly the mismatch that used to be silent -- in the other
+    # direction.
+    message(STATUS "VAIOS: MODULE_${_vaios_mod} is ON by -D while Kconfig has it "
+                   "off; the -D wins (precedence is -D > Kconfig).")
+  endif()
+endforeach()
+
+# The Bus IPC and VFS syscalls live in the port's dispatch (portable/), not in the
+# kernel target, so both must agree on whether the module exists: the kernel
+# target's own -D would otherwise leave portable/ reading the Kconfig default.
+add_compile_definitions(VAIOS_MODULE_BUS=$<BOOL:${VAIOS_MODULE_BUS}>)
+add_compile_definitions(VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>)
+
+message(STATUS "VAIOS modules: shell=${VAIOS_MODULE_SHELL} vfs=${VAIOS_MODULE_VFS} "
+               "semihosting=${VAIOS_MODULE_SEMIHOSTING} fifo=${VAIOS_MODULE_FIFO} "
+               "perf=${VAIOS_MODULE_PERF} bus=${VAIOS_MODULE_BUS}")
 
 # Re-run configure (hence regenerate the headers) when the .config changes, so
 # editing it or running the menuconfig target takes effect on the next cmake
