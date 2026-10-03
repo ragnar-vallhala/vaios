@@ -16,6 +16,7 @@
 #if VAIOS_DEVFS
 
 #include "ipc.h" // the console's RX wake (a binary semaphore)
+#include "memory.h" // /dev/capture's buffer, on first use
 #include "syscall.h"
 #include "task.h"
 #include "utils.h" // v_kmsg_read (/dev/kmsg backing ring)
@@ -434,17 +435,23 @@ static const v_file_ops console_ops = {
 // done. '\r' is dropped, so a file gets Unix line endings from output written
 // for a terminal. Full, it says so once and drops the rest: the shell cannot
 // drain it while the command it is waiting on is still printing.
-// One buffer: there is one shell, and it runs one command at a time.
+// One buffer: there is one shell, and it runs one command at a time. From the
+// kernel heap on the first write, not .bss: only a shell that redirects pays for
+// it, and an application that never does keeps its 2 KiB -- on a 96 KiB part
+// whose heap fills the rest of RAM, a static one did not fit (Renode: fdipc,
+// bus_user, flight_user panicked at boot, the heap running past SRAM).
 #ifndef CAPTURE_SIZE
 #define CAPTURE_SIZE 2048
 #endif
 #define CAPTURE_CUT "\n[vsh: output cut here, past what > can hold]\n"
-static char cap_buf[CAPTURE_SIZE];
+static char *cap_buf;
 static uint16_t cap_len, cap_rd;
 static uint8_t cap_cut;
 
 static int capture_write(void *priv, const void *buf, uint32_t len) {
   (void)priv;
+  if (!cap_buf && (cap_buf = (char *)v_malloc(CAPTURE_SIZE)) == NULL)
+    return (int)len; /* no heap for it: dropped, as when it is full */
   const char *p = (const char *)buf;
   for (uint32_t i = 0; i < len && !cap_cut; i++) {
     if (p[i] == '\r')
@@ -464,7 +471,7 @@ static int capture_write(void *priv, const void *buf, uint32_t len) {
 static int capture_read(void *priv, void *buf, uint32_t len) {
   (void)priv;
   uint32_t n = 0;
-  while (n < len && cap_rd < cap_len)
+  while (cap_buf && n < len && cap_rd < cap_len)
     ((char *)buf)[n++] = cap_buf[cap_rd++];
   if (cap_rd == cap_len)
     cap_len = cap_rd = cap_cut = 0;

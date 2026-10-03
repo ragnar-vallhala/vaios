@@ -4,6 +4,9 @@
  * I/O) comes from port_hw_stub. */
 #include "task.h"
 #include <stdint.h>
+#include <stdlib.h>
+
+void *v_malloc(size_t size) { return malloc(size); } /* /dev/capture's buffer */
 
 TCB *current_task = 0;
 
