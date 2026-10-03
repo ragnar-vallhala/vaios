@@ -117,21 +117,9 @@ static void sh_putc(char c) {
   v_printf("%s", b);
 }
 
-/* A string of any length: v_printf formats into 128 bytes, and the banner is
-   longer than that. */
-static void sh_puts(const char *s) {
-  char chunk[100];
-  while (*s) {
-    int n = 0;
-    while (s[n] && n < (int)sizeof chunk - 1) {
-      chunk[n] = s[n];
-      n++;
-    }
-    chunk[n] = '\0';
-    v_printf("%s", chunk);
-    s += n;
-  }
-}
+/* A string, for the banner's line callback: v_printf has no length limit, so
+   this is only the callback's shape. */
+static void sh_puts(const char *s) { v_printf("%s", s); }
 
 /* The boot banner, rendered again for whoever is looking now -- with uptime,
    which the boot banner cannot know. The clock stays out: reading it is
@@ -921,11 +909,10 @@ static int cmd_i2c(shell_t *sh, int argc, char **argv) {
     return 1;
   }
   if (argc < 4 || v_strcmp(argv[3], "-y") != 0) {
-    /* two prints: one v_printf formats at most 128 bytes */
-    v_printf("i2c: a scan reads one byte from every address on %s,\r\n",
+    v_printf("i2c: a scan reads one byte from every address on %s,\r\n"
+             "  and some devices act on a read. Not on a bus in flight.\r\n"
+             "  Add -y to go.\r\n",
              argv[2]);
-    v_printf("  and some devices act on a read. Not on a bus in flight.\r\n"
-             "  Add -y to go.\r\n");
     return 1;
   }
   int fd = v_pbus_open(argv[2]);
@@ -1008,7 +995,7 @@ static int bus_sub(shell_t *sh, const char *topic, long count) {
     }
     line[o] = '\0';
     v_printf("  [%d] ", (int)rx.len);
-    sh_puts(line); /* up to 3 x 64 characters: past one v_printf */
+    sh_puts(line);
     v_printf("\r\n");
     got++;
   }

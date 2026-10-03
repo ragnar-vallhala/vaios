@@ -118,25 +118,111 @@ int v_kmsg_read(char *out, uint32_t len) {
 
 // Task-facing printf: format, then write to stdout (fd 1) via the file syscall.
 // Distinct from the kernel printk path (print/print_fmt), which writes directly.
-int v_printf(const char *fmt, ...) {
-  char buf[128];
-  va_list args;
-  va_start(args, fmt);
-  int n = vaprint_fmt_buf(buf, sizeof(buf), fmt, args);
-  va_end(args);
-  // The console takes what fits in its queue and says how much; the rest is
-  // retried here, in the caller's task, rather than waited for in the syscall.
-  // ponytail: a full queue is slept on a tick at a time; a "writable" wait on
-  // the fd is the upgrade if a printer ever has to share the CPU that finely.
+// All of b to fd 1. The console takes what fits in its queue and says how
+// much; the rest is retried here, in the caller's task, rather than waited for
+// in the syscall.
+// ponytail: a full queue is slept on a tick at a time; a "writable" wait on
+// the fd is the upgrade if a printer ever has to share the CPU that finely.
+static void printf_out(const char *b, int n) {
   for (int done = 0; done < n;) {
-    int w = v_file_write(1, buf + done, (uint32_t)(n - done));
+    int w = v_file_write(1, b + done, (uint32_t)(n - done));
     if (w < 0)
-      break;
+      return;
     if (w == 0)
       task_delay(1);
     done += w;
   }
-  return n;
+}
+
+// Task-facing printf, streamed: no limit on what one call prints. It used to
+// format into a 128-byte buffer and silently drop the rest, which cut lines in
+// half in three places in the shell before anyone noticed. Literal text and a
+// plain %s go out as they are, in chunks; any other conversion is formatted on
+// its own by the kernel formatter (same specifiers, flags and widths), its
+// argument taken here by type -- a va_list cannot be handed down portably,
+// since ARM passes it by value. Stack: about what the old buffer took.
+int v_printf(const char *fmt, ...) {
+  char chunk[64];
+  int c = 0, total = 0;
+  va_list ap;
+  va_start(ap, fmt);
+#define PF_PUT(ch)                                                             \
+  do {                                                                         \
+    chunk[c++] = (ch);                                                         \
+    total++;                                                                   \
+    if (c == (int)sizeof chunk) {                                              \
+      printf_out(chunk, c);                                                    \
+      c = 0;                                                                   \
+    }                                                                          \
+  } while (0)
+  for (const char *p = fmt; *p; p++) {
+    if (*p != '%') {
+      PF_PUT(*p);
+      continue;
+    }
+    char spec[16];
+    int k = 0, longs = 0;
+    const char *q = p + 1;
+    spec[k++] = '%';
+    while (k < 12 && ((*q >= '0' && *q <= '9') || *q == '.'))
+      spec[k++] = *q++;
+    while (*q == 'l' && longs < 2) {
+      spec[k++] = *q++;
+      longs++;
+    }
+    if (!*q)
+      break; // a lone '%' at the end: nothing to convert
+    char conv = *q;
+    spec[k++] = conv;
+    spec[k] = '\0';
+    p = q;
+    if (conv == 's' && k == 2) { // plain %s: stream it, whatever its length
+      const char *str = va_arg(ap, const char *);
+      for (; str && *str; str++)
+        PF_PUT(*str);
+      continue;
+    }
+    char one[48];
+    int m;
+    switch (conv) {
+    case 'd':
+      m = longs == 2   ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, long long))
+          : longs == 1 ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, long))
+                       : print_fmt_buf(one, sizeof one, spec, va_arg(ap, int));
+      break;
+    case 'u':
+    case 'x':
+    case 'X':
+      m = longs == 2
+              ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, unsigned long long))
+          : longs == 1
+              ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, unsigned long))
+              : print_fmt_buf(one, sizeof one, spec, va_arg(ap, unsigned int));
+      break;
+    case 'c':
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, int));
+      break;
+    case 'f':
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, double));
+      break;
+    case 'p':
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, void *));
+      break;
+    case 's': // with a width or precision: one at a time, bounded by `one`
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, const char *));
+      break;
+    default: // %% and anything the formatter prints as-is take no argument
+      m = print_fmt_buf(one, sizeof one, spec);
+      break;
+    }
+    for (int i = 0; i < m && one[i]; i++)
+      PF_PUT(one[i]);
+  }
+#undef PF_PUT
+  va_end(ap);
+  if (c)
+    printf_out(chunk, c);
+  return total;
 }
 #endif // VAIOS_DEVFS
 

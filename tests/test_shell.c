@@ -309,7 +309,7 @@ static void test_head_and_tail(void) {
   put("0:/g.txt", "a\nb\nlast"); /* no final newline */
   TEST_ASSERT_EQ(run("tail -n 1 g.txt"), 0);
   TEST_ASSERT(out_is("last"));
-  /* lines longer in total than one v_printf (128 bytes) come out whole */
+  /* lines longer in total than 128 bytes come out whole */
   put("0:/long.txt", "a-line-that-is-sixty-characters-long-to-fill-up-space-xxxxx\n"
                       "b-line-that-is-sixty-characters-long-to-fill-up-space-xxxxx\n"
                       "c-line-that-is-sixty-characters-long-to-fill-up-space-xxxxx\n");

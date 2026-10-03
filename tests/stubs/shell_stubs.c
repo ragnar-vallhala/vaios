@@ -62,7 +62,7 @@ int v_printf(const char *fmt, ...) {
   }
   /* Through fd 1 as the real one goes, so a redirect (fd 1 -> /dev/capture)
      catches it; and into g_stub_out, for the tests that read the output. */
-  char tmp[128]; /* the real v_printf's buffer: a longer print is cut */
+  char tmp[1024]; /* the real v_printf streams; nothing a test prints is longer */
   va_start(ap, fmt);
   int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
   va_end(ap);

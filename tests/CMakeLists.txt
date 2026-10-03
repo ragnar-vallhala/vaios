@@ -210,7 +210,10 @@ add_executable(vaios_utils_tests
 target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
 # Force VFS off so kernel/perf.c's CSV writer doesn't drag vfs_open/etc into
 # this binary — vaios_utils_tests does not link vfs.c.
-target_compile_definitions(vaios_utils_tests PRIVATE VAIOS_MODULE_VFS=0)
+# DEVFS on so v_printf (task-facing, through fd 1) is compiled and tested;
+# its v_file_write is a capturing stub in utils_stubs.c.
+target_compile_definitions(vaios_utils_tests PRIVATE VAIOS_MODULE_VFS=0
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8)
 target_compile_options(vaios_utils_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -g -O0
