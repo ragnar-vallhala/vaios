@@ -54,14 +54,15 @@ extern uint32_t systick_count;
 #define B_RESET "\x1B[0m"
 
 static const char *const _logo[] = {
-    "                 _                ",
-    "__   __   __ _  (_)   ___    ___  ",
-    "\\ \\ / /  / _` | | |  / _ \\  / __| ",
-    " \\ V /  | (_| | | | | (_) | \\__ \\ ",
-    "  \\_/    \\__,_| |_|  \\___/  |___/ ",
+    "__      __   _  ____   _____ ",
+    "\\ \\    / /  (_)/ __ \\ / ____|",
+    " \\ \\  / /_ _ _| |  | | (___  ",
+    "  \\ \\/ / _` | | |  | |\\___ \\ ",
+    "   \\  / (_| | | |__| |____) |",
+    "    \\/ \\__,_|_|\\____/|_____/ ",
 };
 #define LOGO_ROWS ((int)(sizeof _logo / sizeof _logo[0]))
-#define LOGO_PAD "                                  " /* a logo row's width */
+#define LOGO_PAD "                             " /* a logo row's width */
 
 typedef struct {
   char *p, *end;
