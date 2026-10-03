@@ -579,7 +579,6 @@ static int cmd_version(shell_t *sh, int argc, char **argv) {
   (void)argc;
   (void)argv;
   sh_banner();
-  v_printf("  NAVROBOTEC PVT. LTD. -- %s\r\n", AUTHOR);
   return 0;
 }
 

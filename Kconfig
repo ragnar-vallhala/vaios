@@ -42,9 +42,6 @@ config VAIOS_VERSION_NAME
         then Ravi, Sutlej, Tapti, Yamuna.
 
       A MAJOR release starts the list again from A.
-config AUTHOR
-    string "Author"
-    default "ASHUTOSH VISHWAKARMA"
 endmenu
 
 menu "Platform / Init"
