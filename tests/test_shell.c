@@ -409,6 +409,9 @@ static void test_write_cp_rm_touch(void) {
   TEST_ASSERT_EQ(run("rm copy.txt"), 0);
   TEST_ASSERT(stub_fs_get("0:/copy.txt", &len) == NULL);
   TEST_ASSERT_EQ(run("rm copy.txt"), 1);
+  TEST_ASSERT(strstr(g_stub_out, "rm: /mnt/sd/copy.txt: no such file or directory\r\n") != NULL);
+  TEST_ASSERT_EQ(run("rm LOGS"), 1); /* FatFs keeps a directory with files */
+  TEST_ASSERT(strstr(g_stub_out, "rm: /mnt/sd/LOGS: directory not empty\r\n") != NULL);
 }
 #endif
 
@@ -733,7 +736,7 @@ static void test_mv_and_df(void) {
   TEST_ASSERT_EQ(run("mv c.txt LOGS"), 0); /* into a directory, same name */
   TEST_ASSERT(stub_fs_get("0:/LOGS/c.txt", &len) != NULL);
   TEST_ASSERT_EQ(run("mv b.txt LOGS/c.txt"), 1); /* would replace */
-  TEST_ASSERT(strstr(g_stub_out, "already exists") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "/mnt/sd/LOGS/c.txt: file exists") != NULL);
   TEST_ASSERT_EQ(run("mv nope.txt x"), 1);
   TEST_ASSERT_EQ(run("df"), 0);
   TEST_ASSERT(strstr(g_stub_out, " 30.0G    1.5G   28.5G    5%  /mnt/sd\r\n") !=

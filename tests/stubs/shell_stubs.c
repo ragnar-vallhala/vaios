@@ -332,7 +332,7 @@ int v_vfs_remove(const char *path, uint32_t ticks) {
   (void)ticks;
   sfile_t *f = ffind(path);
   if (!f)
-    return -4;
+    return v_vfs_diropen(path, 0) > 0 ? -7 : -4; /* FR_DENIED: not empty */
   f->used = 0;
   return 0;
 }

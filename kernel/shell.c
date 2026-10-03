@@ -1397,6 +1397,40 @@ static void sh_fclose(sh_file_t *f) {
   f->fd = -1;
 }
 
+/* A filesystem error as a person reads it: FatFs's codes, which NavHAL
+   negates, and the VFS worker's own. NULL for one with no plain name. */
+static const char *sh_strerror(int rc) {
+  switch (rc) {
+  case -4: /* FR_NO_FILE */
+  case -5: /* FR_NO_PATH */
+    return "no such file or directory";
+  case -6: /* FR_INVALID_NAME */
+    return "invalid name";
+  case -7: /* FR_DENIED: a full directory, a read-only file, a full card */
+    return "permission denied";
+  case -8: /* FR_EXIST */
+    return "file exists";
+  case -10: /* FR_WRITE_PROTECTED */
+    return "read-only file system";
+  case -1: /* FR_DISK_ERR */
+  case -3: /* FR_NOT_READY */
+    return "I/O error";
+  case -11: /* V_VFS_EAGAIN */
+    return "no file worker running";
+  case -110: /* V_VFS_ETIMEDOUT */
+    return "timed out";
+  }
+  return NULL;
+}
+
+static void sh_fail(const char *cmd, const char *path, int rc) {
+  const char *m = sh_strerror(rc);
+  if (m)
+    v_printf("%s: %s: %s\r\n", cmd, path, m);
+  else
+    v_printf("%s: %s: error %d\r\n", cmd, path, rc);
+}
+
 /* Why `path` would not open, as a person reads it. Nothing is made outside a
    mounted filesystem: the root and devfs are what the kernel built. */
 static void sh_ferr(const char *cmd, const char *path, int rc, int create) {
@@ -1410,7 +1444,7 @@ static void sh_ferr(const char *cmd, const char *path, int rc, int create) {
   if (why)
     v_printf("%s: %s: %s\r\n", cmd, path, why);
   else
-    v_printf("%s: %s: error %d\r\n", cmd, path, rc);
+    sh_fail(cmd, path, rc);
 }
 
 /* Open argv's file through the working directory, or say why not. */
@@ -1760,7 +1794,7 @@ static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
     return 1;
   int rc = v_vfs_makedir(path, SHELL_IO_TICKS);
   if (rc < 0) {
-    v_printf("mkdir: %s: error %d\r\n", path, rc);
+    sh_fail("mkdir", path, rc);
     return 1;
   }
   return 0;
@@ -1775,11 +1809,18 @@ static int cmd_rm(shell_t *sh, int argc, char **argv) {
   if (sh_arg_path(sh, "rm", argv[1], path, sizeof path) ||
       sh_ro("rm", path))
     return 1;
+  sh_stat_t st;
+  sh_stat(path, &st);
+  if (!st.exists) {
+    v_printf("rm: %s: no such file or directory\r\n", path);
+    return 1;
+  }
   int rc = v_vfs_remove(path, SHELL_IO_TICKS);
   if (rc < 0) {
-    /* FatFs refuses a directory that still has something in it */
-    v_printf("rm: %s: error %d (a directory must be empty)\r\n",
-             path, rc);
+    if (rc == -7 && st.is_dir) /* FatFs removes a directory only empty */
+      v_printf("rm: %s: directory not empty\r\n", path);
+    else
+      sh_fail("rm", path, rc);
     return 1;
   }
   return 0;
@@ -1869,9 +1910,7 @@ static int cmd_mv(shell_t *sh, int argc, char **argv) {
   }
   int rc = v_vfs_rename(src, dst, SHELL_IO_TICKS);
   if (rc < 0) {
-    v_printf(rc == -8 ? "mv: %s: already exists\r\n" /* FR_EXIST */
-                      : "mv: %s: error %d\r\n",
-             rc == -8 ? dst : src, rc);
+    sh_fail("mv", rc == -8 ? dst : src, rc); /* FR_EXIST names the target */
     return 1;
   }
   return 0;
