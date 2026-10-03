@@ -12,7 +12,8 @@
 #
 # Exit code: number of examples that failed (0 = all green).
 #
-# 0 with a SKIP line when there is nothing to test against — no toolchain, no
+# 77 (the conventional skip code) with a SKIP line when there is nothing to test
+# against — no toolchain, no
 # probe attached, or a probe with no serial console. An absent capability is not
 # a failure, the same way a missing renode is not one to renode_*.sh, and vtest's
 # `check` adapter has only the exit status to go on.
@@ -27,7 +28,7 @@
 #               (tools/pitl_run.sh --kmsg).
 #
 # Usage:
-#   tools/run_hw_tests.sh                # default port /dev/ttyACM0
+#   tools/run_hw_tests.sh                # console of the probe at USB_LOC
 #   PORT=/dev/ttyACM1 tools/run_hw_tests.sh
 #   USB_LOC=3-2 tools/run_hw_tests.sh          # which probe, by USB port
 #   CAPTURE_SECS=20  tools/run_hw_tests.sh
@@ -69,14 +70,14 @@ c_blue()  { printf '\033[1;34m%s\033[0m' "$1"; }
 for bin in arm-none-eabi-gcc cmake; do
   if ! command -v "$bin" >/dev/null; then
     echo "SKIP: missing required tool: $bin"
-    exit 0
+    exit 77
   fi
 done
 
 probe_require_tools || exit 2
 if ! probe_present; then
   echo "SKIP: no ST-Link at USB location $USB_LOC (set USB_LOC=<bus>-<port>)"
-  exit 0
+  exit 77
 fi
 
 # --- check the board is the one this firmware is built for -------------------
@@ -116,7 +117,7 @@ if [ -z "$PORT" ] || [ ! -e "$PORT" ]; then
   echo "  read the kernel log over SWD instead:"
   echo "      tools/pitl_run.sh --kmsg <build-dir>"
   echo "  Otherwise point USB_LOC at a probe that has a VCP, or set PORT=..."
-  exit 0
+  exit 77
 fi
 echo "board: probe at $USB_LOC (chipid $chipid) on $PORT"
 

@@ -24,7 +24,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/probe.sh
 . "$SCRIPT_DIR/lib/probe.sh"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-PORT="${PORT:-/dev/ttyACM0}"
+# Only whether the caller NAMED a port, not a default for one. run_hw_tests.sh
+# resolves the tty that belongs to the probe at USB_LOC when PORT is empty, which
+# is the only way to reach the right console on a bench with several boards -- and
+# it skips cleanly when that probe has no VCP. Handing it a default defeats both.
+PORT_EXPLICIT="${PORT:+1}"
+PORT="${PORT:-}"
 CAPTURE_SECS="${CAPTURE_SECS:-10}"
 cd "$ROOT_DIR"
 
@@ -166,7 +171,8 @@ run_pitl() {
   if ! have arm-none-eabi-gcc || ! have openocd; then
     STATUS[pitl]=SKIP; DETAIL[pitl]="no arm toolchain / openocd"; return
   fi
-  if [ ! -e "$PORT" ]; then
+  # Only pre-check a port the caller named; otherwise run_hw_tests.sh picks it.
+  if [ -n "$PORT_EXPLICIT" ] && [ ! -e "$PORT" ]; then
     STATUS[pitl]=SKIP; DETAIL[pitl]="serial port $PORT absent (set PORT=...)"; return
   fi
   if ! probe_present; then
@@ -175,7 +181,15 @@ run_pitl() {
   if CAPTURE_SECS="$CAPTURE_SECS" PORT="$PORT" bash "$SCRIPT_DIR/run_hw_tests.sh"; then
     STATUS[pitl]=PASS
   else
-    STATUS[pitl]=FAIL; DETAIL[pitl]="$? example(s) failed"
+    # Before the assignments, which clobber it with their own 0.
+    rc=$?
+    if [ "$rc" -eq 77 ]; then
+      # It printed its own SKIP line saying which capability is missing. Reporting
+      # PASS here claimed a green hardware layer on a bench with nothing attached.
+      STATUS[pitl]=SKIP; DETAIL[pitl]="nothing to test against (see SKIP above)"
+    else
+      STATUS[pitl]=FAIL; DETAIL[pitl]="$rc example(s) failed"
+    fi
   fi
 }
 

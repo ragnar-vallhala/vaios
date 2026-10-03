@@ -150,7 +150,7 @@ Builds, flashes, and UART-captures a curated set of examples on a connected
 board, grepping for required PASS lines:
 
 ```bash
-tools/run_hw_tests.sh                  # default port /dev/ttyACM0
+tools/run_hw_tests.sh                  # console of the probe at USB_LOC
 PORT=/dev/ttyACM1 tools/run_hw_tests.sh
 CAPTURE_SECS=20    tools/run_hw_tests.sh
 ```
