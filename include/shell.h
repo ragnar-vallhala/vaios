@@ -124,6 +124,10 @@ struct shell {
   int req_fd, done_fd; /* the helper's queues, opened on first use; -1 until */
   uint8_t capture; /* this command's output is redirected (> file) */
 #if VAIOS_MODULE_VFS
+  int cap_fd, out_vf; /* while it is: /dev/capture, and the file it drains to */
+  uint8_t cap_err;    /* a write to the file failed */
+#endif
+#if VAIOS_MODULE_VFS
   /* This shell's working directory, as a FatFs path ("0:/logs"). The shell's
      own, not FatFs's f_chdir, which is one global for every task. */
   char cwd[CMD_MAX_LEN];

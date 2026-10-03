@@ -460,7 +460,9 @@ static void test_redirect(void) {
   TEST_ASSERT_EQ(len, 12);
 }
 
-/* More output than /dev/capture holds: the file says where it was cut. */
+/* More output than /dev/capture holds (2 KiB): hexdump asks about ^C between
+ * rows, and the shell moves what was caught into the file each time, so all
+ * of it arrives -- 41 rows, 3233 bytes -- with no "cut here" in it. */
 static void test_redirect_overflow(void) {
   int len;
   shell_reset();
@@ -471,11 +473,13 @@ static void test_redirect_overflow(void) {
   stub_fs_put("0:/b.bin", big, 650);
   TEST_ASSERT_EQ(run("hexdump b.bin 0 650 > dump.txt"), 0); /* ~3 KB */
   const char *d = stub_fs_get("0:/dump.txt", &len);
-  TEST_ASSERT(d != NULL && len > 1900 && len <= 2048);
-  int found = 0;
-  for (int i = 0; i + 15 <= len && !found; i++)
-    found = memcmp(d + i, "output cut here", 15) == 0;
-  TEST_ASSERT(found);
+  TEST_ASSERT(d != NULL);
+  TEST_ASSERT_EQ(len, 40 * 79 + 73); /* 40 full rows, one of 10 bytes */
+  int cut = 0;
+  for (int i = 0; i + 15 <= len && !cut; i++)
+    cut = memcmp(d + i, "output cut here", 15) == 0;
+  TEST_ASSERT(!cut);
+  TEST_ASSERT(d[len - 2] == '|' && d[len - 1] == '\n');
 }
 
 /* Tab: what the line reads after typing `typed` and pressing it. */

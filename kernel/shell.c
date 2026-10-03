@@ -155,9 +155,19 @@ static void sh_prompt(const shell_t *sh) {
  * asking still cannot be stopped: those spawn a task (see `spin`). sh may be
  * NULL for a privileged command in the helper, which has no editor to keep
  * input for. */
+#if VAIOS_MODULE_VFS
+static void sh_capture_drain(shell_t *sh);
+#endif
+
 int shell_interrupted(shell_t *sh) {
   char rx[16];
   int n, hit = 0;
+#if VAIOS_MODULE_VFS
+  /* A long command asks between chunks -- the place to move its redirected
+     output into the file before /dev/capture fills. */
+  if (sh && sh->capture)
+    sh_capture_drain(sh);
+#endif
   while ((n = v_file_read(0, rx, (uint32_t)sizeof rx)) > 0)
     for (int i = 0; i < n; i++) {
       if (rx[i] == 0x03)
@@ -1142,10 +1152,16 @@ static int cmd_ls(shell_t *sh, int argc, char **argv) {
     return 1;
   }
   vfs_dirent_t e;
-  while (v_vfs_dirnext(d, &e, SHELL_IO_TICKS) == 1)
+  int rc = 0;
+  while (v_vfs_dirnext(d, &e, SHELL_IO_TICKS) == 1) {
     v_printf(e.is_dir ? "  %s/\r\n" : "  %s  %d\r\n", e.name, (int)e.size);
+    if (shell_interrupted(sh)) {
+      rc = SHELL_INTERRUPTED;
+      break;
+    }
+  }
   v_vfs_close(d, SHELL_IO_TICKS);
-  return 0;
+  return rc;
 }
 
 static int cmd_cat(shell_t *sh, int argc, char **argv) {
@@ -1813,10 +1829,25 @@ static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
   }
   r.line[n] = '\0';
   int rc = 1;
-  if (v_queue_send(sh->req_fd, &r, V_WAIT_FOREVER) != VA_PASS ||
-      v_queue_recv(sh->done_fd, &rc, V_WAIT_FOREVER) != VA_PASS)
+  if (v_queue_send(sh->req_fd, &r, V_WAIT_FOREVER) != VA_PASS)
     return 1;
-  return rc;
+  for (;;) {
+#if VAIOS_MODULE_VFS
+    /* Redirected: the helper prints into /dev/capture while we wait, so wake
+       every 20 ms and move it into the file before the ring fills. */
+    uint32_t t = sh->capture ? MS_TO_TICKS(20) : V_WAIT_FOREVER;
+#else
+    uint32_t t = V_WAIT_FOREVER;
+#endif
+    int q = v_queue_recv(sh->done_fd, &rc, t);
+    if (q == VA_PASS)
+      return rc;
+    if (q != VA_FAIL)
+      return 1; /* a real error, not a timeout */
+#if VAIOS_MODULE_VFS
+    sh_capture_drain(sh);
+#endif
+  }
 }
 
 /* The helper's queues are kernel memory, which is fine: only it, privileged,
@@ -1884,11 +1915,26 @@ static int run_one(shell_t *sh, const Command_t *c, int argc, char **argv) {
 }
 
 #if VAIOS_MODULE_VFS
+/* Move what /dev/capture holds into the redirect's file. Called between a
+   command's chunks (shell_interrupted), while waiting on the helper, and at
+   the end -- so output is bounded by the card, not by the capture ring. Its
+   reads and the command's writes are both syscalls, which never overlap. A
+   failed write drops the rest rather than retrying into a full card. */
+static void sh_capture_drain(shell_t *sh) {
+  char buf[128];
+  int n;
+  while ((n = v_file_read(sh->cap_fd, buf, sizeof buf)) > 0)
+    if (!sh->cap_err &&
+        v_vfs_write(sh->out_vf, buf, (uint32_t)n, SHELL_IO_TICKS) != n)
+      sh->cap_err = 1;
+}
+
 /* `cmd ... > file` / `>> file`, the redirect as the last two words. Output
-   cannot be written to a file while the command runs -- a write to fd 1 is a
+   cannot be written to a file as it is printed -- a write to fd 1 is a
    syscall, and the filesystem cannot be used inside one -- so fd 1 points at
-   /dev/capture for the command, and what it caught goes into the file after.
-   The file is opened FIRST, so a bad path fails before anything runs. */
+   /dev/capture for the command, and the shell moves what it caught into the
+   file whenever it runs (sh_capture_drain). The file is opened FIRST, so a bad
+   path fails before anything runs. */
 static int run_redirected(shell_t *sh, const Command_t *c, int argc,
                           char **argv, const char *target, int append) {
   char path[CMD_MAX_LEN];
@@ -1913,21 +1959,19 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
     v_vfs_close(vf, SHELL_IO_TICKS);
     return 1;
   }
+  sh->cap_fd = cap;
+  sh->out_vf = vf;
+  sh->cap_err = 0;
   sh->capture = 1;
   int rc = run_one(sh, c, argc, argv);
+  sh_capture_drain(sh); /* what came after the last drain point */
   sh->capture = 0;
   v_file_dup2(saved, 1); /* the console again, before anything is said */
   v_file_close(saved);
-  char buf[128];
-  int n;
-  while ((n = v_file_read(cap, buf, sizeof buf)) > 0)
-    if (v_vfs_write(vf, buf, (uint32_t)n, SHELL_IO_TICKS) != n) {
-      v_printf("vsh: %s: write failed\r\n", sh_display_path(path));
-      rc = 1;
-      while (v_file_read(cap, buf, sizeof buf) > 0)
-        ; /* empty it for the next command */
-      break;
-    }
+  if (sh->cap_err) {
+    v_printf("vsh: %s: write failed\r\n", sh_display_path(path));
+    rc = 1;
+  }
   v_file_close(cap);
   v_vfs_close(vf, SHELL_IO_TICKS);
   return rc;

@@ -40,6 +40,14 @@ static int cap_close(void *priv) {
 static const v_file_ops cap_ops = {cap_read, cap_write, cap_close, NULL, NULL};
 static const v_file_ops other_ops = {0, 0, 0, 0, 0};
 
+static int memmem_simple(const char *h, int n, const char *w) {
+  int m = (int)strlen(w);
+  for (int i = 0; i + m <= n; i++)
+    if (memcmp(h + i, w, (size_t)m) == 0)
+      return 1;
+  return 0;
+}
+
 static TCB g_task;
 static int registered;
 
@@ -265,6 +273,27 @@ static void test_dup(void) {
   TEST_ASSERT(v_file_dup2(1, 99) < 0);
 }
 
+/* /dev/capture, filled past its 2 KiB without being drained (a command that
+ * never asks between chunks): it keeps what fits, says where it was cut, and
+ * is empty again once read out. */
+static void test_capture_full_is_marked(void) {
+  reset();
+  int fd = v_file_open("/dev/capture", 0);
+  TEST_ASSERT(fd >= 0);
+  char x[100];
+  memset(x, 'x', sizeof x);
+  for (int i = 0; i < 30; i++)
+    TEST_ASSERT_EQ(v_file_write(fd, x, sizeof x), (int)sizeof x); /* 3000 */
+  static char got[4096];
+  int n = 0, r;
+  while ((r = v_file_read(fd, got + n, sizeof got - (uint32_t)n)) > 0)
+    n += r;
+  TEST_ASSERT(n > 1900 && n <= 2048);
+  TEST_ASSERT(memmem_simple(got, n, "output cut here"));
+  TEST_ASSERT_EQ(v_file_read(fd, got, 16), 0); /* drained: empty again */
+  v_file_close(fd);
+}
+
 /* A device with no wait op cannot be waited on. */
 static void test_wait_unsupported(void) {
   reset();
@@ -279,6 +308,7 @@ static const test_case_t devfs_cases[] = {
     TEST_CASE(test_console_rx_full_drops),
     TEST_CASE(test_wait_unsupported),
     TEST_CASE(test_dup),
+    TEST_CASE(test_capture_full_is_marked),
     TEST_CASE(test_console_write_deferred_to_writer),
     TEST_CASE(test_console_write_full_is_partial),
     TEST_CASE(test_console_lf_becomes_crlf),
