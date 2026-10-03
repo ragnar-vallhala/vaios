@@ -545,6 +545,24 @@ static void test_uptime(void) {
   TEST_ASSERT(out_is("up 0h 0m 0s\r\n"));
 }
 
+/* ps lists every task, however many: the list is sized from the kernel's
+ * count, not a fixed 16. The stub snapshot returns one task per slot asked for
+ * up to g_stub_tasks. */
+extern int g_stub_tasks;
+extern uint32_t task_count;
+static void test_ps_has_no_fixed_limit(void) {
+  shell_reset();
+  g_stub_tasks = 40;
+  task_count = 40; /* what the kernel would count for 40 tasks */
+  TEST_ASSERT_EQ(run("ps"), 0);
+  int rows = 0;
+  for (const char *q = g_stub_out; (q = strstr(q, "shell")) != NULL; q++)
+    rows++;
+  TEST_ASSERT_EQ(rows, 40);
+  g_stub_tasks = 1;
+  task_count = 1;
+}
+
 static void test_find_unknown_and_empty(void) {
   shell_reset();
   TEST_ASSERT(shell_find_command(&g_sh, "nope") == NULL);
@@ -849,6 +867,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_redirect_overflow),
     TEST_CASE(test_loglevel),
     TEST_CASE(test_reboot),
+    TEST_CASE(test_ps_has_no_fixed_limit),
     TEST_CASE(test_find_unknown_and_empty),
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),

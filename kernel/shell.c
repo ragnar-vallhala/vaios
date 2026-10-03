@@ -662,6 +662,8 @@ static int cmd_perf(shell_t *sh, int argc, char **argv) {
 
 /* One table cell: `s` padded to `w` columns, right-aligned for numbers. The
    formatter has widths but no left-justify, so cells are built by hand. */
+extern uint32_t task_count; /* kernel/task.c: tasks that exist */
+
 static void cell(char **p, char *end, const char *s, int w, int right) {
   int n = (int)v_strlen(s);
   for (int k = 0; right && k < w - n && *p < end; k++)
@@ -679,8 +681,16 @@ static int cmd_ps(shell_t *sh, int argc, char **argv) {
   (void)argv;
   static const char *const st[] = {"ready", "running", "blocked", "sleeping",
                                    "exited"};
-  TCB *t[16];
-  int n = task_snapshot_list(t, 16);
+  /* As many as there are, plus room for a few started meanwhile: the kernel
+     has no task limit, so neither does the list. Privileged, so the kernel
+     heap rather than a stack sized for a guess. */
+  int cap = (int)task_count + 8;
+  TCB **t = (TCB **)v_malloc((size_t)cap * sizeof *t);
+  if (!t) {
+    v_printf("ps: out of memory\r\n");
+    return 1;
+  }
+  int n = task_snapshot_list(t, cap);
   for (int a = 1; a < n; a++) /* by pid: the snapshot is in scheduler order */
     for (int b = a; b > 0 && t[b - 1]->task_id > t[b]->task_id; b--) {
       TCB *x = t[b];
@@ -716,6 +726,7 @@ static int cmd_ps(shell_t *sh, int argc, char **argv) {
 #endif
     v_printf("%s\r\n", row);
   }
+  v_free(t);
   return 0;
 }
 
@@ -781,17 +792,28 @@ static int cmd_loglevel(shell_t *sh, int argc, char **argv) {
 /* Each task's share of the CPU over the last second, busiest first, redrawn
    in place like top. From the per-task cycle counters, so it needs the perf
    module and a cycle counter that runs (v_perf_init). */
-#define TOP_MAX 16
 static int cmd_top(shell_t *sh, int argc, char **argv) {
   long frames = argc > 1 ? sh_num(argv[1]) : 0; /* 0: until ^C */
   if (frames < 0) {
     v_printf("usage: top [frames]\r\n");
     return 1;
   }
-  uint32_t ids[TOP_MAX];
-  uint64_t was[TOP_MAX];
-  TCB *t[TOP_MAX];
-  int n = task_snapshot_list(t, TOP_MAX);
+  /* Sized from the kernel's task count, with room for a few started while it
+     runs; on the kernel heap, since five arrays of every task would not fit a
+     2 KiB helper stack. */
+  int cap = (int)task_count + 8;
+  TCB **t = (TCB **)v_malloc((size_t)cap * sizeof *t);
+  uint32_t *ids = (uint32_t *)v_malloc((size_t)cap * sizeof *ids);
+  uint32_t *pct10 = (uint32_t *)v_malloc((size_t)cap * sizeof *pct10);
+  uint64_t *was = (uint64_t *)v_malloc((size_t)cap * sizeof *was);
+  uint64_t *now = (uint64_t *)v_malloc((size_t)cap * sizeof *now);
+  int rc = 0;
+  if (!t || !ids || !pct10 || !was || !now) {
+    v_printf("top: out of memory\r\n");
+    rc = 1;
+    goto out;
+  }
+  int n = task_snapshot_list(t, cap);
   for (int i = 0; i < n; i++) {
     v_perf_task_t ps;
     v_perf_task_stats(t[i], &ps);
@@ -803,14 +825,14 @@ static int cmd_top(shell_t *sh, int argc, char **argv) {
   for (long f = 0; frames == 0 || f < frames; f++) {
     for (int step = 0; step < 10; step++) { /* a second, asking about ^C */
       task_delay(MS_TO_TICKS(100));
-      if (shell_interrupted(sh))
-        return SHELL_INTERRUPTED;
+      if (shell_interrupted(sh)) {
+        rc = SHELL_INTERRUPTED;
+        goto out;
+      }
     }
     uint64_t c1 = v_perf_cycles(), total = c1 - c0;
     c0 = c1;
-    n = task_snapshot_list(t, TOP_MAX);
-    uint32_t pct10[TOP_MAX]; /* tenths of a percent */
-    uint64_t now[TOP_MAX];
+    n = task_snapshot_list(t, cap);
     for (int i = 0; i < n; i++) {
       v_perf_task_t ps;
       v_perf_task_stats(t[i], &ps);
@@ -855,7 +877,18 @@ static int cmd_top(shell_t *sh, int argc, char **argv) {
     }
     nwas = n;
   }
-  return 0;
+out: /* v_free logs a NULL, and a failed allocation leaves some NULL */
+  if (now)
+    v_free(now);
+  if (was)
+    v_free(was);
+  if (pct10)
+    v_free(pct10);
+  if (ids)
+    v_free(ids);
+  if (t)
+    v_free(t);
+  return rc;
 }
 #endif
 

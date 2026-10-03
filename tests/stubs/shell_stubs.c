@@ -102,11 +102,16 @@ int v_strcmp(const char *a, const char *b) {
 
 /* What ps and heap read. One task -- the synthetic one above -- and a heap
    with fixed numbers, so the commands run end to end here. */
+uint32_t task_count = 1;
+int g_stub_tasks = 1; /* how many tasks the snapshot reports */
+#include <stdlib.h>
+void *v_malloc(size_t n) { return malloc(n); }
+void v_free(void *p) { free(p); }
 int task_snapshot_list(TCB **out, int max) {
-  if (max < 1)
-    return 0;
-  out[0] = &_shell_test_task;
-  return 1;
+  int n = 0;
+  for (; n < g_stub_tasks && n < max; n++)
+    out[n] = &_shell_test_task;
+  return n;
 }
 const char *task_get_name(const TCB *t) {
   (void)t;
