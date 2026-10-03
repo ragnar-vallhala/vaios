@@ -94,6 +94,7 @@ enum {
   ROW_KERNEL,
   ROW_UPTIME,
   ROW_BUILT,
+  ROW_BY,
   ROW_CC,
   ROW_GAP,
   ROW_PALETTE,
@@ -152,7 +153,11 @@ static void info_row(int r, wbuf_t *w, uint32_t cpu_hz, int32_t uptime_s) {
     break;
   case ROW_BUILT:
     put_key(w, "built");
-    put_s(w, VAIOS_BUILD_TIME B_DIM "  by " VAIOS_BUILD_BY B_RESET);
+    put_s(w, VAIOS_BUILD_TIME);
+    break;
+  case ROW_BY:
+    put_key(w, "by");
+    put_s(w, VAIOS_BUILD_BY);
     break;
   case ROW_CC:
     put_key(w, "compiler");
