@@ -40,11 +40,26 @@
 #endif
 
 #if VAIOS_MODULE_BUS
-/* Something for `bus` to list. Nothing subscribes, and a bus frees a message
-   nobody will read rather than counting it, so its counters stay at 0. */
+/* Something for `bus` to show, and `bus sub demo.ticks` to watch: a task that
+   publishes the uptime once a second, through an fd like any task would. With
+   nobody subscribed the bus frees each message rather than counting it; with
+   a `bus sub` running, they arrive. */
 V_BUS_POOL(demo, 32, 8);
 static v_bus_t demo_bus;
 static v_bus_topic_t demo_topic;
+
+static void ticker(void *arg) {
+  (void)arg;
+  int fd = v_bus_open("demo.ticks", V_BUS_WR);
+  for (;;) {
+    char msg[24];
+    int n = print_fmt_buf(msg, sizeof msg, "uptime %ds",
+                          (int)(v_get_ticks() / MS_TO_TICKS(1000)));
+    if (fd >= 0 && n > 0)
+      v_bus_send(fd, msg, (uint16_t)n);
+    v_delay(1000);
+  }
+}
 #endif
 
 static int cmd_echo(shell_t *sh, int argc, char **argv) {
@@ -152,7 +167,7 @@ int main(void) {
 #endif
 #if VAIOS_MODULE_BUS
   v_bus_init(&demo_bus, demo_blocks, demo_desc, 32, 8);
-  v_bus_topic_declare(&demo_bus, &demo_topic, "shell.demo", NULL);
+  v_bus_topic_declare(&demo_bus, &demo_topic, "demo.ticks", NULL);
 #endif
 #if VAIOS_MODULE_VFS
   if (v_vfs_mount("/mnt/") != VA_PASS)
@@ -165,6 +180,9 @@ int main(void) {
 #endif
   task_create_named(shell_run, (void *)&shell_cfg, SHELL_TASK_STACK_SIZE, 1,
                     "shell");
+#if VAIOS_MODULE_BUS
+  task_create_named(ticker, NULL, 1024, 1, "ticker");
+#endif
 #if VAIOS_MPU_USER_SEPARATION
   /* Runs the SHELL_CMD_PRIV commands for the now-unprivileged shell, from the
      same flash config. The shell's priority: the shell only waits while it
