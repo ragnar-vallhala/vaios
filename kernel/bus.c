@@ -1349,7 +1349,7 @@ int v_bus_recv_wait(int fd, v_bus_rx_t *rx, uint32_t ticks) {
     uint32_t spent = v_get_ticks() - start;
     if (spent >= ticks)
       return VA_FAIL; // timed out (ticks == 0 lands here: plain v_bus_recv)
-    if (v_bus_wait(fd, ticks - spent) != VA_PASS)
+    if (v_bus_wait(fd, v_wait_left(ticks, spent)) != VA_PASS)
       return VA_FAIL;
     // Woken: loop and read. A signal whose message was evicted before we ran
     // just costs another turn of this loop, bounded by the deadline.

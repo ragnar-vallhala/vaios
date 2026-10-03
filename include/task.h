@@ -276,6 +276,17 @@ void idle_task_function(void *arg);
 // waiter with no deadline instead.
 #define V_WAIT_FOREVER 0xFFFFFFFFu
 
+// What is left of a wait of `ticks` once `spent` have gone: for a loop that
+// waits, wakes, finds nothing and waits again. V_WAIT_FOREVER stays forever --
+// `ticks - spent` would turn it into an ordinary timeout of nearly 2^32 ticks,
+// whose `now + ticks` deadline lands in the past and expires at once. That is
+// how the shell lost its wait on a privileged command (seen on the F767: a
+// stale wake, a tick boundary, and the 10-second `bus sub` returned "exit 1"
+// at once while the helper ran on).
+static inline uint32_t v_wait_left(uint32_t ticks, uint32_t spent) {
+  return ticks == V_WAIT_FOREVER ? V_WAIT_FOREVER : ticks - spent;
+}
+
 //-----------------------------------------------------------------------------
 // Delayed Task Management
 //-----------------------------------------------------------------------------
