@@ -46,7 +46,23 @@
    a `bus sub` running, they arrive. */
 V_BUS_POOL(demo, 32, 8);
 static v_bus_t demo_bus;
-static v_bus_topic_t demo_topic;
+static v_bus_topic_t demo_topic, echo_topic;
+
+/* And the other direction: a task that subscribes to demo.echo and prints
+   what arrives, so `bus pub demo.echo hello` shows a message from the shell
+   reaching another task. */
+static void listener(void *arg) {
+  (void)arg;
+  int fd = v_bus_open("demo.echo", V_BUS_RD);
+  char buf[64];
+  for (;;) {
+    v_bus_rx_t rx = {buf, sizeof buf - 1, 0, 0};
+    if (fd < 0 || v_bus_recv_wait(fd, &rx, V_WAIT_FOREVER) != VA_PASS)
+      continue;
+    buf[rx.len] = '\0';
+    v_printf("\r\nlistener: %s\r\n", buf);
+  }
+}
 
 static void ticker(void *arg) {
   (void)arg;
@@ -168,6 +184,7 @@ int main(void) {
 #if VAIOS_MODULE_BUS
   v_bus_init(&demo_bus, demo_blocks, demo_desc, 32, 8);
   v_bus_topic_declare(&demo_bus, &demo_topic, "demo.ticks", NULL);
+  v_bus_topic_declare(&demo_bus, &echo_topic, "demo.echo", NULL);
 #endif
 #if VAIOS_MODULE_VFS
   if (v_vfs_mount("/mnt/") != VA_PASS)
@@ -182,6 +199,7 @@ int main(void) {
                     "shell");
 #if VAIOS_MODULE_BUS
   task_create_named(ticker, NULL, 1024, 1, "ticker");
+  task_create_named(listener, NULL, 1024, 1, "listener");
 #endif
 #if VAIOS_MPU_USER_SEPARATION
   /* Runs the SHELL_CMD_PRIV commands for the now-unprivileged shell, from the
