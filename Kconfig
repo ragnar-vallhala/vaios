@@ -24,6 +24,24 @@ config VAIOS_VERSION_PATCH
 config VAIOS_VERSION
     string "Version string"
     default "0.2.0"
+config VAIOS_VERSION_NAME
+    string "Release name"
+    default "Brahmaputra"
+    help
+      The name of this release series, shown beside the version in the boot
+      banner: vaios 0.2.0 "Brahmaputra".
+
+      Convention: one name per MINOR series, shared by its patch releases
+      (0.2.0, 0.2.1 ... are all Brahmaputra), taken from the rivers of India
+      in alphabetical order so a name says which release is newer. A letter
+      with no major river is skipped. Bump it with VAIOS_VERSION_MINOR:
+
+        0.1 Alaknanda    0.4 Damodar    0.7 Indus      0.10 Luni
+        0.2 Brahmaputra  0.5 Ganga      0.8 Jhelum     0.11 Mahanadi
+        0.3 Chambal      0.6 Hooghly    0.9 Kaveri     0.12 Narmada
+        then Ravi, Sutlej, Tapti, Yamuna.
+
+      A MAJOR release starts the list again from A.
 config AUTHOR
     string "Author"
     default "ASHUTOSH VISHWAKARMA"

@@ -30,6 +30,9 @@ extern uint32_t systick_count;
 #ifndef VAIOS_VERSION /* from Kconfig; absent only to a bare analyser run */
 #define VAIOS_VERSION "unknown"
 #endif
+#ifndef VAIOS_VERSION_NAME /* the release series' name (Kconfig) */
+#define VAIOS_VERSION_NAME "unnamed"
+#endif
 #if defined(__VERSION__) && defined(__GNUC__) && !defined(__clang__)
 #define VAIOS_CC "gcc " __VERSION__
 #elif defined(__VERSION__)
@@ -38,36 +41,6 @@ extern uint32_t systick_count;
 #define VAIOS_CC "an unknown compiler"
 #endif
 
-/* Each enabled kernel feature, space-led; "" if none. */
-const char v_features[] =
-#if VAIOS_SYSCALL_SVC
-    " svc"
-#endif
-#if VAIOS_DEVFS
-    " devfs"
-#endif
-#if VAIOS_MPU_ENABLE
-    " mpu"
-#endif
-#if VAIOS_MPU_USER_SEPARATION
-    " user-separation"
-#endif
-#if VAIOS_TASK_HEAP
-    " task-heap"
-#endif
-#if VAIOS_MODULE_PERF
-    " perf"
-#endif
-#if VAIOS_MODULE_BUS
-    " bus"
-#endif
-#if VAIOS_MODULE_VFS
-    " vfs"
-#endif
-#if VAIOS_MODULE_SHELL
-    " vsh"
-#endif
-    "";
 
 /* --- the renderer ------------------------------------------------------------
  * neofetch-shaped: the name in figlet's standard font on the left, a panel of
@@ -132,12 +105,11 @@ static void info_row(int r, wbuf_t *w, uint32_t cpu_hz, int32_t uptime_s) {
   char num[48];
   switch (r) {
   case ROW_TITLE:
-    put_s(w, B_TITLE "vaios " VAIOS_VERSION B_RESET "  " B_DIM VAIOS_BUILD_REV
-                     B_RESET);
+    put_s(w, B_TITLE "vaios" B_RESET "  " B_DIM VAIOS_BUILD_REV B_RESET);
     break;
   case ROW_RULE: {
     /* as long as the title it underlines */
-    int n = (int)sizeof("vaios " VAIOS_VERSION "  " VAIOS_BUILD_REV) - 1;
+    int n = (int)sizeof("vaios  " VAIOS_BUILD_REV) - 1;
     while (n-- > 0)
       put_s(w, "-");
     break;
@@ -160,8 +132,11 @@ static void info_row(int r, wbuf_t *w, uint32_t cpu_hz, int32_t uptime_s) {
     put_s(w, num);
     break;
   case ROW_KERNEL:
+    /* the version and its release name (VAIOS_VERSION_NAME): what this kernel
+       is, and nothing that grows with the build -- what is compiled in is the
+       build's config, not a banner line */
     put_key(w, "kernel");
-    put_s(w, v_features[0] ? v_features + 1 : "minimal");
+    put_s(w, VAIOS_VERSION " \"" VAIOS_VERSION_NAME "\"");
     break;
   case ROW_UPTIME:
     put_key(w, "uptime");

@@ -16,7 +16,5 @@ void v_system_init(vaios_init_config_t *cfg);
    task may call it with its own writer. */
 void v_banner_print(void (*put)(const char *line), uint32_t cpu_hz,
                     int32_t uptime_s);
-/* The enabled kernel features, each space-led ("" if none). */
-extern const char v_features[];
 void v_delay(uint32_t ms);
 #endif // !VAIOS_H
