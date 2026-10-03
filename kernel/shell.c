@@ -1326,10 +1326,10 @@ static int cmd_head(shell_t *sh, int argc, char **argv) {
   return rc;
 }
 
-/* The last N lines, from the file's final TAIL_SPAN bytes.
-   ponytail: one fixed window -- N lines longer than that in total come out
-   short; read back block by block if that ever matters. */
-#define TAIL_SPAN 512
+/* The last N lines: read back from the end a block at a time, counting
+   newlines, until there are N of them -- however long the lines -- then print
+   from there to the end. A final newline ends the last line rather than
+   starting another. */
 static int cmd_tail(shell_t *sh, int argc, char **argv) {
   long want;
   int a = opt_n(argc, argv, &want);
@@ -1341,25 +1341,37 @@ static int cmd_tail(shell_t *sh, int argc, char **argv) {
   if (fd < 0)
     return 1;
   long size = v_vfs_size(fd, SHELL_IO_TICKS);
-  long from = size > TAIL_SPAN ? size - TAIL_SPAN : 0;
-  char buf[TAIL_SPAN + 1];
-  int n = 0;
-  if (size > 0 && v_vfs_seek(fd, from, VFS_SEEK_SET, SHELL_IO_TICKS) >= 0)
-    n = v_vfs_read(fd, buf, TAIL_SPAN, SHELL_IO_TICKS);
+  long start = want == 0 ? size : 0, pos = size, lines = 0;
+  char buf[129];
+  int rc = 0;
+  while (want > 0 && pos > 0 && !start) {
+    long blk = pos > 128 ? 128 : pos;
+    pos -= blk;
+    if (v_vfs_seek(fd, pos, VFS_SEEK_SET, SHELL_IO_TICKS) < 0 ||
+        v_vfs_read(fd, buf, (uint32_t)blk, SHELL_IO_TICKS) != blk) {
+      rc = 1;
+      break;
+    }
+    for (long k = blk - 1; k >= 0; k--)
+      if (buf[k] == '\n' && pos + k != size - 1 && ++lines == want) {
+        start = pos + k + 1;
+        break;
+      }
+  }
+  if (!rc && start < size &&
+      v_vfs_seek(fd, start, VFS_SEEK_SET, SHELL_IO_TICKS) >= 0) {
+    int n;
+    while ((n = v_vfs_read(fd, buf, 128, SHELL_IO_TICKS)) > 0) {
+      buf[n] = '\0'; /* text: an embedded NUL ends the chunk early */
+      sh_puts(buf);
+      if (shell_interrupted(sh)) {
+        rc = SHELL_INTERRUPTED;
+        break;
+      }
+    }
+  }
   v_vfs_close(fd, SHELL_IO_TICKS);
-  if (n <= 0)
-    return n < 0 ? 1 : 0;
-  int k = n;
-  if (buf[k - 1] == '\n')
-    k--; /* a final newline ends the last line, it does not start one */
-  long lines = 0;
-  while (k > 0 && !(buf[k - 1] == '\n' && ++lines == want))
-    k--;
-  if (want == 0)
-    k = n;
-  buf[n] = '\0';
-  sh_puts(buf + k); /* not v_printf: that formats into 128 bytes */
-  return 0;
+  return rc;
 }
 
 /* Offset, sixteen bytes in hex, the same as text: hexdump -C's layout. */

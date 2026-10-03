@@ -315,6 +315,21 @@ static void test_head_and_tail(void) {
                       "c-line-that-is-sixty-characters-long-to-fill-up-space-xxxxx\n");
   TEST_ASSERT_EQ(run("tail -n 3 long.txt"), 0);
   TEST_ASSERT_EQ((int)v_strlen(g_stub_out), 180);
+  /* lines longer in total than any window: 3 x 300 characters come out whole */
+  {
+    static char longf[903];
+    for (int l = 0; l < 3; l++) {
+      for (int k = 0; k < 300; k++)
+        longf[l * 301 + k] = (char)('a' + l);
+      longf[l * 301 + 300] = '\n';
+    }
+    stub_fs_put("0:/wide.txt", longf, 903);
+    TEST_ASSERT_EQ(run("tail -n 2 wide.txt"), 0);
+    TEST_ASSERT_EQ((int)v_strlen(g_stub_out), 602);
+    TEST_ASSERT(g_stub_out[0] == 'b' && g_stub_out[301] == 'c');
+    TEST_ASSERT_EQ(run("tail -n 0 wide.txt"), 0);
+    TEST_ASSERT_EQ((int)v_strlen(g_stub_out), 0);
+  }
   TEST_ASSERT_EQ(run("head -n x f.txt"), 1); /* not a number */
   TEST_ASSERT_EQ(run("head nope.txt"), 1);
 }
