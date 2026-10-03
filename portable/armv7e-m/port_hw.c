@@ -155,6 +155,58 @@ extern void v_kernel_tick(void);
 #ifdef NAVHAL
 void hal_timebase_tick(void); // NavHAL timebase.c; not in the public navhal.h
 #endif
+#if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+/* Console input on a UART. With UART DMA the receive costs no interrupt at
+ * all: DMA fills a circular ring by itself, and the tick hands what arrived to
+ * the console every CONSOLE_RX_POLL ticks -- one register read when nothing
+ * did. Without DMA, one RXNE interrupt per byte. (NavHAL's USART vectors are
+ * defined only with UART DMA, but Default_Handler dispatches to whatever is
+ * attached, so the RXNE path works without them -- navhal todo 171.) */
+#define CONSOLE_UART_RX_IRQ 1
+static void (*_console_rx_sink)(const uint8_t *, uint16_t);
+
+static void console_uart_rx_isr(void) {
+  /* RXNEIE also fires on overrun; reading SR (available) then DR clears both. */
+  while (hal_uart_available(BOARD_CONSOLE_UART)) {
+    uint8_t c = (uint8_t)hal_uart_read_char(BOARD_CONSOLE_UART);
+    _console_rx_sink(&c, 1);
+  }
+}
+
+#if NAVHAL_CONFIG_DRV_DMA && NAVHAL_CONFIG_DRV_UART_DMA
+#define CONSOLE_RX_DMA 1
+/* A whole number of cache lines, line-aligned: on the F7 the ring is
+   invalidated before it is read, and invalidation works on whole lines. 256
+   holds what arrives between two drains (8 ms is ~92 bytes at 115200) with
+   room for a burst. */
+#ifndef NAVHAL_CACHE_LINE
+#define NAVHAL_CACHE_LINE 32
+#endif
+#define CONSOLE_RX_RING 256
+#define CONSOLE_RX_POLL 8 /* ticks between drains */
+static uint8_t _console_rx_ring[CONSOLE_RX_RING]
+    __attribute__((aligned(NAVHAL_CACHE_LINE)));
+static uint16_t _console_rx_tail;
+static uint8_t _console_rx_dma_on;
+
+/* SysTick only, so there is one producer. Hands the console every byte DMA has
+   written since last time, in at most two pieces when the ring wrapped. */
+static void console_rx_dma_drain(void) {
+  uint16_t head;
+  if (hal_uart_dma_rx_index(BOARD_CONSOLE_UART, &head) != HAL_OK ||
+      head >= CONSOLE_RX_RING)
+    return;
+  while (_console_rx_tail != head) {
+    uint16_t end = head > _console_rx_tail ? head : CONSOLE_RX_RING;
+    uint16_t n = (uint16_t)(end - _console_rx_tail);
+    hal_uart_dma_rx_sync(BOARD_CONSOLE_UART, _console_rx_tail, n);
+    _console_rx_sink(&_console_rx_ring[_console_rx_tail], n);
+    _console_rx_tail = end == CONSOLE_RX_RING ? 0u : end;
+  }
+}
+#endif
+#endif
+
 #if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
 static void (*_console_rx_sink)(const uint8_t *, uint16_t);
 
@@ -199,6 +251,13 @@ void SysTick_Handler(void) {
 #endif
 #if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   console_attach_poll();
+#endif
+#if defined(CONSOLE_RX_DMA)
+  static uint8_t rx_div;
+  if (_console_rx_dma_on && ++rx_div >= CONSOLE_RX_POLL) {
+    rx_div = 0;
+    console_rx_dma_drain();
+  }
 #endif
   v_kernel_tick();
 }
@@ -347,24 +406,6 @@ void v_port_hw_console_write_string(const char *str) {
 #endif
 }
 
-#if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC &&                    \
-    NAVHAL_CONFIG_DRV_DMA && NAVHAL_CONFIG_DRV_UART_DMA
-/* NavHAL defines the USARTx_IRQHandler vectors only inside its UART-DMA block,
- * so without UART DMA the console UART's interrupt resolves to Default_Handler
- * and arming RXNE would hang the board on the first keystroke. Until NavHAL
- * defines them unconditionally, a UART console without DMA polls instead. */
-#define CONSOLE_UART_RX_IRQ 1
-static void (*_console_rx_sink)(const uint8_t *, uint16_t);
-
-static void console_uart_rx_isr(void) {
-  /* RXNEIE also fires on overrun; reading SR (available) then DR clears both. */
-  while (hal_uart_available(BOARD_CONSOLE_UART)) {
-    uint8_t c = (uint8_t)hal_uart_read_char(BOARD_CONSOLE_UART);
-    _console_rx_sink(&c, 1);
-  }
-}
-#endif
-
 int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
                                                 uint16_t len)) {
   if (!sink)
@@ -377,13 +418,20 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
   return hal_usb_cdc_set_rx_callback(sink) == HAL_OK;
 #elif defined(CONSOLE_UART_RX_IRQ)
   _console_rx_sink = sink;
+#if defined(CONSOLE_RX_DMA)
+  if (hal_uart_init_dma_rx(BOARD_CONSOLE_UART, _console_rx_ring,
+                           CONSOLE_RX_RING) == HAL_OK) {
+    _console_rx_dma_on = 1; /* the tick drains it from here on */
+    return 1;
+  }
+  /* no DMA stream for it: fall back to an interrupt per byte */
+#endif
   if (hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ,
                                     console_uart_rx_isr) != HAL_OK)
     return 0;
   return hal_uart_enable_interrupt(BOARD_CONSOLE_UART, 1, 0) == HAL_OK;
 #else
-  /* QEMU semihosting has no async RX; a UART console without NavHAL's USART
-     vectors must not arm one (above). The reader polls. */
+  /* QEMU semihosting has no async RX: the reader polls. */
   return 0;
 #endif
 }
