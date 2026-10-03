@@ -182,14 +182,18 @@ static void info_row(int r, wbuf_t *w, uint32_t cpu_hz, int32_t uptime_s) {
 void v_banner_print(void (*put)(const char *line), uint32_t cpu_hz,
                     int32_t uptime_s) {
   char line[200];
+  /* The logo centred on the text rows (title to compiler), counted as
+     printed: at boot the uptime row is left out. */
+  int top = (ROW_CC + 1 - (uptime_s < 0) - LOGO_ROWS) / 2, printed = 0;
   for (int r = 0; r < ROW_COUNT; r++) {
     if (r == ROW_UPTIME && uptime_s < 0)
       continue; /* at boot: there is no uptime yet */
     wbuf_t w = {line, line + sizeof line - 3};
     put_s(&w, "  ");
-    if (r < LOGO_ROWS) {
+    int l = printed++ - top;
+    if (l >= 0 && l < LOGO_ROWS) {
       put_s(&w, B_LOGO);
-      put_s(&w, _logo[r]);
+      put_s(&w, _logo[l]);
       put_s(&w, B_RESET);
     } else {
       put_s(&w, LOGO_PAD);
