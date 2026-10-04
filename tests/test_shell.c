@@ -929,6 +929,45 @@ static void test_editor_backspace(void) {
   TEST_ASSERT_EQ(v_strcmp(out, "hep"), 0);
 }
 
+/* The cursor: left and right move it, typing goes in where it is, backspace
+ * takes the character before it and Delete the one under it; Home and End in
+ * both forms terminals send. Moving past either end does nothing. */
+#define K_LEFT "\x1b[D"
+#define K_RIGHT "\x1b[C"
+static void test_editor_cursor(void) {
+  char out[CMD_MAX_LEN];
+  struct {
+    const char *keys, *want;
+  } cases[] = {
+      {"helo" K_LEFT "l\n", "hello"},
+      {"ad" K_LEFT "bc\n", "abcd"},
+      {"abXc" K_LEFT "\b\n", "abc"},              /* backspace mid-line */
+      {"aXbc\x1b[H" K_RIGHT "\x1b[3~\n", "abc"},   /* Home, right, Delete */
+      {"ac\x1b[1~\x1b[F" "d\n", "acd"},            /* Home (1~), End (F) */
+      {"bc\x1b[7~a\x1b[4~d\n", "abcd"},            /* Home 7~, End 4~ */
+      {"x" K_LEFT K_LEFT "\b" "y" K_RIGHT K_RIGHT "z\n", "yxz"}, /* the ends */
+      {"ab" K_LEFT "\x1b[3~\x1b[3~\n", "a"},       /* Delete at the end: none */
+  };
+  for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+    shell_reset();
+    feed(cases[i].keys);
+    TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
+    TEST_ASSERT_EQ(v_strcmp(out, cases[i].want), 0);
+  }
+  /* history comes back with the cursor at its end, ready to edit */
+  shell_reset();
+  feed("ls\n");
+  shell_poll(&g_sh, out, sizeof out);
+  feed("\x1b[A" K_LEFT "-a\n"); /* "ls", cursor before 's': "l-as" */
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
+  TEST_ASSERT_EQ(v_strcmp(out, "l-as"), 0);
+  /* tab completes only at the end of the line */
+  shell_reset();
+  feed("hel" K_LEFT "\t\n");
+  TEST_ASSERT_EQ(shell_poll(&g_sh, out, sizeof out), 1);
+  TEST_ASSERT_EQ(v_strcmp(out, "hel"), 0);
+}
+
 static void test_editor_backspace_on_empty_is_harmless(void) {
   shell_reset();
   char out[CMD_MAX_LEN];
@@ -1139,6 +1178,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_editor_enq_greets),
     TEST_CASE(test_editor_incomplete_line_waits),
     TEST_CASE(test_editor_backspace),
+    TEST_CASE(test_editor_cursor),
     TEST_CASE(test_editor_backspace_on_empty_is_harmless),
     TEST_CASE(test_editor_ctrl_c_abandons),
     TEST_CASE(test_editor_empty_line_does_not_dispatch),

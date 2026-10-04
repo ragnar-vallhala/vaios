@@ -119,7 +119,9 @@ struct shell {
   int hist_count; /* lines stored, saturating at CMD_BUFFER_SIZE */
   int hist_head;  /* next slot to write */
   int hist_pos;   /* -1 = editing a fresh line; else steps back */
-  int esc;        /* 0 normal, 1 saw ESC, 2 saw ESC '[' */
+  int pos;        /* the cursor: where the next key goes, 0..len */
+  int esc;        /* 0 normal, 1 saw ESC, 2 saw ESC '[', 3 and a digit */
+  int esc_num;    /* ... that digit */
   int prev_cr;    /* last byte was CR: an LF now ends the same line */
   int req_fd, done_fd; /* the helper's queues, opened on first use; -1 until */
   uint8_t capture; /* this command's output is redirected (> file) */

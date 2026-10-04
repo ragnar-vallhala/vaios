@@ -373,20 +373,38 @@ static const char *hist_at(const shell_t *sh, int back) {
   return sh->hist[idx];
 }
 
-/* Wipe the visible line and put `s` in its place, on screen and in sh->line. */
+/* The terminal's cursor `n` places to the left. */
+static void sh_left(int n) {
+  while (n-- > 0)
+    sh_putc('\b');
+}
+
+/* Reprint the line from the cursor on -- plus `gone` blanks over what it no
+   longer covers -- and put the cursor back where it was. */
+static void sh_tail(const shell_t *sh, int gone) {
+  for (int i = sh->pos; i < sh->len; i++)
+    sh_putc(sh->line[i]);
+  for (int i = 0; i < gone; i++)
+    sh_putc(' ');
+  sh_left(sh->len - sh->pos + gone);
+}
+
+/* Wipe the visible line and put `s` in its place, on screen and in sh->line,
+   with the cursor at its end. */
 static void line_replace(shell_t *sh, const char *s) {
-  for (int i = 0; i < sh->len; i++)
-    v_printf("\b \b");
+  sh_left(sh->pos); /* to the line's start */
+  int old = sh->len;
   sh->len = 0;
-  sh->line[0] = '\0';
-  if (!s)
-    return;
-  while (*s && sh->len < CMD_MAX_LEN - 1) {
-    sh->line[sh->len++] = *s;
-    sh_putc(*s);
-    s++;
-  }
+  while (s && *s && sh->len < CMD_MAX_LEN - 1)
+    sh->line[sh->len++] = *s++;
   sh->line[sh->len] = '\0';
+  for (int i = 0; i < sh->len; i++)
+    sh_putc(sh->line[i]);
+  int gone = old > sh->len ? old - sh->len : 0; /* blank what is left over */
+  for (int i = 0; i < gone; i++)
+    sh_putc(' ');
+  sh_left(gone);
+  sh->pos = sh->len;
 }
 
 static void sh_complete(shell_t *sh); /* tab: below, beside the path helpers */
@@ -427,15 +445,53 @@ int shell_poll(shell_t *sh, char *out, int cap) {
     }
     sh->prev_cr = (c == '\r');
 
-    /* Arrow keys arrive as ESC '[' 'A'/'B'. Two states is the whole parser;
-       anything else after ESC is swallowed rather than typed into the line. */
+    /* Keys arrive as ESC '[' and a letter (arrows; Home and End as H, F) or a
+       number and '~' (Home 1/7, Delete 3, End 4/8). Anything else after ESC
+       is swallowed rather than typed into the line. */
     if (sh->esc == 1) {
       sh->esc = (c == '[') ? 2 : 0;
       continue;
     }
+    if (sh->esc == 3) { /* ESC [ <digit>: only its '~' is left */
+      int k = sh->esc_num;
+      sh->esc = 0;
+      if (c != '~')
+        continue;
+      if (k == 1 || k == 7)
+        c = 'H';
+      else if (k == 4 || k == 8)
+        c = 'F';
+      else if (k == 3) { /* Delete: the character under the cursor */
+        if (sh->pos < sh->len) {
+          for (int i = sh->pos; i < sh->len; i++)
+            sh->line[i] = sh->line[i + 1];
+          sh->len--;
+          sh_tail(sh, 1);
+        }
+        continue;
+      } else
+        continue;
+      sh->esc = 2; /* Home and End, as their letters */
+    }
     if (sh->esc == 2) {
       sh->esc = 0;
-      if (c == 'A') { /* up: older */
+      if (c >= '0' && c <= '9') {
+        sh->esc = 3;
+        sh->esc_num = c - '0';
+        continue;
+      }
+      if (c == 'D' && sh->pos > 0) { /* left */
+        sh->pos--;
+        sh_left(1);
+      } else if (c == 'C' && sh->pos < sh->len) { /* right */
+        sh_putc(sh->line[sh->pos++]);
+      } else if (c == 'H') { /* Home */
+        sh_left(sh->pos);
+        sh->pos = 0;
+      } else if (c == 'F') { /* End */
+        while (sh->pos < sh->len)
+          sh_putc(sh->line[sh->pos++]);
+      } else if (c == 'A') { /* up: older */
         if (sh->hist_pos + 1 < sh->hist_count) {
           sh->hist_pos++;
           line_replace(sh, hist_at(sh, sh->hist_pos));
@@ -459,7 +515,7 @@ int shell_poll(shell_t *sh, char *out, int cap) {
     if (c == 0x03) { /* ^C: abandon the line */
       v_printf("^C\r\n");
       sh_prompt(sh);
-      sh->len = 0;
+      sh->len = sh->pos = 0;
       sh->line[0] = '\0';
       sh->hist_pos = -1;
       continue;
@@ -473,11 +529,13 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       sh_banner();
       sh_prompt(sh);
       v_printf("%s", sh->line);
+      sh_left(sh->len - sh->pos);
       continue;
     }
 
     if (c == '\t') {
-      sh_complete(sh);
+      if (sh->pos == sh->len) /* it completes the word the line ends in */
+        sh_complete(sh);
       continue;
     }
 
@@ -487,14 +545,18 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       v_printf("\r\n");
       sh_prompt(sh);
       v_printf("%s", sh->line);
+      sh_left(sh->len - sh->pos);
       continue;
     }
 
-    if (c == '\b' || c == 0x7F) { /* backspace / DEL */
-      if (sh->len > 0) {
+    if (c == '\b' || c == 0x7F) { /* backspace: the character before the cursor */
+      if (sh->pos > 0) {
+        for (int i = sh->pos - 1; i < sh->len; i++)
+          sh->line[i] = sh->line[i + 1];
         sh->len--;
-        sh->line[sh->len] = '\0';
-        v_printf("\b \b");
+        sh->pos--;
+        sh_left(1);
+        sh_tail(sh, 1);
       }
       continue;
     }
@@ -513,18 +575,21 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       }
       sh_copy(out, sh->line, cap);
       hist_push(sh, sh->line);
-      sh->len = 0;
+      sh->len = sh->pos = 0;
       sh->line[0] = '\0';
       sh->hist_pos = -1;
       return 1;
     }
 
-    /* Anything else printable joins the line. A full line stops accepting
-       rather than wrapping or overflowing. */
+    /* Anything else printable goes in at the cursor. A full line stops
+       accepting rather than wrapping or overflowing. */
     if (c >= 0x20 && c < 0x7F && sh->len < CMD_MAX_LEN - 1) {
-      sh->line[sh->len++] = c;
-      sh->line[sh->len] = '\0';
-      sh_putc(c);
+      for (int i = sh->len; i > sh->pos; i--)
+        sh->line[i] = sh->line[i - 1];
+      sh->line[sh->pos] = c;
+      sh->line[++sh->len] = '\0';
+      sh_putc(sh->line[sh->pos++]);
+      sh_tail(sh, 0);
     }
   }
   return 0;
@@ -1984,7 +2049,7 @@ void shell_init(shell_t *sh, const Command_t *cmds, int count) {
   sh->table_count = (cmds && count > 0) ? count : 0;
   sh->extra_count = 0;
   sh->in_head = sh->in_tail = 0;
-  sh->len = 0;
+  sh->len = sh->pos = 0;
   sh->line[0] = '\0';
   sh->hist_count = 0;
   sh->hist_head = 0;
@@ -2043,6 +2108,7 @@ static void sh_insert(shell_t *sh, const char *p, int n) {
     sh_putc(p[i]);
   }
   sh->line[sh->len] = '\0';
+  sh->pos = sh->len; /* completion happens at the end of the line */
 }
 
 /* Offer each entry of `dir` (a word's directory part, as typed) -- and, when
