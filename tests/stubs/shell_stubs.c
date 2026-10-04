@@ -60,9 +60,14 @@ char g_stub_last_prompt[80]; /* the last prompt, as it would print */
 char g_stub_out[4096];
 int g_stub_out_len;
 void stub_out_reset(void) {
+  extern char g_stub_err[];
+  extern int g_stub_err_len;
   g_stub_out_len = 0;
   g_stub_out[0] = '\0';
+  g_stub_err_len = 0;
+  g_stub_err[0] = '\0';
 }
+static int stub_out(int fd, const char *fmt, va_list ap);
 int v_printf(const char *fmt, ...) {
   va_list ap;
   if (strcmp(fmt, "vsh%s%s> ") == 0) { /* SHELL_PROMPT_FMT */
@@ -72,16 +77,42 @@ int v_printf(const char *fmt, ...) {
     snprintf(g_stub_last_prompt, sizeof g_stub_last_prompt, "vsh%s%s> ", a, b);
     g_stub_prompts++;
   }
-  /* Through fd 1 as the real one goes, so a redirect (fd 1 -> /dev/capture)
-     catches it; and into g_stub_out, for the tests that read the output. */
-  char tmp[1024]; /* the real v_printf streams; nothing a test prints is longer */
   va_start(ap, fmt);
-  int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
+  int n = stub_out(1, fmt, ap);
   va_end(ap);
+  return n;
+}
+
+/* stderr: fd 2, which a redirect leaves on the console. Also into g_stub_out
+   (everything said, for the tests that check messages); g_stub_err is what
+   went this way alone. */
+char g_stub_err[1024];
+int g_stub_err_len;
+int v_eprintf(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int n = stub_out(2, fmt, ap);
+  va_end(ap);
+  return n;
+}
+
+/* Through `fd` as the real one goes, so a redirect (fd 1 -> /dev/capture)
+   catches what it should; and into g_stub_out, for the tests that read the
+   output. */
+static int stub_out(int fd, const char *fmt, va_list ap) {
+  char tmp[1024]; /* the real v_printf streams; nothing a test prints is longer */
+  int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
   if (n > (int)sizeof tmp - 1)
     n = (int)sizeof tmp - 1;
+  if (n > 0 && fd == 2) {
+    int room = (int)sizeof g_stub_err - g_stub_err_len - 1;
+    int k = n < room ? n : room;
+    memcpy(g_stub_err + g_stub_err_len, tmp, (size_t)(k > 0 ? k : 0));
+    g_stub_err_len += k > 0 ? k : 0;
+    g_stub_err[g_stub_err_len] = '\0';
+  }
   if (n > 0) {
-    v_file_write(1, tmp, (uint32_t)n);
+    v_file_write(fd, tmp, (uint32_t)n);
     int room = (int)sizeof g_stub_out - g_stub_out_len - 1;
     int k = n < room ? n : room;
     memcpy(g_stub_out + g_stub_out_len, tmp, (size_t)(k > 0 ? k : 0));

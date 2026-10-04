@@ -16,6 +16,9 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args);
 #if VAIOS_DEVFS
 // Task-facing printf: formats, then routes through write(1) -> /dev/console.
 int v_printf(const char *fmt, ...);
+// The same to fd 2, stderr: errors and usage, which a shell's `>` leaves on
+// the console rather than putting in the file.
+int v_eprintf(const char *fmt, ...);
 // Kernel log ring backing /dev/kmsg (appended by the printk path; drained by a
 // task read()ing /dev/kmsg).
 void v_kmsg_append(const char *buf, uint32_t len);

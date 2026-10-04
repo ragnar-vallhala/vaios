@@ -123,9 +123,9 @@ int v_kmsg_read(char *out, uint32_t len) {
 // in the syscall.
 // ponytail: a full queue is slept on a tick at a time; a "writable" wait on
 // the fd is the upgrade if a printer ever has to share the CPU that finely.
-static void printf_out(const char *b, int n) {
+static void printf_out(int fd, const char *b, int n) {
   for (int done = 0; done < n;) {
-    int w = v_file_write(1, b + done, (uint32_t)(n - done));
+    int w = v_file_write(fd, b + done, (uint32_t)(n - done));
     if (w < 0)
       return;
     if (w == 0)
@@ -139,19 +139,18 @@ static void printf_out(const char *b, int n) {
 // half in three places in the shell before anyone noticed. Literal text and a
 // plain %s go out as they are, in chunks; any other conversion is formatted on
 // its own by the kernel formatter (same specifiers, flags and widths), its
-// argument taken here by type -- a va_list cannot be handed down portably,
-// since ARM passes it by value. Stack: about what the old buffer took.
-int v_printf(const char *fmt, ...) {
+// argument taken here by type -- the va_list by pointer, the one way to hand
+// it down portably (ARM passes it by value). Stack: about what the old buffer
+// took.
+static int printf_fd(int fd, const char *fmt, va_list *ap) {
   char chunk[64];
   int c = 0, total = 0;
-  va_list ap;
-  va_start(ap, fmt);
 #define PF_PUT(ch)                                                             \
   do {                                                                         \
     chunk[c++] = (ch);                                                         \
     total++;                                                                   \
     if (c == (int)sizeof chunk) {                                              \
-      printf_out(chunk, c);                                                    \
+      printf_out(fd, chunk, c);                                                \
       c = 0;                                                                   \
     }                                                                          \
   } while (0)
@@ -177,7 +176,7 @@ int v_printf(const char *fmt, ...) {
     spec[k] = '\0';
     p = q;
     if (conv == 's' && k == 2) { // plain %s: stream it, whatever its length
-      const char *str = va_arg(ap, const char *);
+      const char *str = va_arg(*ap, const char *);
       for (; str && *str; str++)
         PF_PUT(*str);
       continue;
@@ -186,30 +185,30 @@ int v_printf(const char *fmt, ...) {
     int m;
     switch (conv) {
     case 'd':
-      m = longs == 2   ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, long long))
-          : longs == 1 ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, long))
-                       : print_fmt_buf(one, sizeof one, spec, va_arg(ap, int));
+      m = longs == 2   ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, long long))
+          : longs == 1 ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, long))
+                       : print_fmt_buf(one, sizeof one, spec, va_arg(*ap, int));
       break;
     case 'u':
     case 'x':
     case 'X':
       m = longs == 2
-              ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, unsigned long long))
+              ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, unsigned long long))
           : longs == 1
-              ? print_fmt_buf(one, sizeof one, spec, va_arg(ap, unsigned long))
-              : print_fmt_buf(one, sizeof one, spec, va_arg(ap, unsigned int));
+              ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, unsigned long))
+              : print_fmt_buf(one, sizeof one, spec, va_arg(*ap, unsigned int));
       break;
     case 'c':
-      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, int));
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, int));
       break;
     case 'f':
-      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, double));
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, double));
       break;
     case 'p':
-      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, void *));
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, void *));
       break;
     case 's': // with a width or precision: one at a time, bounded by `one`
-      m = print_fmt_buf(one, sizeof one, spec, va_arg(ap, const char *));
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, const char *));
       break;
     default: // %% and anything the formatter prints as-is take no argument
       m = print_fmt_buf(one, sizeof one, spec);
@@ -219,10 +218,25 @@ int v_printf(const char *fmt, ...) {
       PF_PUT(one[i]);
   }
 #undef PF_PUT
-  va_end(ap);
   if (c)
-    printf_out(chunk, c);
+    printf_out(fd, chunk, c);
   return total;
+}
+
+int v_printf(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int n = printf_fd(1, fmt, &ap);
+  va_end(ap);
+  return n;
+}
+
+int v_eprintf(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int n = printf_fd(2, fmt, &ap);
+  va_end(ap);
+  return n;
 }
 #endif // VAIOS_DEVFS
 

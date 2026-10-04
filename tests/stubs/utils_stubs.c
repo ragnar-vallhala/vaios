@@ -60,9 +60,11 @@ char g_out[2048];
 int g_out_len;
 int g_take;
 int g_refuse_once;
+int g_last_fd; /* which fd the last write went to: 1, or v_eprintf's 2 */
 int v_file_write(int fd, const void *buf, uint32_t len) {
-  if (fd != 1)
+  if (fd != 1 && fd != 2)
     return -1;
+  g_last_fd = fd;
   if (g_refuse_once) {
     g_refuse_once = 0;
     return 0;

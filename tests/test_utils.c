@@ -266,6 +266,17 @@ static void test_v_printf_conversions(void) {
   TEST_ASSERT_EQ(strcmp(g_out, "first and second"), 0);
 }
 
+/* v_eprintf is v_printf on fd 2, stderr, conversions and all. */
+extern int g_last_fd;
+static void test_v_eprintf_goes_to_fd_2(void) {
+  out_reset();
+  v_eprintf("%s: %d", "err", -5);
+  TEST_ASSERT_EQ(strcmp(g_out, "err: -5"), 0);
+  TEST_ASSERT_EQ(g_last_fd, 2);
+  v_printf("x");
+  TEST_ASSERT_EQ(g_last_fd, 1);
+}
+
 /* The console taking a little at a time, or nothing once: all of it still
  * arrives, in order. */
 static void test_v_printf_retries_partial_writes(void) {
@@ -307,6 +318,7 @@ static const test_case_t utils_cases[] = {
     TEST_CASE(test_pf_trailing_percent_stops_at_nul),
     TEST_CASE(test_v_printf_has_no_length_limit),
     TEST_CASE(test_v_printf_conversions),
+    TEST_CASE(test_v_eprintf_goes_to_fd_2),
     TEST_CASE(test_v_printf_retries_partial_writes),
 };
 const test_suite_t utils_suite = {

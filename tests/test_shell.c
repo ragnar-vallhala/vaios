@@ -299,6 +299,7 @@ static void test_mkdir_is_relative(void) {
 
 /* --- the file commands, over the fake card (shell_stubs.c) ---------------- */
 extern char g_stub_out[4096];
+extern char g_stub_err[1024]; /* what went to stderr alone */
 void stub_out_reset(void);
 void stub_fs_reset(void);
 void stub_fs_put(const char *path, const char *data, int len);
@@ -515,6 +516,18 @@ static void test_redirect(void) {
   TEST_ASSERT_EQ(run("uptime > up.txt"), 0); /* > truncates */
   stub_fs_get("0:/up.txt", &len);
   TEST_ASSERT_EQ(len, 12);
+  /* An error is stderr's: it stays on the console, and the file holds only
+     what the command printed -- nothing, from one that failed. */
+  TEST_ASSERT_EQ(run("cat \"no such\" > err.txt"), 1);
+  d = stub_fs_get("0:/err.txt", &len);
+  TEST_ASSERT(d != NULL && len == 0);
+  TEST_ASSERT(strstr(g_stub_err, "/mnt/sd/no such: no such file or directory") !=
+              NULL);
+  TEST_ASSERT(strstr(g_stub_err, "cat: exit 1") != NULL);
+  /* a quoted line goes in whole, its spaces kept */
+  TEST_ASSERT_EQ(run("write q.txt \"two  spaces\" 'and more'"), 0);
+  d = stub_fs_get("0:/q.txt", &len);
+  TEST_ASSERT(d && len == 21 && memcmp(d, "two  spaces and more\n", 21) == 0);
   TEST_ASSERT_EQ(run("uptime >"), 1);
   TEST_ASSERT_EQ(run("uptime > a.txt b"), 1);
   TEST_ASSERT(stub_fs_get("0:/a.txt", &len) == NULL); /* nothing ran */
@@ -822,6 +835,29 @@ static void test_tokenize_splits(void) {
   TEST_ASSERT_EQ(v_strcmp(argv[0], "perf"), 0);
   TEST_ASSERT_EQ(v_strcmp(argv[1], "save"), 0);
   TEST_ASSERT_EQ(v_strcmp(argv[2], "/mnt/sd/p.csv"), 0);
+}
+
+/* Quotes, as a shell has them: "..." or '...' keeps what is inside one word,
+ * spaces included, and the quotes go; they may sit inside a word, may be
+ * empty, and an unclosed one runs to the end. */
+static void test_tokenize_quotes(void) {
+  char *argv[8];
+  char l1[] = "echo \"Hello from VaiOS\" > v.txt";
+  TEST_ASSERT_EQ(shell_tokenize(l1, argv, 8), 4);
+  TEST_ASSERT_EQ(v_strcmp(argv[1], "Hello from VaiOS"), 0);
+  TEST_ASSERT_EQ(v_strcmp(argv[2], ">"), 0);
+  TEST_ASSERT_EQ(v_strcmp(argv[3], "v.txt"), 0);
+  char l2[] = "a 'it''s  two' x\"y z\"w \"\" \"open to the end";
+  TEST_ASSERT_EQ(shell_tokenize(l2, argv, 8), 5);
+  TEST_ASSERT_EQ(v_strcmp(argv[0], "a"), 0);
+  TEST_ASSERT_EQ(v_strcmp(argv[1], "its  two"), 0);
+  TEST_ASSERT_EQ(v_strcmp(argv[2], "xy zw"), 0);
+  TEST_ASSERT_EQ(v_strcmp(argv[3], ""), 0);
+  TEST_ASSERT_EQ(v_strcmp(argv[4], "open to the end"), 0);
+  char l3[] = "say \"it's\" 'a \"b\"'";
+  TEST_ASSERT_EQ(shell_tokenize(l3, argv, 8), 3);
+  TEST_ASSERT_EQ(v_strcmp(argv[1], "it's"), 0); /* the other quote is a char */
+  TEST_ASSERT_EQ(v_strcmp(argv[2], "a \"b\""), 0);
 }
 
 static void test_tokenize_collapses_whitespace(void) {
@@ -1171,6 +1207,7 @@ static const test_case_t shell_cases[] = {
     TEST_CASE(test_register_rejects_null),
     TEST_CASE(test_tokenize_splits),
     TEST_CASE(test_tokenize_collapses_whitespace),
+    TEST_CASE(test_tokenize_quotes),
     TEST_CASE(test_tokenize_empty_and_bounds),
     TEST_CASE(test_editor_short_line_submits),
     TEST_CASE(test_editor_accepts_cr_and_crlf),

@@ -160,7 +160,7 @@ int shell_interrupted(shell_t *sh) {
   if (hit) {
     if (sh)
       sh->in_head = sh->in_tail = 0;
-    v_printf("^C\r\n");
+    v_eprintf("^C\r\n");
   }
   return hit;
 }
@@ -193,21 +193,34 @@ static long sh_num(const char *s) {
 
 /* --- tokenizing ----------------------------------------------------------- */
 
+/* Words split at spaces and tabs, as a shell does: "..." or '...' keeps what
+   is inside one word -- spaces too -- and the quotes themselves go. Done in
+   place, each word compacted as its quotes come out. An unclosed quote runs
+   to the end of the line. */
 int shell_tokenize(char *line, char **argv, int max_argv) {
   int argc = 0;
   if (!line || !argv || max_argv <= 0)
     return 0;
   char *p = line;
-  while (*p && argc < max_argv) {
+  while (argc < max_argv) {
     while (*p == ' ' || *p == '\t')
       p++;
     if (*p == '\0')
       break;
-    argv[argc++] = p;
-    while (*p && *p != ' ' && *p != '\t')
-      p++;
+    char *o = p, q = 0;
+    argv[argc++] = o;
+    while (*p && (q || (*p != ' ' && *p != '\t'))) {
+      if (!q && (*p == '"' || *p == '\''))
+        q = *p++; /* opens */
+      else if (q && *p == q) {
+        q = 0; /* closes */
+        p++;
+      } else
+        *o++ = *p++;
+    }
     if (*p)
-      *p++ = '\0';
+      p++;
+    *o = '\0'; /* behind p: the separator, or a quote now spent */
   }
   return argc;
 }
@@ -513,7 +526,7 @@ int shell_poll(shell_t *sh, char *out, int cap) {
     }
 
     if (c == 0x03) { /* ^C: abandon the line */
-      v_printf("^C\r\n");
+      v_eprintf("^C\r\n");
       sh_prompt(sh);
       sh->len = sh->pos = 0;
       sh->line[0] = '\0';
@@ -641,7 +654,7 @@ static int cmd_dmesg(shell_t *sh, int argc, char **argv) {
   (void)argv;
   int fd = v_file_open("/dev/kmsg", 0);
   if (fd < 0) {
-    v_printf("dmesg: no /dev/kmsg\r\n");
+    v_eprintf("dmesg: no /dev/kmsg\r\n");
     return 1;
   }
   char buf[100];
@@ -685,21 +698,22 @@ static int cmd_perf(shell_t *sh, int argc, char **argv) {
 #if VAIOS_MODULE_VFS
   if (v_strcmp(sub, "save") == 0) {
     if (argc < 3) {
-      v_printf("usage: perf save <path>\r\n");
+      v_eprintf("usage: perf save <path>\r\n");
       return 1;
     }
     char path[CMD_MAX_LEN];
     if (sh_arg_path(sh, "perf", argv[2], path, sizeof path))
       return 1; /* relative to the user's working directory, like ls */
     int rc = v_perf_dump_to_file(path);
-    v_printf(rc == 0 ? "perf: saved to %s\r\n" : "perf: save failed (is VFS "
-                                                  "mounted?) %s\r\n",
-              argv[2]);
+    if (rc == 0)
+      v_printf("perf: saved to %s\r\n", argv[2]);
+    else
+      v_eprintf("perf: %s: save failed (is the card mounted?)\r\n", argv[2]);
     return rc == 0 ? 0 : 1;
   }
-  v_printf("usage: perf [show|reset|save <path>]\r\n");
+  v_eprintf("usage: perf [show|reset|save <path>]\r\n");
 #else
-  v_printf("usage: perf [show|reset]\r\n");
+  v_eprintf("usage: perf [show|reset]\r\n");
 #endif
   return 1;
 }
@@ -737,7 +751,7 @@ static int cmd_ps(shell_t *sh, int argc, char **argv) {
   int cap = (int)task_count + 8;
   TCB **t = (TCB **)v_malloc((size_t)cap * sizeof *t);
   if (!t) {
-    v_printf("ps: out of memory\r\n");
+    v_eprintf("ps: out of memory\r\n");
     return 1;
   }
   int n = task_snapshot_list(t, cap);
@@ -842,7 +856,7 @@ static int cmd_date(shell_t *sh, int argc, char **argv) {
     if (*d || *h || y < 2000 || y > 2099 || mo < 1 || mo > 12 || da < 1 ||
         da > mdays[mo - 1] + (mo == 2 && leap) || hh < 0 || hh > 23 || mi < 0 ||
         mi > 59 || ss < 0 || ss > 59) {
-      v_printf("date: want YYYY-MM-DD HH:MM:SS, 2000-2099\r\n");
+      v_eprintf("date: want YYYY-MM-DD HH:MM:SS, 2000-2099\r\n");
       return 1;
     }
     t.year = (uint16_t)y;
@@ -852,16 +866,16 @@ static int cmd_date(shell_t *sh, int argc, char **argv) {
     t.minute = (uint8_t)mi;
     t.second = (uint8_t)ss;
     if (v_port_hw_rtc_set(&t) != 0) {
-      v_printf("date: no clock to set (the RTC has not started)\r\n");
+      v_eprintf("date: no clock to set (the RTC has not started)\r\n");
       return 1;
     }
   } else if (argc != 1) {
-    v_printf("usage: date [YYYY-MM-DD HH:MM:SS]\r\n");
+    v_eprintf("usage: date [YYYY-MM-DD HH:MM:SS]\r\n");
     return 1;
   }
   int rc = v_port_hw_rtc_get(&t);
   if (rc < 0) {
-    v_printf("date: no clock running (still starting, or none on this board)\r\n");
+    v_eprintf("date: no clock running (still starting, or none on this board)\r\n");
     return 1;
   }
   v_printf("%d-%02d-%02d %02d:%02d:%02d%s\r\n", (int)t.year, (int)t.month,
@@ -894,7 +908,7 @@ static int cmd_loglevel(shell_t *sh, int argc, char **argv) {
       if (v_strcmp(argv[1], _levels[i]) == 0)
         lv = i;
     if (lv < 0) {
-      v_printf("usage: loglevel [trace|debug|info|warn|error|fatal]\r\n");
+      v_eprintf("usage: loglevel [trace|debug|info|warn|error|fatal]\r\n");
       return 1;
     }
     v_log_set_level(lv);
@@ -911,7 +925,7 @@ static int cmd_loglevel(shell_t *sh, int argc, char **argv) {
 static int cmd_top(shell_t *sh, int argc, char **argv) {
   long frames = argc > 1 ? sh_num(argv[1]) : 0; /* 0: until ^C */
   if (frames < 0) {
-    v_printf("usage: top [frames]\r\n");
+    v_eprintf("usage: top [frames]\r\n");
     return 1;
   }
   /* Sized from the kernel's task count, with room for a few started while it
@@ -925,7 +939,7 @@ static int cmd_top(shell_t *sh, int argc, char **argv) {
   uint64_t *now = (uint64_t *)v_malloc((size_t)cap * sizeof *now);
   int rc = 0;
   if (!t || !ids || !pct10 || !was || !now) {
-    v_printf("top: out of memory\r\n");
+    v_eprintf("top: out of memory\r\n");
     rc = 1;
     goto out;
   }
@@ -1014,15 +1028,15 @@ static int cmd_kill(shell_t *sh, int argc, char **argv) {
   (void)sh;
   long pid = argc > 1 ? sh_num(argv[1]) : -1;
   if (pid <= 0) {
-    v_printf("usage: kill <pid>\r\n");
+    v_eprintf("usage: kill <pid>\r\n");
     return 1;
   }
   int rc = v_task_kill((uint32_t)pid);
   if (rc == VA_PASS)
     return 0;
-  v_printf(rc == V_TASK_EPERM ? "kill: %d: not started by this shell\r\n"
-                              : "kill: %d: no such task\r\n",
-           (int)pid);
+  v_eprintf(rc == V_TASK_EPERM ? "kill: %d: not started by this shell\r\n"
+                               : "kill: %d: no such task\r\n",
+            (int)pid);
   return 1;
 }
 
@@ -1033,11 +1047,11 @@ static int cmd_kill(shell_t *sh, int argc, char **argv) {
    clears), so a scan is not something to run on a bus that is flying. */
 static int cmd_i2c(shell_t *sh, int argc, char **argv) {
   if (argc < 3 || v_strcmp(argv[1], "scan") != 0) {
-    v_printf("usage: i2c scan <bus> -y\r\n");
+    v_eprintf("usage: i2c scan <bus> -y\r\n");
     return 1;
   }
   if (argc < 4 || v_strcmp(argv[3], "-y") != 0) {
-    v_printf("i2c: a scan reads one byte from every address on %s,\r\n"
+    v_eprintf("i2c: a scan reads one byte from every address on %s,\r\n"
              "  and some devices act on a read. Not on a bus in flight.\r\n"
              "  Add -y to go.\r\n",
              argv[2]);
@@ -1045,7 +1059,7 @@ static int cmd_i2c(shell_t *sh, int argc, char **argv) {
   }
   int fd = v_pbus_open(argv[2]);
   if (fd < 0) {
-    v_printf("i2c: %s: no such bus (the board registers them)\r\n", argv[2]);
+    v_eprintf("i2c: %s: no such bus (the board registers them)\r\n", argv[2]);
     return 1;
   }
   static const char hx[] = "0123456789abcdef";
@@ -1084,7 +1098,7 @@ static int cmd_i2c(shell_t *sh, int argc, char **argv) {
 static int bus_sub(shell_t *sh, const char *topic, long count) {
   int fd = v_bus_open(topic, V_BUS_RD);
   if (fd < 0) {
-    v_printf("bus: %s: no such topic\r\n", topic);
+    v_eprintf("bus: %s: no such topic\r\n", topic);
     return 1;
   }
   uint8_t buf[64];
@@ -1137,7 +1151,7 @@ static int cmd_bus(shell_t *sh, int argc, char **argv) {
   if (argc >= 4 && v_strcmp(argv[1], "pub") == 0) {
     int fd = v_bus_open(argv[2], V_BUS_WR);
     if (fd < 0) {
-      v_printf("bus: %s: no such topic\r\n", argv[2]);
+      v_eprintf("bus: %s: no such topic\r\n", argv[2]);
       return 1;
     }
     char msg[CMD_MAX_LEN];
@@ -1151,13 +1165,13 @@ static int cmd_bus(shell_t *sh, int argc, char **argv) {
     int r = v_bus_send(fd, msg, (uint16_t)o);
     v_file_close(fd);
     if (r != VA_PASS) {
-      v_printf("bus: %s: not published (%d)\r\n", argv[2], r);
+      v_eprintf("bus: %s: not published (%d)\r\n", argv[2], r);
       return 1;
     }
     return 0;
   }
   if (argc > 1) {
-    v_printf("usage: bus [sub <topic> [n] | pub <topic> <text>]\r\n");
+    v_eprintf("usage: bus [sub <topic> [n] | pub <topic> <text>]\r\n");
     return 1;
   }
   const v_bus_topic_t *t;
@@ -1237,7 +1251,7 @@ static int sh_arg_path(const shell_t *sh, const char *cmd, const char *arg,
                        char *out, int cap) {
   if (sh_path(sh, arg, out, cap) == 0)
     return 0;
-  v_printf("%s: %s: path too long\r\n", cmd, arg);
+  v_eprintf("%s: %s: path too long\r\n", cmd, arg);
   return -1;
 }
 
@@ -1491,9 +1505,9 @@ static const char *sh_strerror(int rc) {
 static void sh_fail(const char *cmd, const char *path, int rc) {
   const char *m = sh_strerror(rc);
   if (m)
-    v_printf("%s: %s: %s\r\n", cmd, path, m);
+    v_eprintf("%s: %s: %s\r\n", cmd, path, m);
   else
-    v_printf("%s: %s: error %d\r\n", cmd, path, rc);
+    v_eprintf("%s: %s: error %d\r\n", cmd, path, rc);
 }
 
 /* Why `path` would not open, as a person reads it. Nothing is made outside a
@@ -1507,7 +1521,7 @@ static void sh_ferr(const char *cmd, const char *path, int rc, int create) {
                         ? "read-only file system"
                         : "no such file or directory";
   if (why)
-    v_printf("%s: %s: %s\r\n", cmd, path, why);
+    v_eprintf("%s: %s: %s\r\n", cmd, path, why);
   else
     sh_fail(cmd, path, rc);
 }
@@ -1534,7 +1548,7 @@ static int cmd_ls(shell_t *sh, int argc, char **argv) {
     sh_stat_t st; /* not a directory: a file or a device is listed as itself */
     sh_stat(path, &st);
     if (!st.exists) {
-      v_printf("ls: %s: no such file or directory\r\n", path);
+      v_eprintf("ls: %s: no such file or directory\r\n", path);
       return 1;
     }
     const char *base = path;
@@ -1560,7 +1574,7 @@ static int cmd_ls(shell_t *sh, int argc, char **argv) {
 
 static int cmd_cat(shell_t *sh, int argc, char **argv) {
   if (argc < 2) {
-    v_printf("usage: cat <file>\r\n");
+    v_eprintf("usage: cat <file>\r\n");
     return 1;
   }
   sh_file_t f;
@@ -1590,7 +1604,7 @@ static int cmd_cd(shell_t *sh, int argc, char **argv) {
   if (sh_diropen(path, &d) < 0) {
     sh_stat_t st;
     sh_stat(path, &st);
-    v_printf("cd: %s: %s\r\n", path,
+    v_eprintf("cd: %s: %s\r\n", path,
              st.exists ? "not a directory" : "no such directory");
     return 1;
   }
@@ -1608,7 +1622,7 @@ static int cmd_pwd(shell_t *sh, int argc, char **argv) {
 
 static int cmd_stat(shell_t *sh, int argc, char **argv) {
   if (argc < 2) {
-    v_printf("usage: stat <path>\r\n");
+    v_eprintf("usage: stat <path>\r\n");
     return 1;
   }
   char path[CMD_MAX_LEN];
@@ -1617,7 +1631,7 @@ static int cmd_stat(shell_t *sh, int argc, char **argv) {
   sh_stat_t st;
   sh_stat(path, &st);
   if (!st.exists) {
-    v_printf("stat: %s: no such file or directory\r\n", path);
+    v_eprintf("stat: %s: no such file or directory\r\n", path);
     return 1;
   }
   /* FAT packs the date and time: (fdate << 16) | ftime, fdate = year-1980:7
@@ -1652,7 +1666,7 @@ static int cmd_head(shell_t *sh, int argc, char **argv) {
   long want;
   int a = opt_n(argc, argv, &want);
   if (!a) {
-    v_printf("usage: head [-n N] <file>\r\n");
+    v_eprintf("usage: head [-n N] <file>\r\n");
     return 1;
   }
   sh_file_t f;
@@ -1680,13 +1694,13 @@ static int cmd_head(shell_t *sh, int argc, char **argv) {
 /* Offset, sixteen bytes in hex, the same as text: hexdump -C's layout. */
 static int cmd_hexdump(shell_t *sh, int argc, char **argv) {
   if (argc < 2) {
-    v_printf("usage: hexdump <file> [offset] [len]\r\n");
+    v_eprintf("usage: hexdump <file> [offset] [len]\r\n");
     return 1;
   }
   long off = argc > 2 ? sh_num(argv[2]) : 0;
   long len = argc > 3 ? sh_num(argv[3]) : 256;
   if (off < 0 || len < 0) {
-    v_printf("hexdump: offset and len are numbers (0x for hex)\r\n");
+    v_eprintf("hexdump: offset and len are numbers (0x for hex)\r\n");
     return 1;
   }
   sh_file_t f;
@@ -1732,7 +1746,7 @@ static int cmd_hexdump(shell_t *sh, int argc, char **argv) {
 
 static int cmd_touch(shell_t *sh, int argc, char **argv) {
   if (argc < 2) {
-    v_printf("usage: touch <file>\r\n");
+    v_eprintf("usage: touch <file>\r\n");
     return 1;
   }
   sh_file_t f;
@@ -1745,7 +1759,7 @@ static int cmd_touch(shell_t *sh, int argc, char **argv) {
 /* Append argv[2..] as one line -- to a file, or to a device (/dev/console). */
 static int cmd_write(shell_t *sh, int argc, char **argv) {
   if (argc < 3) {
-    v_printf("usage: write <file> <text...>\r\n");
+    v_eprintf("usage: write <file> <text...>\r\n");
     return 1;
   }
   sh_file_t f;
@@ -1764,7 +1778,7 @@ static int cmd_write(shell_t *sh, int argc, char **argv) {
   int w = sh_fwrite(&f, line, (uint32_t)o);
   sh_fclose(&f);
   if (w != o) {
-    v_printf("write: %s: %s\r\n", argv[1],
+    v_eprintf("write: %s: %s\r\n", argv[1],
              f.dev ? "not writable" : "write failed");
     return 1;
   }
@@ -1774,7 +1788,7 @@ static int cmd_write(shell_t *sh, int argc, char **argv) {
 /* Between the card and devices either way: cp /dev/kmsg boot.log. */
 static int cmd_cp(shell_t *sh, int argc, char **argv) {
   if (argc < 3) {
-    v_printf("usage: cp <src> <dst>\r\n");
+    v_eprintf("usage: cp <src> <dst>\r\n");
     return 1;
   }
   char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
@@ -1782,7 +1796,7 @@ static int cmd_cp(shell_t *sh, int argc, char **argv) {
       sh_arg_path(sh, "cp", argv[2], dst, sizeof dst))
     return 1;
   if (v_strcmp(src, dst) == 0) {
-    v_printf("cp: %s and %s are the same file\r\n", argv[1], argv[2]);
+    v_eprintf("cp: %s and %s are the same file\r\n", argv[1], argv[2]);
     return 1;
   }
   sh_file_t in, out;
@@ -1801,7 +1815,7 @@ static int cmd_cp(shell_t *sh, int argc, char **argv) {
   int n, rc = 0;
   while ((n = sh_fread(&in, buf, sizeof buf)) > 0) {
     if (sh_fwrite(&out, buf, (uint32_t)n) != n) {
-      v_printf("cp: %s: write failed\r\n", dst);
+      v_eprintf("cp: %s: write failed\r\n", dst);
       rc = 1;
       break;
     }
@@ -1844,13 +1858,13 @@ static int cmd_mount(shell_t *sh, int argc, char **argv) {
 static int sh_ro(const char *cmd, const char *path) {
   if (sh_where(path) == SH_MNT)
     return 0;
-  v_printf("%s: %s: read-only file system\r\n", cmd, path);
+  v_eprintf("%s: %s: read-only file system\r\n", cmd, path);
   return 1;
 }
 
 static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
   if (argc < 2) {
-    v_printf("usage: mkdir <dir>\r\n");
+    v_eprintf("usage: mkdir <dir>\r\n");
     return 1;
   }
   char path[CMD_MAX_LEN];
@@ -1867,7 +1881,7 @@ static int cmd_mkdir(shell_t *sh, int argc, char **argv) {
 
 static int cmd_rm(shell_t *sh, int argc, char **argv) {
   if (argc < 2) {
-    v_printf("usage: rm <path>\r\n");
+    v_eprintf("usage: rm <path>\r\n");
     return 1;
   }
   char path[CMD_MAX_LEN];
@@ -1877,13 +1891,13 @@ static int cmd_rm(shell_t *sh, int argc, char **argv) {
   sh_stat_t st;
   sh_stat(path, &st);
   if (!st.exists) {
-    v_printf("rm: %s: no such file or directory\r\n", path);
+    v_eprintf("rm: %s: no such file or directory\r\n", path);
     return 1;
   }
   int rc = v_vfs_remove(path, SHELL_IO_TICKS);
   if (rc < 0) {
     if (rc == -7 && st.is_dir) /* FatFs removes a directory only empty */
-      v_printf("rm: %s: directory not empty\r\n", path);
+      v_eprintf("rm: %s: directory not empty\r\n", path);
     else
       sh_fail("rm", path, rc);
     return 1;
@@ -1899,7 +1913,7 @@ static int cmd_tail(shell_t *sh, int argc, char **argv) {
   long want;
   int a = opt_n(argc, argv, &want);
   if (!a) {
-    v_printf("usage: tail [-n N] <file>\r\n");
+    v_eprintf("usage: tail [-n N] <file>\r\n");
     return 1;
   }
   sh_file_t f;
@@ -1907,7 +1921,7 @@ static int cmd_tail(shell_t *sh, int argc, char **argv) {
     return 1;
   if (f.dev) {
     sh_fclose(&f);
-    v_printf("tail: %s: a device has no end to read back from (cat or head)\r\n",
+    v_eprintf("tail: %s: a device has no end to read back from (cat or head)\r\n",
              argv[a]);
     return 1;
   }
@@ -1950,7 +1964,7 @@ static int cmd_tail(shell_t *sh, int argc, char **argv) {
    name; otherwise to `dst`. Same drive only (FatFs renames, never copies). */
 static int cmd_mv(shell_t *sh, int argc, char **argv) {
   if (argc < 3) {
-    v_printf("usage: mv <src> <dst>\r\n");
+    v_eprintf("usage: mv <src> <dst>\r\n");
     return 1;
   }
   char src[CMD_MAX_LEN], dst[CMD_MAX_LEN];
@@ -1966,7 +1980,7 @@ static int cmd_mv(shell_t *sh, int argc, char **argv) {
         base = q + 1;
     int n = (int)v_strlen(dst);
     if (n + 1 + (int)v_strlen(base) >= (int)sizeof dst) {
-      v_printf("mv: %s/%s: path too long\r\n", argv[2], base);
+      v_eprintf("mv: %s/%s: path too long\r\n", argv[2], base);
       return 1;
     }
     if (dst[n - 1] != '/')
@@ -2016,7 +2030,7 @@ static int cmd_df(shell_t *sh, int argc, char **argv) {
     /* the first call after a mount may scan the whole FAT: allow for it */
     int rc = v_vfs_space(n, &sp, MS_TO_TICKS(30000));
     if (rc < 0) {
-      v_printf("  df: %s: error %d\r\n", n, rc);
+      v_eprintf("  df: %s: error %d\r\n", n, rc);
       continue;
     }
     uint32_t used = sp.total_kib - sp.free_kib;
@@ -2035,7 +2049,7 @@ static int cmd_df(shell_t *sh, int argc, char **argv) {
     v_printf("%s  %s\r\n", row, n);
   }
   if (!any)
-    v_printf("df: nothing mounted (no card?)\r\n");
+    v_eprintf("df: nothing mounted (no card?)\r\n");
   return 0;
 }
 #endif /* VAIOS_MODULE_VFS */
@@ -2219,7 +2233,9 @@ static const Command_t *priv_nth(const Command_t *table, int count, int n) {
 typedef struct {
   int16_t index;          /* which privileged command */
   uint8_t capture;        /* its output is redirected: write to /dev/capture */
-  char line[CMD_MAX_LEN]; /* the arguments, re-joined: a copy, not a pointer */
+  uint8_t argc;
+  char line[CMD_MAX_LEN]; /* the arguments, each ended by a NUL: as split,
+                             so a quoted one stays one -- a copy, not pointers */
   char cwd[CMD_MAX_LEN]; /* where the user is: relative paths resolve here */
 } shell_req_t;
 
@@ -2237,7 +2253,7 @@ static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
   if (sh->done_fd < 0)
     sh->done_fd = v_queue_open("shell.done", V_Q_RD);
   if (sh->req_fd < 0 || sh->done_fd < 0) {
-    v_printf("%s: needs the privileged helper (shell_helper_run)\r\n",
+    v_eprintf("%s: needs the privileged helper (shell_helper_run)\r\n",
              argv[0]);
     return 1;
   }
@@ -2246,13 +2262,12 @@ static int via_helper(shell_t *sh, const Command_t *c, int argc, char **argv) {
   r.capture = sh->capture;
   sh_copy(r.cwd, sh->cwd, CMD_MAX_LEN);
   int n = 0;
-  for (int a = 0; a < argc; a++) {
-    if (a && n < CMD_MAX_LEN - 1)
-      r.line[n++] = ' ';
+  r.argc = 0;
+  for (int a = 0; a < argc && n < CMD_MAX_LEN - 1; a++, r.argc++) {
     for (const char *p = argv[a]; *p && n < CMD_MAX_LEN - 1; p++)
       r.line[n++] = *p;
+    r.line[n++] = '\0'; /* the loop's bound leaves room for it */
   }
-  r.line[n] = '\0';
   int rc = 1;
   if (v_queue_send(sh->req_fd, &r, V_WAIT_FOREVER) != VA_PASS)
     return 1;
@@ -2295,7 +2310,11 @@ void shell_helper_run(void *args) {
     const Command_t *c =
         priv_nth(cfg ? cfg->cmds : NULL, cfg ? cfg->count : 0, r.index);
     char *argv[SHELL_MAX_ARGV];
-    int argc = shell_tokenize(r.line, argv, SHELL_MAX_ARGV);
+    int argc = 0; /* the words as the shell split them, NUL by NUL */
+    for (char *w = r.line;
+         argc < r.argc && argc < SHELL_MAX_ARGV && w < r.line + CMD_MAX_LEN;
+         w += v_strlen(w) + 1)
+      argv[argc++] = w;
     /* A redirected command's output goes where the shell's would: point our
        fd 1 at the capture device for the call, as the shell did its own. */
     int cap = -1, saved = -1;
@@ -2358,7 +2377,7 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
   if (sh_arg_path(sh, "vsh", target, path, sizeof path))
     return 1;
   if (v_strcmp(path, "/dev/capture") == 0) {
-    v_printf("vsh: /dev/capture: is what > itself writes through\r\n");
+    v_eprintf("vsh: /dev/capture: is what > itself writes through\r\n");
     return 1;
   }
   sh_file_t out;
@@ -2373,7 +2392,7 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
   int cap = v_file_open("/dev/capture", 0);
   int saved = v_file_dup(1);
   if (cap < 0 || saved < 0 || v_file_dup2(cap, 1) < 0) {
-    v_printf("vsh: cannot redirect (no free descriptor)\r\n");
+    v_eprintf("vsh: cannot redirect (no free descriptor)\r\n");
     if (cap >= 0)
       v_file_close(cap);
     if (saved >= 0)
@@ -2392,7 +2411,7 @@ static int run_redirected(shell_t *sh, const Command_t *c, int argc,
   v_file_dup2(saved, 1); /* the console again, before anything is said */
   v_file_close(saved);
   if (sh->cap_err) {
-    v_printf("vsh: %s: write failed\r\n", path);
+    v_eprintf("vsh: %s: write failed\r\n", path);
     rc = 1;
   }
   v_file_close(cap);
@@ -2407,7 +2426,7 @@ int shell_exec(shell_t *sh, char *line) {
     return 0;
   const Command_t *c = shell_find_command(sh, argv[0]);
   if (!c) {
-    v_printf("%s: not found\r\n", argv[0]);
+    v_eprintf("%s: not found\r\n", argv[0]);
     return -1;
   }
   int rc;
@@ -2417,7 +2436,7 @@ int shell_exec(shell_t *sh, char *line) {
       redir = a;
   if (redir) {
     if (redir != argc - 2) {
-      v_printf("vsh: > and >> take one file, last: cmd ... > file\r\n");
+      v_eprintf("vsh: > and >> take one file, last: cmd ... > file\r\n");
       return 1;
     }
     rc = run_redirected(sh, c, redir, argv, argv[redir + 1],
@@ -2425,7 +2444,7 @@ int shell_exec(shell_t *sh, char *line) {
   } else
     rc = run_one(sh, c, argc, argv);
   if (rc != 0 && rc != SHELL_INTERRUPTED)
-    v_printf("%s: exit %d\r\n", argv[0], rc);
+    v_eprintf("%s: exit %d\r\n", argv[0], rc);
   return rc;
 }
 
