@@ -739,6 +739,31 @@ static void cell(char **p, char *end, const char *s, int w, int right) {
   **p = '\0';
 }
 
+/* KiB as a person reads it: 512K, 3.4M, 29.7G. */
+static void human(char *out, int cap, uint32_t kib) {
+  static const char units[] = "KMGT";
+  int u = 0;
+  uint32_t whole = kib, tenth = 0;
+  while (whole >= 1024 && u < 3) {
+    tenth = (whole % 1024u) * 10u / 1024u;
+    whole /= 1024u;
+    u++;
+  }
+  if (u == 0 || whole >= 100)
+    print_fmt_buf(out, (uint32_t)cap, "%d%c", (int)whole, units[u]);
+  else
+    print_fmt_buf(out, (uint32_t)cap, "%d.%d%c", (int)whole, (int)tenth,
+                  units[u]);
+}
+
+/* Bytes as ls -h shows them: 466, then 1.2K, 32M. */
+static void human_bytes(char *out, int cap, uint32_t bytes) {
+  if (bytes < 1024u)
+    print_fmt_buf(out, (uint32_t)cap, "%d", (int)bytes);
+  else
+    human(out, cap, bytes / 1024u);
+}
+
 static int cmd_ps(shell_t *sh, int argc, char **argv) {
   (void)sh;
   (void)argc;
@@ -1538,6 +1563,17 @@ static int sh_open(shell_t *sh, const char *cmd, const char *arg, int flags,
   return rc;
 }
 
+/* One row of a listing, as ls -sh lays it out: the size right-aligned in its
+   own column, then the name -- so a long name never pushes anything out of
+   line. A directory (named with its '/') and a device have no size: "-". */
+static void ls_row(const char *name, int is_dir, int sized, uint32_t size) {
+  char sz[12], row[16], *p = row;
+  if (sized)
+    human_bytes(sz, sizeof sz, size);
+  cell(&p, row + sizeof row - 1, sized ? sz : "-", 7, 1);
+  v_printf("%s  %s%s\r\n", row, name, is_dir ? "/" : "");
+}
+
 static int cmd_ls(shell_t *sh, int argc, char **argv) {
   char path[CMD_MAX_LEN];
   if (sh_arg_path(sh, "ls", argc > 1 ? argv[1] : ".", path, sizeof path))
@@ -1555,14 +1591,13 @@ static int cmd_ls(shell_t *sh, int argc, char **argv) {
     for (const char *q = base; *q; q++)
       if (*q == '/')
         base = q + 1;
-    v_printf(st.is_dev ? "  %s\r\n" : "  %s  %d\r\n", base, (int)st.size);
+    ls_row(base, 0, !st.is_dev, st.size);
     return 0;
   }
   vfs_dirent_t e;
   int rc = 0;
   while ((r = sh_dirnext(&d, &e)) > 0) {
-    v_printf(e.is_dir ? "  %s/\r\n" : r == 2 ? "  %s\r\n" : "  %s  %d\r\n",
-             e.name, (int)e.size);
+    ls_row(e.name, e.is_dir, !e.is_dir && r != 2, e.size);
     if (shell_interrupted(sh)) {
       rc = SHELL_INTERRUPTED;
       break;
@@ -1995,22 +2030,6 @@ static int cmd_mv(shell_t *sh, int argc, char **argv) {
   return 0;
 }
 
-/* KiB as a person reads it: 512K, 3.4M, 29.7G. */
-static void human(char *out, int cap, uint32_t kib) {
-  static const char units[] = "KMGT";
-  int u = 0;
-  uint32_t whole = kib, tenth = 0;
-  while (whole >= 1024 && u < 3) {
-    tenth = (whole % 1024u) * 10u / 1024u;
-    whole /= 1024u;
-    u++;
-  }
-  if (u == 0 || whole >= 100)
-    print_fmt_buf(out, (uint32_t)cap, "%d%c", (int)whole, units[u]);
-  else
-    print_fmt_buf(out, (uint32_t)cap, "%d.%d%c", (int)whole, (int)tenth,
-                  units[u]);
-}
 
 /* Each mounted filesystem, as df -h shows them. */
 static int cmd_df(shell_t *sh, int argc, char **argv) {

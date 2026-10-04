@@ -325,9 +325,22 @@ static void test_tree_and_mounts(void) {
   shell_reset();
   stub_fs_reset();
   TEST_ASSERT_EQ(run("ls /"), 0);
-  TEST_ASSERT(out_is("  dev/\r\n  mnt/\r\n"));
+  TEST_ASSERT(out_is("      -  dev/\r\n      -  mnt/\r\n"));
   TEST_ASSERT_EQ(run("ls /mnt"), 0);
-  TEST_ASSERT(out_is("  sd/\r\n"));
+  TEST_ASSERT(out_is("      -  sd/\r\n"));
+  /* a listing lines up: size right-aligned in its column, as ls -sh puts it,
+     then the name -- however long the names */
+  static char big[2000];
+  stub_fs_put("0:/longname.txt", "x", 1); /* 12: the host has no LFN */
+  stub_fs_put("0:/BIG.BIN", big, 2000);
+  stub_fs_put("0:/DATA.TXT", big, 466);
+  TEST_ASSERT_EQ(run("ls /mnt/sd"), 0);
+  TEST_ASSERT(strstr(g_stub_out, "      -  LOGS/\r\n") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "\n      1  longname.txt\r\n") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "\n     1K  BIG.BIN\r\n") != NULL);
+  TEST_ASSERT(strstr(g_stub_out, "\n    466  DATA.TXT\r\n") != NULL);
+  TEST_ASSERT_EQ(run("ls /mnt/sd/DATA.TXT"), 0); /* a file: listed as itself */
+  TEST_ASSERT(out_is("    466  DATA.TXT\r\n"));
   TEST_ASSERT_EQ(run("stat /mnt/sd"), 0); /* a mount point is a directory */
   TEST_ASSERT(strstr(g_stub_out, "type      directory") != NULL);
   TEST_ASSERT_EQ(run("mount"), 0);
@@ -634,15 +647,15 @@ static void test_dev_tree(void) {
   TEST_ASSERT_EQ(run("ls /"), 0);
   TEST_ASSERT(strstr(g_stub_out, "  dev/\r\n") != NULL);
 #if !VAIOS_MODULE_VFS /* no card: the root is devfs's alone */
-  TEST_ASSERT(out_is("  dev/\r\n"));
+  TEST_ASSERT(out_is("      -  dev/\r\n"));
   TEST_ASSERT_EQ(run("mount"), 0);
   TEST_ASSERT(out_is("devfs on /dev type devfs\r\n"));
   TEST_ASSERT_EQ(run("ls /mnt"), 1);
 #endif
   TEST_ASSERT_EQ(run("ls /dev"), 0);
-  TEST_ASSERT(out_is("  console\r\n  kmsg\r\n  capture\r\n"));
+  TEST_ASSERT(out_is("      -  console\r\n      -  kmsg\r\n      -  capture\r\n"));
   TEST_ASSERT_EQ(run("ls /dev/kmsg"), 0); /* a device lists as itself */
-  TEST_ASSERT(out_is("  kmsg\r\n"));
+  TEST_ASSERT(out_is("      -  kmsg\r\n"));
   TEST_ASSERT_EQ(run("ls /dev/nope"), 1);
   TEST_ASSERT(strstr(g_stub_out, "no such file or directory") != NULL);
 
