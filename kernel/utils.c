@@ -26,7 +26,6 @@ void v_log_flush(void);
 
 // Double buffering for log messages
 #if LOGGING_ENABLED == 1
-// #error "Logging is enabled"
 static uint8_t log_buffer_storage1[LOG_BUFFER_STORAGE_SIZE];
 static uint8_t log_buffer_storage2[LOG_BUFFER_STORAGE_SIZE];
 static uint8_t *log_buffer_storage_current_writing = log_buffer_storage1;
@@ -231,6 +230,15 @@ static void v_panic_vprintf(const char *fmt, va_list args) {
     }
 
     p++;
+    // A format string ending in a bare '%' has nothing after it. Without this,
+    // the specifier switch falls to its default arm, emits '%' and then *p --
+    // which is the NUL -- and the loop's own p++ steps PAST the terminator, so
+    // the next iteration reads whatever follows the string. Emit the '%' and
+    // stop, which is also what a hosted printf does with a trailing one.
+    if (*p == '\0') {
+      PANIC_PUT('%');
+      break;
+    }
     // Simple hex and unsigned handling for panic
     if (*p == 'u' || *p == 'x' || *p == 'd') {
       if (*p == 'u') {
@@ -320,6 +328,15 @@ void vaprint_fmt(const char *fmt, va_list args) {
     }
 
     p++; // skip '%'
+    // A format string ending in a bare '%' has nothing after it. Without this,
+    // the specifier switch falls to its default arm, emits '%' and then *p --
+    // which is the NUL -- and the loop's own p++ steps PAST the terminator, so
+    // the next iteration reads whatever follows the string. Emit the '%' and
+    // stop, which is also what a hosted printf does with a trailing one.
+    if (*p == '\0') {
+      PUT_CHAR_BUF('%');
+      break;
+    }
     int width = 0;
     int zero_pad = 0;
 
@@ -500,6 +517,16 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
     }
 
     p++; // skip '%'
+    // A format string ending in a bare '%' has nothing after it. Without this,
+    // the specifier switch falls to its default arm, emits '%' and then *p --
+    // which is the NUL -- and the loop's own p++ steps PAST the terminator, so
+    // the next iteration reads whatever follows the string. Emit the '%' and
+    // stop, which is also what a hosted printf does with a trailing one.
+    if (*p == '\0') {
+      if (pos < out_size - 1)
+        out[pos++] = '%';
+      break;
+    }
     int width = 0;
     int zero_pad = 0;
 
