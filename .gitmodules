@@ -1,7 +1,13 @@
 [submodule "extern/NavHAL"]
 	path = extern/NavHAL
 	url = https://github.com/ragnar-vallhala/NavHAL.git
-	branch = main
+	# stable, not main, for the reason NavHAL's own README gives: main carries
+	# work that has passed CI but has not been released. This said `main` while
+	# every pin it has ever carried was a TAG ON STABLE -- v0.3.9 here -- so
+	# `submodule update --remote` would have walked it onto unreleased work
+	# without anything saying so. That is exactly how vayu's pin of THIS
+	# repository came to sit 228 commits behind its own stable branch.
+	branch = stable
 [submodule "extern/vtest"]
 	path = extern/vtest
 	url = https://github.com/ragnar-vallhala/vtest.git
