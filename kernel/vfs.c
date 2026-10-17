@@ -880,7 +880,7 @@ int v_vfs_rename(const char *from, const char *to, uint32_t ticks) {
   if (!to)
     return V_VFS_EINVAL;
   uint32_t n = 0;
-  while (to[n] && n < VAIOS_VFS_IO_BUF)
+  while (n < VAIOS_VFS_IO_BUF && to[n])
     n++;
   v_vfs_desc_t d = {.op = VFS_OP_RENAME, .path = from, .data = to,
                     .len = n + 1};

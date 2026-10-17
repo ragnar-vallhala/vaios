@@ -102,7 +102,7 @@ static void sh_copy(char *dst, const char *src, int cap) {
   int i = 0;
   if (cap <= 0)
     return;
-  while (src[i] && i < cap - 1) {
+  while (i < cap - 1 && src[i]) {
     dst[i] = src[i];
     i++;
   }
@@ -184,9 +184,11 @@ static long sh_num(const char *s) {
                                        : 99;
     if (d >= base)
       return -1;
-    v = v * base + d;
-    if (v > 0x7FFFFFFFL)
+    /* Checked before the multiply: long is 32 bits on the target, so a check
+       after it could never fire -- the value would already have wrapped. */
+    if (v > (0x7FFFFFFFL - d) / base)
       return -1;
+    v = v * base + d;
   }
   return v;
 }
@@ -447,7 +449,9 @@ int shell_poll(shell_t *sh, char *out, int cap) {
       shell_feed(sh, rx[i]);
   }
   while (in_pop(sh, &b)) {
-    char c = (char)b;
+    /* Unsigned, so "printable" below means 0x20..0x7E whatever char's
+       signedness: bytes from 0x80 up are never taken as text. */
+    unsigned char c = (unsigned char)b;
 
     /* The LF of a CRLF pair: the CR already submitted the line. Swallowed
        here, before anything else sees it, or it reads as an empty line and
