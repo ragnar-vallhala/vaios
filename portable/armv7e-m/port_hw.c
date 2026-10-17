@@ -611,6 +611,14 @@ int v_port_hw_sdio_card_init(void) {
  * region 7 (so the guard still wins at the base). Regions 5,6 stay free. */
 #define VAIOS_MPU_USER_REGION 4u
 
+/* What an encoder leaves in `out` when it cannot encode: the region, disabled
+ * (RBAR VALID selects it, RASR 0 turns it off), so the context switch can write
+ * every task's pairs without checking which ones are real. */
+static inline void v_mpu_region_off(uint32_t region, uint32_t out[2]) {
+  out[0] = (1u << 4) | region; /* RBAR: VALID | REGION */
+  out[1] = 0u;                 /* RASR: ENABLE clear */
+}
+
 #if defined(NAVHAL) && VAIOS_MPU_ENABLE
 /* hal_mpu_size_t encodes SIZE as log2(bytes) - 1. */
 static inline hal_mpu_size_t v_mpu_size_enum(uint32_t bytes) {
@@ -703,6 +711,7 @@ void v_port_mpu_init(void) {
 }
 
 int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
+  v_mpu_region_off(VAIOS_MPU_GUARD_REGION, out);
   if (!hal_mpu_present())
     return -1;
   hal_mpu_region_t r = {
@@ -730,6 +739,7 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
  * power of two: then base is that boundary). W^X: not executable, so code can't
  * run from stack/heap. */
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  v_mpu_region_off(VAIOS_MPU_USER_REGION, out);
   if (!hal_mpu_present())
     return -1;
   uint32_t region =
@@ -768,14 +778,14 @@ void v_port_mpu_init(void) {}
 int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)base;
   (void)size;
-  (void)out;
+  v_mpu_region_off(VAIOS_MPU_GUARD_REGION, out);
   return -1;
 }
 #if VAIOS_MPU_USER_SEPARATION
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)base;
   (void)size;
-  (void)out;
+  v_mpu_region_off(VAIOS_MPU_USER_REGION, out);
   return -1;
 }
 #endif

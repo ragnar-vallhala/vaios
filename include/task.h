@@ -52,6 +52,11 @@ typedef struct v_wnode {
 } v_wnode;
 #endif
 
+// MPU regions a task carries (see mpu_regs): its block region with user
+// separation, its stack guard with the guard on.
+#define VAIOS_TASK_MPU_REGIONS                                                 \
+  ((VAIOS_MPU_USER_SEPARATION ? 1 : 0) + (VAIOS_MPU_STACK_GUARD ? 1 : 0))
+
 typedef struct Task_Control_Block {
   uint32_t *sp;           // Current stack pointer (PSP)
   uint32_t *mem_block;    // Base of allocated stack memory
@@ -85,20 +90,17 @@ typedef struct Task_Control_Block {
 #if VAIOS_MODULE_PERF
   v_perf_task_t perf; // Per-task perf counters (see perf.h)
 #endif
-#if VAIOS_MPU_STACK_GUARD
-  // Pre-encoded MPU stack-guard region (RBAR/RASR word pair), applied on
-  // context switch. Opaque here (mirrors NavHAL's hal_mpu_encoded_t) so task.h
-  // stays architecture-independent. Valid only when mpu_guard_valid != 0.
-  uint32_t mpu_guard[2];
-  uint8_t mpu_guard_valid;
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+  // This task's MPU regions, pre-encoded as RBAR/RASR word pairs (opaque here,
+  // mirroring NavHAL's hal_mpu_encoded_t, so task.h stays architecture-
+  // independent), written on every switch-in in one burst: first the
+  // RW-unprivileged region over the task's block (user separation), then the
+  // no-access stack guard at its base, which wins on the overlap. A region that
+  // could not be encoded is stored disabled, never skipped, so the switch writes
+  // a fixed count with no branches.
+  uint32_t mpu_regs[2 * VAIOS_TASK_MPU_REGIONS];
 #endif
 #if VAIOS_MPU_USER_SEPARATION
-  // Pre-encoded per-task RW-unprivileged region over the WHOLE block, applied on
-  // context switch alongside the guard. Grants the running (unprivileged) task
-  // access to only its own stack+heap; the higher-numbered guard still wins at
-  // the base. Valid only when mpu_block_valid != 0.
-  uint32_t mpu_block[2];
-  uint8_t mpu_block_valid;
   // Privilege of this task's thread-mode execution: 0 = unprivileged (the
   // default for user tasks), 1 = privileged. Applied to CONTROL.nPRIV on
   // switch-in. The idle task is privileged (it does kernel housekeeping).

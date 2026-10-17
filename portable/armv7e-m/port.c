@@ -2,6 +2,7 @@
 #include "syscall.h"
 #include "task.h"
 #include "utils.h"
+#include <stddef.h>
 #include <stdint.h>
 
 extern void v_print(const char *str);
@@ -377,7 +378,36 @@ __attribute__((naked)) void PendSV_Handler(void) {
       "   dsb                                 \n"
       "   isb                                 \n"
       "   bl set_next_task                    \n"
-      "   bl v_port_apply_current_mpu         \n" /* swap task MPU regions */
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+      /* The incoming task's MPU regions, inline: its pre-encoded RBAR/RASR
+         pairs (TCB mpu_regs) in one load and one store to RBAR, RASR and their
+         A1 alias, which program both regions; then its privilege into
+         CONTROL.nPRIV; then a single barrier for both. r4-r7 are free: the
+         outgoing task's are saved and the incoming one's are loaded below. */
+      "   ldr r1, =current_task               \n"
+      "   ldr r1, [r1]                        \n"
+      "   addw r2, r1, %[regs]                \n"
+#if VAIOS_TASK_MPU_REGIONS == 2
+      "   ldmia r2, {r4-r7}                   \n"
+      "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
+      "   stmia r2, {r4-r7}                   \n" /* RBAR RASR RBAR_A1 RASR_A1 */
+#else
+      "   ldmia r2, {r4-r5}                   \n"
+      "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
+      "   stmia r2, {r4-r5}                   \n" /* RBAR RASR */
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+      "   ldrb r4, [r1, %[priv]]              \n" /* TCB privileged */
+      "   mrs r5, control                     \n"
+      "   orr r5, r5, #1                      \n" /* nPRIV: unprivileged... */
+      "   cmp r4, #0                          \n"
+      "   it ne                               \n"
+      "   bicne r5, r5, #1                    \n" /* ...unless privileged */
+      "   msr control, r5                     \n"
+#endif
+      "   dsb                                 \n"
+      "   isb                                 \n"
+#endif
 #if VAIOS_SYSCALL_SVC
       "   bl v_syscall_deliver_result         \n" /* deliver blocked syscall r0 */
 #endif
@@ -408,6 +438,12 @@ __attribute__((naked)) void PendSV_Handler(void) {
       "                                       \n"
       "   .ltorg                              \n" ::"i"(
           MAX_SYSCALL_INTERRUPT_PRIORITY)
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+      , [regs] "i"(offsetof(TCB, mpu_regs))
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+      , [priv] "i"(offsetof(TCB, privileged))
+#endif
       : "r0", "r1", "r2", "r3");
 }
 
@@ -529,21 +565,19 @@ void init_task_stack(TCB *task) {
 
   task->sp = sp;
 
-#if VAIOS_MPU_STACK_GUARD
-  // Pre-encode the no-access guard region at the stack base (lowest address).
-  // Applied on every switch to this task; a store past the bottom traps into
-  // MemManage_Handler. Encode fails cleanly (invalid) on MPU-less targets.
-  task->mpu_guard_valid =
-      (v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE,
-                                 task->mpu_guard) == 0);
-#endif
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+  // Pre-encode this task's regions, in mpu_regs order. An encoder that fails
+  // (no MPU) leaves its pair encoding the region as disabled.
+  uint32_t *r = task->mpu_regs;
 #if VAIOS_MPU_USER_SEPARATION
-  // Pre-encode the RW-unprivileged region over the whole block. Applied with the
-  // guard on switch-in; grants the (unprivileged) task access to only its own
-  // stack+heap. Base is size-aligned by task_create.
-  task->mpu_block_valid =
-      (v_port_task_region_encode(task->mem_block, task->stack_size,
-                                 task->mpu_block) == 0);
+  // RW-unprivileged over the block: the task reaches its own stack+heap only.
+  (void)v_port_task_region_encode(task->mem_block, task->stack_size, r);
+  r += 2;
+#endif
+#if VAIOS_MPU_STACK_GUARD
+  // No-access guard at the stack base: a store past the bottom traps.
+  (void)v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE, r);
+#endif
 #endif
 }
 
@@ -559,28 +593,10 @@ void v_port_apply_current_mpu(void) {
   TCB *t = current_task;
   if (!t)
     return;
-  // Assemble this task's region set into one contiguous array and program it in
-  // a single hal_mpu_apply (one barrier). Each encoded pair carries its own
-  // region number in RBAR, so order is irrelevant; the guard (region 7) wins on
-  // overlap with the block region (region 4) at the base regardless.
-  uint32_t set[4];
-  uint32_t count = 0;
-#if VAIOS_MPU_USER_SEPARATION
-  if (t->mpu_block_valid) {
-    set[count * 2] = t->mpu_block[0];
-    set[count * 2 + 1] = t->mpu_block[1];
-    count++;
-  }
-#endif
-#if VAIOS_MPU_STACK_GUARD
-  if (t->mpu_guard_valid) {
-    set[count * 2] = t->mpu_guard[0];
-    set[count * 2 + 1] = t->mpu_guard[1];
-    count++;
-  }
-#endif
-  if (count)
-    v_port_mpu_apply(set, count);
+  // The C form of PendSV's burst (see there), for load_next_task_from_isr.
+  // Each pair carries its region number in RBAR, so order is irrelevant; the
+  // guard (region 7) wins on overlap with the block region (region 4).
+  v_port_mpu_apply(t->mpu_regs, VAIOS_TASK_MPU_REGIONS);
 #if VAIOS_MPU_USER_SEPARATION
   // Set thread-mode privilege (CONTROL.nPRIV, bit 0) for the incoming task.
   // Written here in handler mode; it takes effect on exception return to thread.
