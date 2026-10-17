@@ -2,10 +2,10 @@
 # tools/renode_fault_recovery.sh — MPU fault containment + restart under Renode.
 #
 # Builds the mpu_fault_recovery image (VAIOS_MPU_FAULT_RECOVERY + _RESTART) and
-# runs it headless. Two unprivileged tasks fault on every run -- one reads
-# kernel SRAM, one overflows its stack -- and must be ended and
-# restarted VAIOS_MPU_FAULT_RESTART_MAX (3) times each, then stay ended, with
-# no panic, while an unrelated task keeps running.
+# runs it headless. Unprivileged tasks that fault on every run, one per fault
+# policy: the default (restart, cap 3), KILL, and a spawned child with RESTART
+# and a cap of 1; a PANIC child must be refused to an unprivileged parent. No
+# panic, and an unrelated task keeps running.
 #
 # Exit: 0 = pass (or skipped when the toolchain/renode is absent), 1 = fail.
 set -u
@@ -20,30 +20,34 @@ done
 
 export srctree="$ROOT_DIR/extern/NavHAL"
 
-echo "=== building mpu_fault_recovery (NAVHAL) ==="
-if ! cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_CONSOLE_DMA=OFF \
-       -DVAIOS_EXAMPLE=MPU_FAULT_RECOVERY >/tmp/sitl_fault_cfg.log 2>&1 \
-   || ! cmake --build "$BUILD_DIR" -j >/tmp/sitl_fault_bld.log 2>&1; then
-  echo "FAIL: build (see /tmp/sitl_fault_bld.log)"; tail -15 /tmp/sitl_fault_bld.log
-  exit 1
-fi
+# build_and_run <build dir> [extra cmake args...]: sets $clean to the UART.
+build_and_run() {
+  local dir="$1"; shift
+  echo "=== building mpu_fault_recovery (NAVHAL) $* ==="
+  if ! cmake -S "$ROOT_DIR" -B "$dir" -DNAVHAL=ON -DEXAMPLES=ON -DVAIOS_CONSOLE_DMA=OFF \
+         -DVAIOS_EXAMPLE=MPU_FAULT_RECOVERY "$@" >/tmp/sitl_fault_cfg.log 2>&1 \
+     || ! cmake --build "$dir" -j >/tmp/sitl_fault_bld.log 2>&1; then
+    echo "FAIL: build (see /tmp/sitl_fault_bld.log)"; tail -15 /tmp/sitl_fault_bld.log
+    exit 1
+  fi
+  local log; log="$(mktemp)"
+  for attempt in 1 2 3; do
+    : > "$log"
+    timeout 120s renode --console --disable-xwt \
+        -e "\$bin=@$dir/examples/main" \
+        -e '$run="4.0"' \
+        -e "include @$SCRIPT_DIR/renode.resc" </dev/null >"$log" 2>&1 || true
+    grep -aq '\[fr\]' "$log" && break
+    echo "  renode produced no on-target output (attempt $attempt); retrying ..."
+  done
+  clean="$(sed -E 's/.*usart2: \[[^]]*\] ?//; s/\x1b\[[0-9;]*m//g' "$log")"
+  echo "---- captured UART ----"
+  echo "$clean" | grep -aE '\[fr\] (esc|over|child|panic|faults|DONE|BUG)|contained|PANIC|MPU fault|Halt' || true
+  echo "-----------------------"
+  rm -f "$log"
+}
 
-log="$(mktemp)"
-for attempt in 1 2 3; do
-  : > "$log"
-  timeout 120s renode --console --disable-xwt \
-      -e "\$bin=@$BUILD_DIR/examples/main" \
-      -e '$run="4.0"' \
-      -e "include @$SCRIPT_DIR/renode.resc" </dev/null >"$log" 2>&1 || true
-  grep -aq '\[fr\]' "$log" && break
-  echo "  renode produced no on-target output (attempt $attempt); retrying ..."
-done
-
-clean="$(sed -E 's/.*usart2: \[[^]]*\] ?//; s/\x1b\[[0-9;]*m//g' "$log")"
-echo "---- captured UART ----"
-echo "$clean" | grep -aE '\[fr\] (esc|over|faults|DONE|BUG)|contained|PANIC|Halt' || true
-echo "-----------------------"
-rm -f "$log"
+build_and_run "$BUILD_DIR"
 
 fail=0
 check() { # $1 = description, $2 = 0/1 result
@@ -51,13 +55,22 @@ check() { # $1 = description, $2 = 0/1 result
 }
 count() { echo "$clean" | grep -ac "$1"; }
 
-check "escaper ran 4 times (1 + 3 restarts)"  "$([ "$(count '\[fr\] escaper start')" -eq 4 ] && echo 1 || echo 0)"
-check "overflow ran 4 times (1 + 3 restarts)" "$([ "$(count '\[fr\] overflow start')" -eq 4 ] && echo 1 || echo 0)"
-check "kernel counted 8 faults, 6 restarts"   "$(echo "$clean" | grep -aq '\[fr\] faults=8 restarts=6' && echo 1 || echo 0)"
+check "default policy: escaper ran 4 times (1 + 3 restarts)" "$([ "$(count '\[fr\] escaper start')" -eq 4 ] && echo 1 || echo 0)"
+check "KILL: overflow ran once"                "$([ "$(count '\[fr\] overflow start')" -eq 1 ] && echo 1 || echo 0)"
+check "spawned RESTART cap 1: child ran twice" "$([ "$(count '\[fr\] child start')" -eq 2 ] && echo 1 || echo 0)"
+check "PANIC child refused to an unprivileged parent" "$(echo "$clean" | grep -aq '\[fr\] panic child refused' && echo 1 || echo 0)"
+check "kernel counted 7 faults, 4 restarts"   "$(echo "$clean" | grep -aq '\[fr\] faults=7 restarts=4' && echo 1 || echo 0)"
 check "survivor still running after the report" \
   "$(echo "$clean" | sed -n '/\[fr\] DONE/,$p' | grep -aq 'survivor tick' && echo 1 || echo 0)"
 check "no fault escaped the MPU"              "$(echo "$clean" | grep -aq 'BUG:' && echo 0 || echo 1)"
 check "no kernel panic"                       "$(echo "$clean" | grep -aqE 'KERNEL PANIC|System Halted' && echo 0 || echo 1)"
+
+# The PANIC policy: escaper's first fault must halt the system, unrecovered.
+build_and_run "${BUILD_DIR}_panic" -DFR_PANIC=1
+check "PANIC policy: escaper's first fault halts" \
+  "$(echo "$clean" | grep -aqE 'KERNEL PANIC' && echo "$clean" | grep -aq 'MPU fault in task' && echo 1 || echo 0)"
+check "PANIC policy: escaper not restarted"     "$([ "$(count '\[fr\] escaper start')" -eq 1 ] && echo 1 || echo 0)"
+check "PANIC policy: monitor never reported"    "$(echo "$clean" | grep -aq '\[fr\] DONE' && echo 0 || echo 1)"
 
 if [ "$fail" -eq 0 ]; then
   echo "=== SITL fault recovery: ALL PASS ==="

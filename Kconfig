@@ -324,33 +324,39 @@ config VAIOS_MPU_USER_SEPARATION
       task can no longer reach current_task directly. The MPU region set and the
       nPRIV flip itself land in follow-up commits. Off until complete.
 config VAIOS_MPU_FAULT_RECOVERY
-    bool "Contain MPU faults in unprivileged tasks (kill instead of panic)"
+    bool "Contain MPU faults in unprivileged tasks (per-task policy)"
     depends on VAIOS_MPU_USER_SEPARATION
     default n
     help
-      A MemManage fault raised by an UNPRIVILEGED task in thread mode ends that
-      task (the same teardown as v_task_kill: held mutexes, wait queues, pbus
-      and vfs state are released) and the scheduler carries on. A fault in
-      handler mode, in a privileged task or in the kernel still panics, since
-      kernel state can no longer be trusted. Off by default: with it off the
-      handler panics on every MPU fault, as before.
+      A MemManage fault raised by an UNPRIVILEGED task in thread mode follows
+      that task's fault policy instead of panicking: KILL ends the task (the
+      same teardown as v_task_kill: held mutexes, wait queues, pbus and vfs
+      state are released) and the scheduler carries on; RESTART ends it and
+      creates a fresh one with the same entry, argument, stack size, base
+      priority, name and parent, up to the task's restart cap; PANIC stops the
+      system. The policy is set per task with task_set_fault_policy() or
+      v_task_spawn_t; the two options below are the defaults for tasks that do
+      not set one. A fault in handler mode, in a privileged task or in the
+      kernel always panics, since kernel state can no longer be trusted. Off
+      by default: with it off every MPU fault panics, as before.
 config VAIOS_MPU_FAULT_RESTART
-    bool "Restart a task that was ended by an MPU fault"
+    bool "Default policy: restart (otherwise kill)"
     depends on VAIOS_MPU_FAULT_RECOVERY
     default n
     help
-      After ending the faulting task, create a fresh one with the same entry,
-      argument, stack size, base priority, name and parent. It gets a new id and
-      a new, zeroed block; its old block is freed by the idle task's GC, so the
-      heap must have room for both for a moment. Restarts per task lineage are
-      capped by VAIOS_MPU_FAULT_RESTART_MAX, after which it stays ended. A
+      What V_FAULT_DEFAULT means: RESTART when on, KILL when off. A restarted
+      task gets a new id and a new, zeroed block; its old block is freed by the
+      idle task's GC, so the heap must have room for both for a moment. A
       restart the heap cannot fit is skipped, not a panic -- except that
       HEAP_WATERMARK_ENABLE still panics when the heap is that close to full.
 config VAIOS_MPU_FAULT_RESTART_MAX
-    int "Restarts allowed per task lineage"
-    depends on VAIOS_MPU_FAULT_RESTART
+    int "Default restarts per task lineage"
+    depends on VAIOS_MPU_FAULT_RECOVERY
     range 1 255
     default 3
+    help
+      The restart cap of a task whose own cap is 0 (the default). After that
+      many restarts the lineage stays ended.
 endmenu
 
 menu "Kernel/user separation (Phase 3)"

@@ -186,10 +186,11 @@ void NMI_Handler(void) {
 v_mpu_fault_stats_t v_mpu_fault_stats;
 
 // Called from the naked MemManage entry with its EXC_RETURN. A fault raised by
-// an unprivileged task in thread mode is contained: the task is ended (and,
-// with VAIOS_MPU_FAULT_RESTART, recreated) and this returns, tail-chaining into
-// the PendSV that task_exit_request pended. Anything else panics, as before:
-// a fault in handler mode or in privileged code means kernel state is suspect.
+// an unprivileged task in thread mode follows that task's policy
+// (task_fault_policy): ended, or ended and recreated, then this returns,
+// tail-chaining into the PendSV that task_exit_request pended -- or a panic if
+// its policy says so. Anything else panics, as before: a fault in handler mode
+// or in privileged code means kernel state is suspect.
 void v_port_memmanage(uint32_t exc_return) {
   extern TCB *current_task;
   uint32_t mmfsr = SCB_CFSR & 0xFFu; /* MemManage status is CFSR[7:0] */
@@ -198,7 +199,8 @@ void v_port_memmanage(uint32_t exc_return) {
   uint32_t id = t ? t->task_id : 0u;
   int from_user = (exc_return & EXC_RETURN_THREAD) &&
                   (exc_return & EXC_RETURN_PSP) && t && !t->privileged;
-  if (!from_user)
+  v_fault_policy_t policy = from_user ? task_fault_policy(t) : V_FAULT_PANIC;
+  if (policy == V_FAULT_PANIC)
     v_panic(__FILE__, __LINE__,
             "MPU fault in task %u | fault addr 0x%x MMFSR 0x%x", (unsigned)id,
             (unsigned)addr, (unsigned)mmfsr);
@@ -225,11 +227,9 @@ void v_port_memmanage(uint32_t exc_return) {
          (unsigned)id, (unsigned)addr, (unsigned)mmfsr);
 
   task_exit_request(id); // same teardown as v_task_kill; pends PendSV
-#if VAIOS_MPU_FAULT_RESTART
   // t stays allocated until the idle task's GC, so it can still be read here.
-  if (task_fault_restart(t))
+  if (policy == V_FAULT_RESTART && task_fault_restart(t))
     v_mpu_fault_stats.restarts++;
-#endif
 }
 
 __attribute__((naked)) void MemManage_Handler(void) {

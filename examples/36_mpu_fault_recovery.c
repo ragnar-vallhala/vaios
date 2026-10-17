@@ -5,9 +5,10 @@
 #include <stdint.h>
 
 /*
- * MPU fault recovery, on-target (VAIOS_MPU_FAULT_RECOVERY + _RESTART).
+ * MPU fault recovery, on-target (VAIOS_MPU_FAULT_RECOVERY, default policy
+ * RESTART with a cap of 3), one task per fault policy.
  *
- * Two unprivileged tasks fault on every run, each a different way:
+ * Unprivileged tasks that fault on every run, each a different way:
  *   - escaper reads kernel SRAM (a data-access violation, frame stacked fine);
  *   - overflow recurses off the bottom of its stack, so PSP is left where the
  *     task may not write (the switch-out must not push there). On the F401 the
@@ -15,12 +16,16 @@
  *     Renode lets it run through the guard (its MPU model does not give the
  *     higher-numbered region the overlap) to the end of the block region --
  *     contained either way.
- * Each is ended and restarted, VAIOS_MPU_FAULT_RESTART_MAX times, then stays
- * ended. A third unprivileged task, survivor, ticks throughout and must still
- * be ticking after a privileged monitor has read the kernel's counters.
+ *   - child, spawned by survivor with RESTART and a cap of 1, reads kernel
+ *     SRAM too.
+ * Policies: escaper keeps the default (restart, cap 3: runs 4 times), overflow
+ * is set to KILL by main (runs once), child runs twice. So faults = 4 + 1 + 2
+ * = 7 and restarts = 3 + 0 + 1 = 4. survivor also asks for a PANIC child,
+ * which an unprivileged parent may not have, then ticks throughout and must
+ * still be ticking after a privileged monitor has read the kernel's counters.
  *
- * Restarts per lineage = MAX, so each faulting task runs MAX + 1 times and
- * faults that often: faults = 2 * (MAX + 1), restarts = 2 * MAX.
+ * Built with -DFR_PANIC=1, main gives escaper the PANIC policy instead: its
+ * first fault must stop the system.
  */
 
 extern void v_print(const char *s); /* polling console write (privileged) */
@@ -59,8 +64,26 @@ static void overflow(void *arg) {
     v_delay(1000);
 }
 
+static void child(void *arg) {
+  (void)arg;
+  uputs("[fr] child start\r\n");
+  volatile uint32_t v = *(volatile uint32_t *)0x20000010; /* kernel SRAM */
+  (void)v;
+  uputs("[fr] BUG: child not stopped\r\n");
+  for (;;)
+    v_delay(1000);
+}
+
 static void survivor(void *arg) {
   (void)arg;
+  v_task_spawn_t cfg = {.entry = child, .stack_size = 1024, .priority = 1,
+                        .name = "child", .fault_policy = V_FAULT_PANIC};
+  uputs(v_task_spawn(&cfg) == V_TASK_EPERM ? "[fr] panic child refused\r\n"
+                                           : "[fr] BUG: panic child allowed\r\n");
+  cfg.fault_policy = V_FAULT_RESTART;
+  cfg.fault_restart_max = 1;
+  if (v_task_spawn(&cfg) <= 0)
+    uputs("[fr] BUG: child spawn failed\r\n");
   for (;;) {
     uputs("[fr] survivor tick\r\n");
     v_delay(250);
@@ -93,8 +116,14 @@ int main(void) {
                              .internal_sd_card_setup = 0};
   v_system_init(&cfg);
   v_print("[fr] mpu_fault_recovery: start\r\n");
-  task_create_named(escaper, NULL, 2048, 2, "escaper");
-  task_create_named(overflow, NULL, 2048, 2, "overflow");
+  uint32_t esc = task_create_named(escaper, NULL, 2048, 2, "escaper");
+#ifdef FR_PANIC
+  task_set_fault_policy(esc, V_FAULT_PANIC, 0);
+#else
+  (void)esc;
+#endif
+  uint32_t ov = task_create_named(overflow, NULL, 2048, 2, "overflow");
+  task_set_fault_policy(ov, V_FAULT_KILL, 0);
   task_create_named(survivor, NULL, 1024, 1, "survivor");
   task_create_privileged(monitor, NULL, 2048, 3, "monitor");
   scheduler_start();

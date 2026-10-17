@@ -104,8 +104,12 @@ typedef struct Task_Control_Block {
   // switch-in. The idle task is privileged (it does kernel housekeeping).
   uint8_t privileged;
 #endif
-#if VAIOS_MPU_FAULT_RESTART
-  // Times this task's lineage has been restarted after an MPU fault.
+#if VAIOS_MPU_FAULT_RECOVERY
+  // What an MPU fault in this task does (v_fault_policy_t) and how many
+  // restarts it gets (0 = VAIOS_MPU_FAULT_RESTART_MAX); both carried over to a
+  // restarted task, as is the count of restarts its lineage has used.
+  uint8_t fault_policy;
+  uint8_t fault_restart_max;
   uint8_t fault_restarts;
 #endif
 #if VAIOS_SYSCALL_SVC
@@ -220,6 +224,15 @@ typedef struct {
 #define V_TASK_ENOMEM (-12) // no stack available
 #define V_TASK_EAGAIN (-11) // this task already has VAIOS_TASK_MAX_CHILDREN
 #define V_TASK_EINVAL (-22) // bad descriptor
+// What an MPU fault in a task does, with VAIOS_MPU_FAULT_RECOVERY on (with it
+// off every fault panics). Only a fault in an UNPRIVILEGED task can be anything
+// but PANIC: a privileged task may have left kernel state half-written.
+typedef enum {
+  V_FAULT_DEFAULT = 0, // the build's: RESTART with VAIOS_MPU_FAULT_RESTART, else KILL
+  V_FAULT_KILL,        // end this task (and its children); the rest carries on
+  V_FAULT_RESTART,     // end it, then start it afresh, up to its restart cap
+  V_FAULT_PANIC,       // stop the system, as with recovery off
+} v_fault_policy_t;
 typedef struct {
   void (*entry)(void *);  // must point into flash: RAM is execute-never
   void *arg;              // OPAQUE to the child: a pointer into the parent's
@@ -228,6 +241,9 @@ typedef struct {
   uint32_t stack_size;    // bytes, <= VAIOS_TASK_SPAWN_STACK_MAX
   uint32_t priority;      // <= the spawning task's own priority
   const char *name;       // optional flash literal, or NULL
+  uint8_t fault_policy;   // v_fault_policy_t; 0 = the build's default. An
+                          // unprivileged parent may not choose V_FAULT_PANIC.
+  uint8_t fault_restart_max; // restarts for V_FAULT_RESTART; 0 = the build's
 } v_task_spawn_t;
 // Create a child task. Returns its id (> 0), or V_TASK_E* on refusal.
 int v_task_spawn(const v_task_spawn_t *cfg);
@@ -247,12 +263,20 @@ int v_task_info(v_task_info_t *out);
 // without holding a TCB pointer.
 const char *task_get_name_by_id(uint32_t task_id);
 void task_exit_request(uint32_t task_id);
-#if VAIOS_MPU_FAULT_RESTART
+#if VAIOS_MPU_FAULT_RECOVERY
+// Set what an MPU fault in a task does (see v_fault_policy_t); restart_max 0
+// takes VAIOS_MPU_FAULT_RESTART_MAX. For tasks privileged code creates with
+// task_create*; a spawned task gets its policy from v_task_spawn_t. Not a
+// syscall. VA_PASS, or V_TASK_EINVAL for an unknown task or policy.
+int task_set_fault_policy(uint32_t task_id, v_fault_policy_t policy,
+                          uint8_t restart_max);
+// `t`'s policy with V_FAULT_DEFAULT resolved: KILL, RESTART or PANIC.
+v_fault_policy_t task_fault_policy(const TCB *t);
 // Recreate `dead`, just ended by a contained MPU fault, from its entry, arg,
-// stack size, base priority, name and parent. Its block must still be
-// allocated (it is until the idle task's GC). Returns the new id, or 0 when the
-// lineage has used VAIOS_MPU_FAULT_RESTART_MAX restarts or the heap is out --
-// never a panic. Kernel-only: called from the MemManage handler.
+// stack size, base priority, name, parent and fault policy. Its block must
+// still be allocated (it is until the idle task's GC). Returns the new id, or
+// 0 when the lineage has used its restarts or the heap is out -- never a
+// panic. Kernel-only: called from the MemManage handler.
 uint32_t task_fault_restart(const TCB *dead);
 #endif
 //-----------------------------------------------------------------------------

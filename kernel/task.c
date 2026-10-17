@@ -185,7 +185,7 @@ TCB *get_highest_priority_task(void) {
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
-#if VAIOS_MPU_FAULT_RESTART
+#if VAIOS_MPU_FAULT_RECOVERY
 // Set only around a fault restart (task_fault_restart): out-of-memory then
 // returns 0 instead of panicking.
 static uint8_t task_create_soft_oom;
@@ -246,7 +246,7 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->mem_block = (uint32_t *)v_malloc(size);
 #endif
   if (!task->mem_block) {
-#if VAIOS_MPU_FAULT_RESTART
+#if VAIOS_MPU_FAULT_RECOVERY
     // A restart after a contained fault must not turn into a panic: give up
     // the restart instead (the task simply stays ended).
     if (task_create_soft_oom) {
@@ -269,7 +269,9 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   // create.
   task->privileged = 0;
 #endif
-#if VAIOS_MPU_FAULT_RESTART
+#if VAIOS_MPU_FAULT_RECOVERY
+  task->fault_policy = V_FAULT_DEFAULT;
+  task->fault_restart_max = 0;
   task->fault_restarts = 0;
 #endif
   task->delay_ticks = 0;
@@ -462,7 +464,15 @@ int v_task_spawn(const v_task_spawn_t *cfg) {
     return V_TASK_EINVAL;
   if (cfg->stack_size > VAIOS_TASK_SPAWN_STACK_MAX || cfg->priority > MAX_PRIORITY)
     return V_TASK_EINVAL;
+  if (cfg->fault_policy > V_FAULT_PANIC)
+    return V_TASK_EINVAL;
   TCB *parent = current_task;
+#if VAIOS_MPU_USER_SEPARATION
+  // PANIC would let an unprivileged task take the whole system down by
+  // faulting on purpose -- the very thing recovery exists to prevent.
+  if (cfg->fault_policy == V_FAULT_PANIC && parent && !parent->privileged)
+    return V_TASK_EPERM;
+#endif
   if (parent) {
     // A child may not outrank its parent: spawning must not be a way to get
     // scheduling weight the caller does not already have.
@@ -480,6 +490,10 @@ int v_task_spawn(const v_task_spawn_t *cfg) {
     return V_TASK_ENOMEM; // created but unreachable: treat as failure
   ENTER_CRITICAL();
   child->parent_id = parent ? parent->task_id : 0u;
+#if VAIOS_MPU_FAULT_RECOVERY
+  child->fault_policy = cfg->fault_policy;
+  child->fault_restart_max = cfg->fault_restart_max;
+#endif
   EXIT_CRITICAL();
   return (int)id;
 }
@@ -680,9 +694,37 @@ void task_exit_request(uint32_t task_id) {
   reap_orphans(); // anything this task spawned goes with it (M3b)
   v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
+#if VAIOS_MPU_FAULT_RECOVERY
+int task_set_fault_policy(uint32_t task_id, v_fault_policy_t policy,
+                          uint8_t restart_max) {
+  if ((unsigned)policy > V_FAULT_PANIC)
+    return V_TASK_EINVAL;
+  TCB *t = get_task_by_id(task_id);
+  if (!t || t->status == TASK_TERMINATED)
+    return V_TASK_EINVAL;
+  ENTER_CRITICAL();
+  t->fault_policy = (uint8_t)policy;
+  t->fault_restart_max = restart_max;
+  EXIT_CRITICAL();
+  return VA_PASS;
+}
+
+v_fault_policy_t task_fault_policy(const TCB *t) {
+  if (t->fault_policy != V_FAULT_DEFAULT)
+    return (v_fault_policy_t)t->fault_policy;
 #if VAIOS_MPU_FAULT_RESTART
+  return V_FAULT_RESTART;
+#else
+  return V_FAULT_KILL;
+#endif
+}
+
 uint32_t task_fault_restart(const TCB *dead) {
-  if (!dead || dead->fault_restarts >= VAIOS_MPU_FAULT_RESTART_MAX)
+  if (!dead)
+    return 0;
+  uint8_t max = dead->fault_restart_max ? dead->fault_restart_max
+                                        : (uint8_t)VAIOS_MPU_FAULT_RESTART_MAX;
+  if (dead->fault_restarts >= max)
     return 0;
   task_create_soft_oom = 1;
   uint32_t id = task_create_named(dead->entry, dead->arg, dead->stack_size,
@@ -692,6 +734,8 @@ uint32_t task_fault_restart(const TCB *dead) {
   if (!t)
     return 0;
   ENTER_CRITICAL();
+  t->fault_policy = dead->fault_policy;
+  t->fault_restart_max = dead->fault_restart_max;
   t->fault_restarts = (uint8_t)(dead->fault_restarts + 1u);
   t->parent_id = dead->parent_id;
   EXIT_CRITICAL();

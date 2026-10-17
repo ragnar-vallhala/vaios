@@ -438,6 +438,9 @@ static void test_task_spawn_rules(void) {
   bad.stack_size = VAIOS_TASK_SPAWN_STACK_MAX + 1u;
   TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
   bad = cfg;
+  bad.fault_policy = V_FAULT_PANIC + 1; /* not a policy */
+  TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
+  bad = cfg;
   bad.priority = MAX_PRIORITY + 1u;
   TEST_ASSERT_EQ(v_task_spawn(&bad), V_TASK_EINVAL);
 
