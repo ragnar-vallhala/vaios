@@ -55,7 +55,7 @@ static void setup(void) {
   static int mounted;
   if (!mounted) {
     TEST_ASSERT_EQ(vfs_init(), 0);
-    TEST_ASSERT_EQ(v_vfs_mount("/mnt/"), VA_PASS);
+    TEST_ASSERT_EQ(v_vfs_mount("/mnt/sd", "0:"), VA_PASS);
     mounted = 1;
   }
   v_test_in_handler = 0; // from here, calls trap like a task's
@@ -90,21 +90,50 @@ static void test_vfs_needs_a_worker(void) {
   setup();
   static int first = 1;
   if (first) { /* before any pump() in this binary */
-    TEST_ASSERT_EQ(v_vfs_open("/mnt/x", 0, 10), V_VFS_EAGAIN);
+    TEST_ASSERT_EQ(v_vfs_open("/mnt/sd/x", 0, 10), V_VFS_EAGAIN);
     first = 0;
   }
   { int p_ = pump(); TEST_ASSERT_EQ(p_, 0); } /* and the worker waits for work rather than spins */
   teardown();
 }
 
-/* A mount claims a subtree, and only a subtree. */
+/* A mount is an absolute point, as mount(8) takes it, and a FatFs drive. */
 static void test_vfs_mount_validates(void) {
   setup();
   v_test_in_handler = 1;
-  TEST_ASSERT_EQ(v_vfs_mount(NULL), V_VFS_EINVAL);
-  TEST_ASSERT_EQ(v_vfs_mount(""), V_VFS_EINVAL);
-  TEST_ASSERT_EQ(v_vfs_mount("/mnt"), V_VFS_EINVAL); // no trailing slash
+  TEST_ASSERT_EQ(v_vfs_mount(NULL, "0:"), V_VFS_EINVAL);
+  TEST_ASSERT_EQ(v_vfs_mount("", "0:"), V_VFS_EINVAL);
+  TEST_ASSERT_EQ(v_vfs_mount("/", "0:"), V_VFS_EINVAL);        // not the root
+  TEST_ASSERT_EQ(v_vfs_mount("mnt/sd", "0:"), V_VFS_EINVAL);   // absolute
+  TEST_ASSERT_EQ(v_vfs_mount("/mnt/sd/", "0:"), V_VFS_EINVAL); // no trailing /
+  TEST_ASSERT_EQ(v_vfs_mount("/mnt/usb", "x:"), V_VFS_EINVAL);
+  TEST_ASSERT_EQ(v_vfs_mount("/mnt/usb", "0"), V_VFS_EINVAL);
+  TEST_ASSERT_EQ(v_vfs_mount("/mnt/usb", NULL), V_VFS_EINVAL);
+  TEST_ASSERT_EQ(v_vfs_mount("/mnt/a_mount_point_far_too_long", "1:"),
+                 V_VFS_EINVAL);
   v_test_in_handler = 0;
+  teardown();
+}
+
+/* A task names a file by its place in the tree; the drive is the kernel's
+ * business. "/mnt/sdx" is not under "/mnt/sd", and a path under no mount is
+ * refused as FatFs refuses a missing file. FatFs's own form still passes. */
+static void test_vfs_paths_resolve_through_the_mount(void) {
+  setup();
+  drain();
+  vfs_stub_reset();
+  vfs_stub.open_ret = 5;
+  TEST_ASSERT_EQ(vfs_open("/mnt/sd/logs/a.csv", 0), 5);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.open_path, "0:/logs/a.csv"), 0);
+  (void)vfs_opendir("/mnt/sd");
+  TEST_ASSERT_EQ(strcmp(vfs_stub.opendir_path, "0:/"), 0); /* the drive's root */
+  vfs_stub.open_called = 0;
+  TEST_ASSERT_EQ(vfs_open("/mnt/sdx/a", 0), -4);
+  TEST_ASSERT_EQ(vfs_open("/tmp/a", 0), -4);
+  TEST_ASSERT_EQ(vfs_open("/mnt", 0), -4);
+  TEST_ASSERT_EQ(vfs_stub.open_called, 0); /* none of them reached FatFs */
+  TEST_ASSERT_EQ(vfs_open("0:raw.bin", 0), 5);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.open_path, "0:raw.bin"), 0);
   teardown();
 }
 
@@ -115,13 +144,13 @@ static void test_vfs_round_trip(void) {
   drain();
 
   vfs_stub.open_ret = 7;
-  v_vfs_desc_t d = {.op = 1 /*OPEN*/, .path = "/mnt/log.csv", .len = 0};
+  v_vfs_desc_t d = {.op = 1 /*OPEN*/, .path = "/mnt/sd/log.csv", .len = 0};
   int slot = v_vfs_submit(&d);
   TEST_ASSERT(slot >= 0);
   TEST_ASSERT_EQ(vfs_stub.open_called, 0); // not in the syscall
   { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
   TEST_ASSERT_EQ(vfs_stub.open_called, 1); // in the worker
-  TEST_ASSERT_EQ(strcmp(vfs_stub.open_path, "log.csv"), 0); // prefix stripped
+  TEST_ASSERT_EQ(strcmp(vfs_stub.open_path, "0:/log.csv"), 0); // resolved
   int fd = v_vfs_finish(slot, 0, 0);
   TEST_ASSERT(fd >= 0);
 
@@ -152,6 +181,44 @@ static void test_vfs_round_trip(void) {
   teardown();
 }
 
+/* Rename carries its second path as the payload, copied at submit, and both
+ * resolve through the mount; a payload that is not a NUL-terminated path is
+ * refused. Space comes back as a vfs_space_t through the caller's buffer. */
+static void test_vfs_rename_and_space(void) {
+  setup();
+  drain();
+  vfs_stub_reset();
+  char to[] = "/mnt/sd/b.txt";
+  v_vfs_desc_t rn = {.op = 14 /*RENAME*/, .path = "/mnt/sd/a.txt", .data = to,
+                     .len = sizeof to};
+  int slot = v_vfs_submit(&rn);
+  TEST_ASSERT(slot >= 0);
+  to[0] = 'X'; /* the caller's buffer no longer matters: it was copied */
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  TEST_ASSERT_EQ(v_vfs_finish(slot, 0, 0), 0);
+  TEST_ASSERT_EQ(vfs_stub.rename_called, 1);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.rename_from, "0:/a.txt"), 0);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.rename_to, "0:/b.txt"), 0);
+
+  char unterminated[4] = {'a', 'b', 'c', 'd'};
+  v_vfs_desc_t bad = {.op = 14, .path = "/mnt/sd/a", .data = unterminated,
+                      .len = 4};
+  TEST_ASSERT_EQ(v_vfs_submit(&bad), V_VFS_EINVAL);
+
+  vfs_stub.getfree_total = 30000;
+  vfs_stub.getfree_free = 1000;
+  v_vfs_desc_t sp = {.op = 15 /*SPACE*/, .path = "/mnt/sd"};
+  slot = v_vfs_submit(&sp);
+  TEST_ASSERT(slot >= 0);
+  { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
+  vfs_space_t out = {0, 0};
+  TEST_ASSERT_EQ(v_vfs_finish(slot, &out, sizeof out), 0);
+  TEST_ASSERT_EQ(out.total_kib, 30000u);
+  TEST_ASSERT_EQ(out.free_kib, 1000u);
+  TEST_ASSERT_EQ(strcmp(vfs_stub.getfree_drive, "0:"), 0);
+  teardown();
+}
+
 /* What crosses is bounded: a request larger than the bounce buffer is refused
  * (the wrapper chunks instead), and a path longer than a slot is refused rather
  * than truncated into the wrong file. */
@@ -177,11 +244,11 @@ static void test_vfs_slots_are_owned_and_bounded(void) {
 
   int slots[VAIOS_VFS_IO_SLOTS];
   for (int i = 0; i < VAIOS_VFS_IO_SLOTS; i++) {
-    v_vfs_desc_t d = {.op = 1, .path = "/mnt/a"};
+    v_vfs_desc_t d = {.op = 1, .path = "/mnt/sd/a"};
     slots[i] = v_vfs_submit(&d);
     TEST_ASSERT(slots[i] >= 0);
   }
-  v_vfs_desc_t extra = {.op = 1, .path = "/mnt/b"};
+  v_vfs_desc_t extra = {.op = 1, .path = "/mnt/sd/b"};
   TEST_ASSERT_EQ(v_vfs_submit(&extra), V_VFS_EBUSY); // pool full
 
   TCB *owner = current_task;
@@ -232,7 +299,7 @@ static void test_vfs_teardown_abandons_and_closes(void) {
   drain();
 
   vfs_stub.open_ret = 5;
-  v_vfs_desc_t d = {.op = 1, .path = "/mnt/dies"};
+  v_vfs_desc_t d = {.op = 1, .path = "/mnt/sd/dies"};
   int slot = v_vfs_submit(&d);
   TEST_ASSERT(slot >= 0);
   v_test_in_handler = 1;
@@ -245,7 +312,7 @@ static void test_vfs_teardown_abandons_and_closes(void) {
   TEST_ASSERT(v_vfs_finish(again, 0, 0) >= 0);
 
   vfs_stub.open_ret = 6;
-  v_vfs_desc_t o = {.op = 1, .path = "/mnt/open"};
+  v_vfs_desc_t o = {.op = 1, .path = "/mnt/sd/open"};
   int s = v_vfs_submit(&o);
   { int p_ = pump(); TEST_ASSERT_EQ(p_, 1); }
   int fd = v_vfs_finish(s, 0, 0);
@@ -266,7 +333,7 @@ static void test_vfs_wait_blocks_the_caller(void) {
   setup();
   drain();
   vfs_stub.open_ret = 2;
-  v_vfs_desc_t d = {.op = 1, .path = "/mnt/slow"};
+  v_vfs_desc_t d = {.op = 1, .path = "/mnt/sd/slow"};
   int slot = v_vfs_submit(&d);
   TEST_ASSERT(slot >= 0);
 
@@ -284,8 +351,10 @@ static void test_vfs_wait_blocks_the_caller(void) {
 static const test_case_t vfs_fd_cases[] = {
     TEST_CASE(test_vfs_needs_a_worker),
     TEST_CASE(test_vfs_mount_validates),
+    TEST_CASE(test_vfs_paths_resolve_through_the_mount),
     TEST_CASE(test_vfs_round_trip),
     TEST_CASE(test_vfs_requests_are_bounded),
+    TEST_CASE(test_vfs_rename_and_space),
     TEST_CASE(test_vfs_slots_are_owned_and_bounded),
     TEST_CASE(test_vfs_teardown_abandons_and_closes),
     TEST_CASE(test_vfs_wait_blocks_the_caller),

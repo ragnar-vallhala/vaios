@@ -16,6 +16,9 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args);
 #if VAIOS_DEVFS
 // Task-facing printf: formats, then routes through write(1) -> /dev/console.
 int v_printf(const char *fmt, ...);
+// The same to fd 2, stderr: errors and usage, which a shell's `>` leaves on
+// the console rather than putting in the file.
+int v_eprintf(const char *fmt, ...);
 // Kernel log ring backing /dev/kmsg (appended by the printk path; drained by a
 // task read()ing /dev/kmsg).
 void v_kmsg_append(const char *buf, uint32_t len);
@@ -51,6 +54,11 @@ typedef enum {
 #define COLOR_UNKNOWN "\x1B[34m" // Blue
 void v_log(Log_Type type, const char *msg, ...);
 void v_log_flush(void);
+void v_log_drain(void);
+// The runtime log threshold (a Log_Type): v_log drops anything below it.
+// Privileged -- it is kernel state. Out-of-range levels are ignored.
+void v_log_set_level(int level);
+int v_log_get_level(void); // flush until empty; boot, before the scheduler
 
 // Kernel-internal log macro. Calls in kernel hot paths (memory, task, ipc)
 // route through this so the entire call site can be compiled out below a

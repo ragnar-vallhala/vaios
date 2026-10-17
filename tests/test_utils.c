@@ -5,7 +5,7 @@
  * print_fmt_buf is the printf-into-buffer entry point used by everything
  * from v_log to v_panic; the static itoa_simple / utoa_simple integer
  * formatters are exercised indirectly through the %d/%u/%x format
- * specifiers. v_atof is the string-to-float helper used by the terminal.
+ * specifiers. v_atof is the string-to-float helper used by the shell.
  */
 #include "framework.h"
 #include "utils.h"
@@ -219,6 +219,78 @@ static void test_strncmp_bounded(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
+/* --- v_printf: streamed, no length limit ----------------------------------- */
+/* Host only: these read what v_printf wrote from the capturing v_file_write in
+   stubs/utils_stubs.c. The on-target runner links the real one. */
+#ifdef VAIOS_HOST_TEST
+extern char g_out[2048];
+extern int g_out_len, g_take, g_refuse_once;
+int v_printf(const char *fmt, ...);
+static void out_reset(void) {
+  g_out_len = 0;
+  g_out[0] = '\0';
+  g_take = 0;
+  g_refuse_once = 0;
+}
+
+/* It used to format into 128 bytes and drop the rest without a word. */
+static void test_v_printf_has_no_length_limit(void) {
+  static char big[701];
+  for (int i = 0; i < 700; i++)
+    big[i] = (char)('a' + i % 26);
+  big[700] = '\0';
+  out_reset();
+  int n = v_printf("<%s>", big);
+  TEST_ASSERT_EQ(n, 702);
+  TEST_ASSERT_EQ(g_out_len, 702);
+  TEST_ASSERT(g_out[0] == '<' && g_out[1] == 'a' && g_out[700] == 'x' &&
+              g_out[701] == '>');
+  /* a long literal format, no conversions at all */
+  out_reset();
+  char fmt[301];
+  for (int i = 0; i < 300; i++)
+    fmt[i] = '-';
+  fmt[300] = '\0';
+  TEST_ASSERT_EQ(v_printf(fmt), 300);
+  TEST_ASSERT_EQ(g_out_len, 300);
+}
+
+/* Every conversion still formats as the kernel formatter does, flags and
+ * widths included, with each argument taken at its own type. */
+static void test_v_printf_conversions(void) {
+  out_reset();
+  v_printf("%d|%02d|%5d|%u|%x|%X|%c|%s|%%|%ld|%lld|%lu", -42, 7, 33, 4000000000u,
+           0xbeef, 0xBEEF, 'Z', "str", -123456L, -5000000000LL, 9UL);
+  TEST_ASSERT_EQ(strcmp(g_out, "-42|07|   33|4000000000|beef|BEEF|Z|str|%|"
+                               "-123456|-5000000000|9"),
+                 0);
+  out_reset();
+  v_printf("%s and %s", "first", "second"); /* plain %s twice */
+  TEST_ASSERT_EQ(strcmp(g_out, "first and second"), 0);
+}
+
+/* v_eprintf is v_printf on fd 2, stderr, conversions and all. */
+extern int g_last_fd;
+static void test_v_eprintf_goes_to_fd_2(void) {
+  out_reset();
+  v_eprintf("%s: %d", "err", -5);
+  TEST_ASSERT_EQ(strcmp(g_out, "err: -5"), 0);
+  TEST_ASSERT_EQ(g_last_fd, 2);
+  v_printf("x");
+  TEST_ASSERT_EQ(g_last_fd, 1);
+}
+
+/* The console taking a little at a time, or nothing once: all of it still
+ * arrives, in order. */
+static void test_v_printf_retries_partial_writes(void) {
+  out_reset();
+  g_take = 7;
+  g_refuse_once = 1;
+  v_printf("%s=%d;%s", "alpha-beta-gamma", 12345, "the rest of the line");
+  TEST_ASSERT_EQ(strcmp(g_out, "alpha-beta-gamma=12345;the rest of the line"), 0);
+}
+#endif /* VAIOS_HOST_TEST */
+
 static const test_case_t utils_cases[] = {
     /* print_fmt_buf */
     TEST_CASE(test_pf_plain_string),
@@ -248,6 +320,12 @@ static const test_case_t utils_cases[] = {
     TEST_CASE(test_strcmp_equal_and_order),
     TEST_CASE(test_strncmp_bounded),
     TEST_CASE(test_pf_trailing_percent_stops_at_nul),
+#ifdef VAIOS_HOST_TEST
+    TEST_CASE(test_v_printf_has_no_length_limit),
+    TEST_CASE(test_v_printf_conversions),
+    TEST_CASE(test_v_eprintf_goes_to_fd_2),
+    TEST_CASE(test_v_printf_retries_partial_writes),
+#endif
 };
 const test_suite_t utils_suite = {
     .name = "utils (print_fmt_buf + v_atof)",

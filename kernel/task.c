@@ -975,7 +975,7 @@ void scheduler_init(void) {
   last_context_switch_tick = v_get_ticks();
   task_count = 0;
   scheduler_running = 0;
-  task_create(idle_task_function, NULL, IDLE_TASK_STACK_SIZE, 0);
+  task_create_named(idle_task_function, NULL, IDLE_TASK_STACK_SIZE, 0, "idle");
   idle_task = ready_lists[0];
 #if VAIOS_MPU_USER_SEPARATION
   // The idle task runs kernel housekeeping (log flush, dead-task GC), so it must

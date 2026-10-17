@@ -86,6 +86,7 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
     case SYS_read:
+    case SYS_devfs_node:
       if (!v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
         return V_EFAULT;
       break;
@@ -351,6 +352,17 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
     return v_file_read((int)args[0], (void *)(uintptr_t)args[1], args[2]);
   case SYS_close:
     return v_file_close((int)args[0]);
+  case SYS_dup:
+    return v_file_dup((int)args[0]);
+  case SYS_dup2:
+    return v_file_dup2((int)args[0], (int)args[1]);
+  case SYS_file_wait:
+    /* Park until fd args[0] has data, or args[1] ticks. Blocking,
+       deferred-result; nothing of the caller's is held while it sleeps. */
+    return v_file_wait((int)args[0], args[1]);
+  case SYS_devfs_node:
+    /* Node args[0]'s name into args[1], args[2] bytes at most. */
+    return v_devfs_node((int)args[0], (char *)(uintptr_t)args[1], args[2]);
 #endif
 #if VAIOS_DEVFS
   case SYS_pbus_open:

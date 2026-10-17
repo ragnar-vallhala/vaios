@@ -10,11 +10,13 @@
  * its body. Every task starts with fd 0/1/2 pre-opened to /dev/console.
  */
 
+#include "port.h" // v_port_hw_console_* — the console device's hardware side
 #include "vfile.h"
 
 #if VAIOS_DEVFS
 
-#include "port.h"
+#include "ipc.h" // the console's RX wake (a binary semaphore)
+#include "memory.h" // /dev/capture's buffer, on first use
 #include "syscall.h"
 #include "task.h"
 #include "utils.h" // v_kmsg_read (/dev/kmsg backing ring)
@@ -39,6 +41,20 @@ int v_devfs_register(const char *name, const v_file_ops *ops, void *priv) {
   dev_nodes[dev_node_count].ops = ops;
   dev_nodes[dev_node_count].priv = priv;
   dev_node_count++;
+  return 0;
+}
+
+int v_devfs_node(int i, char *name, uint32_t cap) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc3(SYS_devfs_node, (uint32_t)i, (uintptr_t)name, cap);
+#endif
+  if (i < 0 || i >= dev_node_count || !name || cap == 0)
+    return -1;
+  uint32_t k = 0;
+  for (const char *n = dev_nodes[i].name; *n && k + 1 < cap; n++)
+    name[k++] = *n;
+  name[k] = '\0';
   return 0;
 }
 
@@ -142,7 +158,7 @@ int v_file_open(const char *path, int flags) {
     return v_fd_alloc(node->ops, node->priv); // a device: one shared priv
   }
   void *priv = NULL; // a mount: per-open state, from the node itself
-  int r = node->ops->open(tail, flags, &priv);
+  int r = node->ops->open(path, flags, &priv); // the whole path: names its mount
   if (r < 0)
     return r;
   int fd = v_fd_alloc(node->ops, priv);
@@ -173,6 +189,44 @@ int v_file_read(int fd, void *buf, uint32_t len) {
   return e->ops->read(e->priv, buf, len);
 }
 
+int v_file_wait(int fd, uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_file_wait, (uint32_t)fd, ticks);
+#endif
+  v_fd_entry *e = fd_lookup(fd);
+  if (!e || !e->ops->wait)
+    return -1;
+  return e->ops->wait(e->priv, ticks);
+}
+
+int v_file_dup(int oldfd) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc1(SYS_dup, (uint32_t)oldfd);
+#endif
+  v_fd_entry *e = fd_lookup(oldfd);
+  if (!e || e->ops->close)
+    return -1; // only a plain device: its close has nothing to count
+  return v_fd_alloc(e->ops, e->priv);
+}
+
+int v_file_dup2(int oldfd, int newfd) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return v_svc2(SYS_dup2, (uint32_t)oldfd, (uint32_t)newfd);
+#endif
+  v_fd_entry *e = fd_lookup(oldfd);
+  if (!e || e->ops->close || newfd < 0 || newfd >= VAIOS_MAX_FDS)
+    return -1;
+  v_fd_entry *n = &current_task->fds[newfd];
+  if (n->ops && n->ops->close)
+    return -1; // replacing it would skip its close and leak a reference
+  n->ops = e->ops;
+  n->priv = e->priv;
+  return newfd;
+}
+
 int v_file_close(int fd) {
 #if VAIOS_SYSCALL_SVC
   if (v_in_thread_mode())
@@ -187,13 +241,32 @@ int v_file_close(int fd) {
   return r;
 }
 
-// --- /dev/console -----------------------------------------------------------
-static int console_write(void *priv, const void *buf, uint32_t len) {
-  (void)priv;
-  // Blocking write in NUL-terminated chunks via the port string facade — works
-  // regardless of the DMA config. (Console output is text; embedded NULs, rare
-  // here, would truncate a chunk.)
-  const char *p = (const char *)buf;
+// --- /dev/console output ----------------------------------------------------
+// Inside a syscall the console hardware cannot be driven: SVCall runs at the
+// ceiling and masks the USB interrupt that completes a CDC transfer, so
+// hal_usb_cdc_write times out with bytes unsent ("help" echoed as "hl", todo
+// 163). So once a writer task exists, a write only queues here and wakes it;
+// v_console_writer_step does the hardware write in thread mode. Same split as
+// the VFS worker, and like it the application runs the writer, at a priority
+// above the tasks that print -- then the wake preempts on syscall return and
+// output comes out in the order it was written.
+//
+// Until a writer has run, writes go straight to the hardware as they always
+// did: before the scheduler, in examples that never start one, and on routes
+// where a direct write is fine.
+#ifndef CONSOLE_TX_SIZE
+#define CONSOLE_TX_SIZE 256
+#endif
+static char con_tx[CONSOLE_TX_SIZE];
+static volatile uint16_t con_tx_head, con_tx_tail;
+static StaticSemaphore_t con_tx_sem_store;
+static SemaphoreHandle_t con_tx_sem;
+static volatile uint8_t con_writer_seen;
+
+// Write to the hardware, in NUL-terminated chunks via the port string facade --
+// works regardless of the DMA config. (Console output is text; embedded NULs,
+// rare here, would truncate a chunk.)
+static void console_emit(const char *p, uint32_t len) {
   char tmp[128];
   uint32_t done = 0;
   while (done < len) {
@@ -214,20 +287,214 @@ static int console_write(void *priv, const void *buf, uint32_t len) {
 #endif
     done += chunk;
   }
-  return (int)len;
+}
+
+// Newlines: a lone '\n' goes out as "\r\n", as a Unix tty does (ONLCR) --
+// otherwise a file with LF endings printed by `cat` walks right across the
+// screen, each line starting under the end of the last. A '\n' that already
+// follows a '\r' passes as it is. con_last carries that across writes.
+static char con_last;
+
+// Returns how much of `buf` was taken, which is less than `len` when the queue
+// is full; the caller retries the rest (v_printf does) rather than the syscall
+// waiting for space. A '\n' is taken only with room for its '\r' too.
+static int console_write(void *priv, const void *buf, uint32_t len) {
+  (void)priv;
+  const char *p = (const char *)buf;
+  if (!con_writer_seen) {
+    char tmp[64];
+    uint32_t t = 0;
+    for (uint32_t i = 0; i < len; i++) {
+      if (p[i] == '\n' && con_last != '\r')
+        tmp[t++] = '\r';
+      tmp[t++] = p[i];
+      con_last = p[i];
+      if (t >= sizeof tmp - 1) {
+        console_emit(tmp, t);
+        t = 0;
+      }
+    }
+    if (t)
+      console_emit(tmp, t);
+    return (int)len;
+  }
+  uint32_t n = 0;
+  for (; n < len; n++) {
+    uint32_t room = (uint32_t)((con_tx_tail + CONSOLE_TX_SIZE - con_tx_head - 1u) %
+                               CONSOLE_TX_SIZE);
+    int crlf = p[n] == '\n' && con_last != '\r';
+    if (room < (crlf ? 2u : 1u))
+      break;
+    if (crlf) {
+      con_tx[con_tx_head] = '\r';
+      con_tx_head = (uint16_t)((con_tx_head + 1u) % CONSOLE_TX_SIZE);
+    }
+    con_tx[con_tx_head] = p[n];
+    con_tx_head = (uint16_t)((con_tx_head + 1u) % CONSOLE_TX_SIZE);
+    con_last = p[n];
+  }
+  if (n) {
+    int woke = 0;
+    (void)v_semaphore_give_from_isr(con_tx_sem, &woke);
+    if (woke) // the writer outranks us: let it drain on syscall return
+      v_port_trigger_pendsv();
+  }
+  return (int)n;
+}
+
+int v_console_writer_step(uint32_t ticks) {
+  con_writer_seen = 1;
+  if (con_tx_tail == con_tx_head &&
+      v_semaphore_take(con_tx_sem, ticks) != VA_PASS)
+    return 0;
+  int total = 0;
+  while (con_tx_tail != con_tx_head) {
+    char tmp[64];
+    uint32_t n = 0;
+    uint16_t t = con_tx_tail;
+    while (n < sizeof tmp && t != con_tx_head) {
+      tmp[n++] = con_tx[t];
+      t = (uint16_t)((t + 1u) % CONSOLE_TX_SIZE);
+    }
+    console_emit(tmp, n);
+    con_tx_tail = t; // free the space only once it is on the wire
+    total += (int)n;
+  }
+  return total;
+}
+
+/* --- console input ----------------------------------------------------------
+ * The port's RX interrupt (UART RXNE, or the CDC driver's rx callback) hands
+ * bytes to console_rx_sink, which queues them here, in KERNEL memory, and wakes
+ * any reader. A reader never touches the hardware: read is non-blocking and
+ * drains this ring; v_file_wait parks the caller until the sink signals. That
+ * is what lets an unprivileged task read the console without polling it.
+ *
+ * Single producer (the RX ISR) and single consumer (read, inside the syscall).
+ * On target the syscall runs at the ceiling and masks the console IRQ anyway,
+ * so the two never actually interleave; the volatile indices are for the
+ * no-SVC builds where read runs in thread mode and the ISR can cut in.
+ *
+ * A port with no RX interrupt (semihosting, host, a UART build whose NavHAL has
+ * no USART vectors) reports so, and the console falls back to polling the
+ * port's try_read: read polls it directly and wait sleeps one poll interval
+ * instead of waiting for a signal nobody will send.
+ */
+#ifndef CONSOLE_RX_SIZE
+#define CONSOLE_RX_SIZE 256 /* a UART DMA half-ring (128) arrives in one piece */
+#endif
+#define CONSOLE_POLL_TICKS MS_TO_TICKS(10)
+
+static uint8_t con_rx[CONSOLE_RX_SIZE];
+static volatile uint16_t con_head, con_tail;
+static StaticSemaphore_t con_sem_store;
+static SemaphoreHandle_t con_rx_sem;
+static int con_rx_armed;
+
+/* ISR context. A full ring drops the rest of the burst: losing input is better
+   than an interrupt that waits for a reader. */
+static void console_rx_sink(const uint8_t *data, uint16_t len) {
+  for (uint16_t i = 0; i < len; i++) {
+    uint16_t next = (uint16_t)((con_head + 1u) % CONSOLE_RX_SIZE);
+    if (next == con_tail)
+      break;
+    con_rx[con_head] = data[i];
+    con_head = next;
+  }
+  int woke = 0;
+  if (con_rx_sem)
+    (void)v_semaphore_give_from_isr(con_rx_sem, &woke);
+  if (woke) // the reader outranks what we interrupted: switch on return
+    v_port_trigger_pendsv();
 }
 
 static int console_read(void *priv, void *buf, uint32_t len) {
   (void)priv;
-  char *p = (char *)buf;
-  for (uint32_t i = 0; i < len; i++)
-    p[i] = v_port_hw_console_read_char(); // blocking per char
-  return (int)len;
+  uint8_t *p = (uint8_t *)buf;
+  uint32_t got = 0;
+  while (got < len && con_tail != con_head) {
+    p[got++] = con_rx[con_tail];
+    con_tail = (uint16_t)((con_tail + 1u) % CONSOLE_RX_SIZE);
+  }
+  if (!con_rx_armed) {
+    char c;
+    while (got < len && v_port_hw_console_try_read(&c))
+      p[got++] = (uint8_t)c;
+  }
+  return (int)got;
+}
+
+static int console_wait(void *priv, uint32_t ticks) {
+  (void)priv;
+  if (con_tail != con_head)
+    return 0; /* already there: don't sleep on a signal already consumed */
+  if (!con_rx_sem)
+    return -1;
+  if (!con_rx_armed && ticks > CONSOLE_POLL_TICKS)
+    ticks = CONSOLE_POLL_TICKS; /* nothing will signal: wake up and re-poll */
+  return v_semaphore_take(con_rx_sem, ticks) == VA_PASS ? 0 : -1;
 }
 
 static const v_file_ops console_ops = {
     .read = console_read,
     .write = console_write,
+    .close = NULL,
+    .wait = console_wait,
+};
+
+// --- /dev/capture -------------------------------------------------------------
+// Where a redirected command's output goes (the shell's `> file`). Writes run
+// inside the syscall, where the filesystem cannot be used, so they land here,
+// in kernel RAM, and the shell copies them into the file once the command is
+// done. '\r' is dropped, so a file gets Unix line endings from output written
+// for a terminal. Full, it says so once and drops the rest: the shell cannot
+// drain it while the command it is waiting on is still printing.
+// One buffer: there is one shell, and it runs one command at a time. From the
+// kernel heap on the first write, not .bss: only a shell that redirects pays for
+// it, and an application that never does keeps its 2 KiB -- on a 96 KiB part
+// whose heap fills the rest of RAM, a static one did not fit (Renode: fdipc,
+// bus_user, flight_user panicked at boot, the heap running past SRAM).
+#ifndef CAPTURE_SIZE
+#define CAPTURE_SIZE 2048
+#endif
+#define CAPTURE_CUT "\n[vsh: output cut here, past what > can hold]\n"
+static char *cap_buf;
+static uint16_t cap_len, cap_rd;
+static uint8_t cap_cut;
+
+static int capture_write(void *priv, const void *buf, uint32_t len) {
+  (void)priv;
+  if (!cap_buf && (cap_buf = (char *)v_malloc(CAPTURE_SIZE)) == NULL)
+    return (int)len; /* no heap for it: dropped, as when it is full */
+  const char *p = (const char *)buf;
+  for (uint32_t i = 0; i < len && !cap_cut; i++) {
+    if (p[i] == '\r')
+      continue;
+    if (cap_len >= CAPTURE_SIZE - (sizeof CAPTURE_CUT - 1)) {
+      for (const char *m = CAPTURE_CUT; *m; m++)
+        cap_buf[cap_len++] = *m;
+      cap_cut = 1;
+      break;
+    }
+    cap_buf[cap_len++] = p[i];
+  }
+  return (int)len; // taken, kept or not: a writer must never wait on this
+}
+
+// Drains; once everything is read the buffer is empty for the next command.
+static int capture_read(void *priv, void *buf, uint32_t len) {
+  (void)priv;
+  uint32_t n = 0;
+  while (cap_buf && n < len && cap_rd < cap_len)
+    ((char *)buf)[n++] = cap_buf[cap_rd++];
+  if (cap_rd == cap_len)
+    cap_len = cap_rd = cap_cut = 0;
+  return (int)n;
+}
+
+static const v_file_ops capture_ops = {
+    .read = capture_read,
+    .write = capture_write,
     .close = NULL,
 };
 
@@ -244,8 +511,14 @@ static const v_file_ops kmsg_ops = {
 };
 
 void v_devfs_init(void) {
+  con_head = con_tail = 0;
+  con_tx_head = con_tx_tail = 0;
+  con_rx_sem = v_semaphore_create_binary_static(&con_sem_store);
+  con_tx_sem = v_semaphore_create_binary_static(&con_tx_sem_store);
+  con_rx_armed = v_port_hw_console_rx_irq_init(console_rx_sink);
   v_devfs_register("/dev/console", &console_ops, NULL);
   v_devfs_register("/dev/kmsg", &kmsg_ops, NULL);
+  v_devfs_register("/dev/capture", &capture_ops, NULL);
 }
 
 #endif // VAIOS_DEVFS

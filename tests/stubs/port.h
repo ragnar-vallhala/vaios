@@ -12,6 +12,7 @@
 #define VAIOS_CORTEX_M4_PORT_H
 
 #include <stdint.h>
+#include "v_time.h" // v_datetime_t, for the RTC calls
 
 /* Critical section stubs — no-ops on host */
 #define ENTER_CRITICAL()                                                       \
@@ -81,8 +82,32 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
 
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
-char v_port_hw_console_read_char(void);
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
+/* Deliver received console bytes to `sink` from the RX interrupt. 1 if an
+ * interrupt was armed, 0 if this port/route has none (the caller then polls
+ * v_port_hw_console_try_read). `data` is valid only for the call. */
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len));
+/* Non-blocking console read: 1 if a byte was placed in *c, 0 if none waiting.
+ * The CDC route has no RX interrupt, so its readers poll this. */
+int v_port_hw_console_try_read(char *c);
+
+#define VAIOS_PORT_BOARD "host-test"
+#define VAIOS_PORT_SOC "native"
+void v_port_hw_system_reset(void);
+
+/* The RTC. start brings it up, waiting for its 32.768 kHz crystal on a cold
+ * start -- seconds -- so call it from a task that may wait, never at boot;
+ * later boots adopt the running calendar at once. 0, or -1 when there is no
+ * RTC or the crystal did not start. get: 0 and the time; 1 when the clock runs
+ * but nothing has set it since power-up (*out is its power-on default); -1 when
+ * no clock is running. set: 0, or -1 (no clock, or a date out of range).
+ * Privileged: the RTC registers are the port's. */
+int v_port_hw_rtc_start(void);
+int v_port_hw_rtc_get(v_datetime_t *out);
+int v_port_hw_rtc_set(const v_datetime_t *in);
+
+uint32_t v_port_hw_cpu_hz(void);
+
 int v_port_hw_sdio_init(void);
 int v_port_hw_sdio_card_present(void);
 int v_port_hw_sdio_card_init(void);

@@ -39,6 +39,8 @@ int v_write(v_fd_t fd, const void *buf, size_t count);
 long v_lseek(v_fd_t fd, long offset, int whence);
 int v_mkdir(const char *path);
 int v_unlink(const char *path);
+int v_rename(const char *from, const char *to);
+int v_getfree(const char *drive, uint32_t *total_kib, uint32_t *free_kib);
 int v_sync(v_fd_t fd);
 int v_preallocate(const char *path, uint32_t size);
 int v_stat(const char *path, v_stat_t *st);

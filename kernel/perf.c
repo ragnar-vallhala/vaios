@@ -7,6 +7,7 @@
  * Phase 1: 64-bit cycle counter + scheduler accounting.
  */
 
+#include <stdarg.h>
 #include "perf.h"
 
 #if VAIOS_MODULE_PERF
@@ -350,52 +351,64 @@ void v_perf_self_stats(v_perf_task_t *out) {
  * should use print_fmt for that line too — not v_log. See
  * examples/30_perf_example.c for the pattern.
  */
-void v_perf_dump(void) {
+/* The kernel console, for v_perf_dump, in printf's shape. Every line of the
+   dump is well under the buffer. */
+static int perf_kprint(const char *fmt, ...) {
+  char b[160];
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vaprint_fmt_buf(b, sizeof b, fmt, ap);
+  va_end(ap);
+  print(b);
+  return n;
+}
+
+void v_perf_dump_to(int (*pf)(const char *fmt, ...)) {
   v_perf_snapshot_t s;
   v_perf_snapshot(&s);
 
-  print_fmt("=== vaios perf snapshot ===\r\n");
-  print_fmt("uptime:     %u ticks\r\n", (unsigned)s.uptime_ticks);
+  pf("=== vaios perf snapshot ===\r\n");
+  pf("uptime:     %u ticks\r\n", (unsigned)s.uptime_ticks);
   /* 64-bit cycles printed as two %x halves — print_fmt is integer-only. */
-  print_fmt("cycles:     0x%x%x\r\n",
+  pf("cycles:     0x%x%x\r\n",
             (unsigned)(s.cycles >> 32), (unsigned)(s.cycles & 0xFFFFFFFFu));
 
-  print_fmt("[sched]\r\n");
-  print_fmt("  switches:     %u\r\n", (unsigned)s.sched_switches);
-  print_fmt("  idle cycles:  0x%x%x\r\n",
+  pf("[sched]\r\n");
+  pf("  switches:     %u\r\n", (unsigned)s.sched_switches);
+  pf("  idle cycles:  0x%x%x\r\n",
             (unsigned)(s.idle_cycles >> 32),
             (unsigned)(s.idle_cycles & 0xFFFFFFFFu));
 
-  print_fmt("[isr/systick]\r\n");
-  print_fmt("  count:        %u\r\n", (unsigned)s.isr.systick_count);
-  print_fmt("  last:         %u cyc\r\n", (unsigned)s.isr.systick_last_cyc);
-  print_fmt("  min/max:      %u / %u cyc\r\n",
+  pf("[isr/systick]\r\n");
+  pf("  count:        %u\r\n", (unsigned)s.isr.systick_count);
+  pf("  last:         %u cyc\r\n", (unsigned)s.isr.systick_last_cyc);
+  pf("  min/max:      %u / %u cyc\r\n",
             (unsigned)s.isr.systick_min_cyc, (unsigned)s.isr.systick_max_cyc);
-  print_fmt("  preemptions:  %u\r\n", (unsigned)s.isr.systick_preemptions);
+  pf("  preemptions:  %u\r\n", (unsigned)s.isr.systick_preemptions);
 
-  print_fmt("[ipc]\r\n");
-  print_fmt("  takes:        %u (blocked=%u, timeout=%u)\r\n",
+  pf("[ipc]\r\n");
+  pf("  takes:        %u (blocked=%u, timeout=%u)\r\n",
             (unsigned)s.ipc.takes, (unsigned)s.ipc.takes_blocked,
             (unsigned)s.ipc.timeouts);
-  print_fmt("  gives:        %u\r\n", (unsigned)s.ipc.gives);
+  pf("  gives:        %u\r\n", (unsigned)s.ipc.gives);
 
-  print_fmt("[heap]\r\n");
-  print_fmt("  allocs/frees: %u / %u (oom=%u)\r\n",
+  pf("[heap]\r\n");
+  pf("  allocs/frees: %u / %u (oom=%u)\r\n",
             (unsigned)s.heap.allocs, (unsigned)s.heap.frees,
             (unsigned)s.heap.oom);
-  print_fmt("  splits:       %u\r\n", (unsigned)s.heap.splits);
-  print_fmt("  coalesces:    %u\r\n", (unsigned)s.heap.coalesces);
-  print_fmt("  peak bytes:   %u\r\n", (unsigned)s.heap.peak_bytes_in_use);
-  print_fmt("  by class:     ");
+  pf("  splits:       %u\r\n", (unsigned)s.heap.splits);
+  pf("  coalesces:    %u\r\n", (unsigned)s.heap.coalesces);
+  pf("  peak bytes:   %u\r\n", (unsigned)s.heap.peak_bytes_in_use);
+  pf("  by class:     ");
   for (int i = 0; i < V_PERF_HEAP_NUM_CLASSES; i++) {
-    print_fmt("c%d=%u ", i, (unsigned)s.heap.per_class_allocs[i]);
+    pf("c%d=%u ", i, (unsigned)s.heap.per_class_allocs[i]);
   }
-  print_fmt("\r\n");
+  pf("\r\n");
 
   /* Per-task: id, priority, state, CPU cycles, switch-ins, and stack
    * high-water (peak/size). The stack column is the headroom signal —
    * peak well under size means the stack is over-allocated. */
-  print_fmt("[tasks]\r\n");
+  pf("[tasks]\r\n");
   {
     struct Task_Control_Block *tasks[16];
     int nt = task_snapshot_list(tasks, 16);
@@ -405,7 +418,7 @@ void v_perf_dump(void) {
       v_perf_task_stats(tasks[i], &ts);
       unsigned st = (unsigned)tasks[i]->status;
       const char *nm = task_get_name(tasks[i]);
-      print_fmt(
+      pf(
           "  t%u %s%s%sp%u %s cyc=0x%x%x sw=%u stack=%u heap=%u total=%u/%u\r\n",
           (unsigned)tasks[i]->task_id, nm[0] ? "\"" : "", nm,
           nm[0] ? "\" " : "", (unsigned)tasks[i]->priority,
@@ -415,8 +428,10 @@ void v_perf_dump(void) {
           (unsigned)ts.total_peak, (unsigned)ts.stack_size);
     }
   }
-  print_fmt("=== end ===\r\n");
+  pf("=== end ===\r\n");
 }
+
+void v_perf_dump(void) { v_perf_dump_to(perf_kprint); }
 
 /* --------------------------------------------------------------------------
  * Init / reset. v_perf_reset zeros every counter and re-primes the cycle
@@ -479,7 +494,7 @@ void v_perf_init(void) {
 /* --------------------------------------------------------------------------
  * VFS-backed CSV dump (Phase 6b).
  *
- * The terminal `perf show` path stretches the UART (a full snapshot is a
+ * The shell `perf show` path stretches the UART (a full snapshot is a
  * few KB at 115200 baud ≈ 11 KB/s — measurable seconds of console wait
  * during which other output competes). Saving to SD via the VFS layer
  * drops the dump to a single buffered write at FatFs throughput.
@@ -490,7 +505,7 @@ void v_perf_init(void) {
  * print_fmt_buf is 32-bit-only.
  *
  * No runtime mount probe: vfs_open is the probe. If FatFs isn't mounted
- * (or the path is invalid) the open fails and we return -1 — the terminal
+ * (or the path is invalid) the open fails and we return -1 — the shell
  * surfaces a clear error.
  * -------------------------------------------------------------------------- */
 

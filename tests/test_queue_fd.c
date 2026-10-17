@@ -77,6 +77,17 @@ static int recv_u32(int fd, uint32_t *v, uint32_t ticks) {
   return v_queue_recv(fd, v, ticks);
 }
 
+/* A retried wait keeps "forever" forever: q_transfer and v_bus_recv_wait wait
+ * again with what is left after a wake that found nothing, and `ticks - spent`
+ * turned V_WAIT_FOREVER into a finite timeout that expired at once. */
+static void test_wait_left_keeps_forever(void) {
+  TEST_ASSERT_EQ(v_wait_left(V_WAIT_FOREVER, 0), V_WAIT_FOREVER);
+  TEST_ASSERT_EQ(v_wait_left(V_WAIT_FOREVER, 1), V_WAIT_FOREVER);
+  TEST_ASSERT_EQ(v_wait_left(V_WAIT_FOREVER, 123456), V_WAIT_FOREVER);
+  TEST_ASSERT_EQ(v_wait_left(100, 30), 70u);
+  TEST_ASSERT_EQ(v_wait_left(100, 100), 0u);
+}
+
 /* Registration is by name, and a name means one queue for the whole system. */
 static void test_queue_register_validates(void) {
   setup();
@@ -300,6 +311,7 @@ static void test_queue_fd_wait_sees_state_without_signal(void) {
 }
 
 static const test_case_t queue_fd_cases[] = {
+    TEST_CASE(test_wait_left_keeps_forever),
     TEST_CASE(test_queue_register_validates),
     TEST_CASE(test_queue_fd_round_trip),
     TEST_CASE(test_queue_fd_direction_enforced),

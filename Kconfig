@@ -24,9 +24,24 @@ config VAIOS_VERSION_PATCH
 config VAIOS_VERSION
     string "Version string"
     default "0.2.0"
-config AUTHOR
-    string "Author"
-    default "ASHUTOSH VISHWAKARMA"
+config VAIOS_VERSION_NAME
+    string "Release name"
+    default "Brahmaputra"
+    help
+      The name of this release series, shown beside the version in the boot
+      banner: vaios 0.2.0 "Brahmaputra".
+
+      Convention: one name per MINOR series, shared by its patch releases
+      (0.2.0, 0.2.1 ... are all Brahmaputra), taken from the rivers of India
+      in alphabetical order so a name says which release is newer. A letter
+      with no major river is skipped. Bump it with VAIOS_VERSION_MINOR:
+
+        0.1 Alaknanda    0.4 Damodar    0.7 Indus      0.10 Luni
+        0.2 Brahmaputra  0.5 Ganga      0.8 Jhelum     0.11 Mahanadi
+        0.3 Chambal      0.6 Hooghly    0.9 Kaveri     0.12 Narmada
+        then Ravi, Sutlej, Tapti, Yamuna.
+
+      A MAJOR release starts the list again from A.
 endmenu
 
 menu "Platform / Init"
@@ -124,9 +139,17 @@ config VAIOS_FROMISR_PRIO_CHECK
 endmenu
 
 menu "Kernel modules"
-config VAIOS_MODULE_TERMINAL
-    bool "Interactive command terminal"
+config VAIOS_MODULE_SHELL
+    bool "Interactive command shell"
+    depends on VAIOS_DEVFS
     default y
+    help
+      Needs VAIOS_DEVFS (and so VAIOS_SYSCALL_SVC) because the shell does its
+      I/O through file descriptors: v_printf traps through write(1) and input
+      comes from a non-blocking read(0) on /dev/console. That is what lets the
+      shell task run unprivileged, which is the point -- a shell that pokes the
+      console directly has to be privileged, and then every command it dispatches
+      runs with kernel authority.
 config VAIOS_MODULE_VFS
     bool "Virtual file system (FatFs/SDIO, needs NavHAL)"
     default n
@@ -185,6 +208,14 @@ config HEAP_SIZE
     # benchmark example is its own CMake target with no Kconfig choice, so it
     # still needs CONFIG_HEAP_SIZE set by hand (docs/benchmark/bus-ipc.md).
     default 0x8000 if EXAMPLE_SD_USER
+    # The shell example built with -DVAIOS_MODULE_VFS=ON -DVAIOS_MODULE_BUS=ON
+    # (ls/cat/bus) carries FatFs and a bus pool: 11 KiB of .bss, and 0x16000
+    # then ran past the end of an F401's RAM. It used 9 KiB of heap.
+    default 0x10000 if EXAMPLE_SHELL
+    # The unprivileged flight app's statics (a bus pool, queue and pbus tables:
+    # 8.3 KiB) left 0x16000 264 bytes past the end of an F401's RAM once the
+    # console gained an output queue. Its three tasks run in far less.
+    default 0x14000 if EXAMPLE_FLIGHT_USER
     default 0x16000
 config HEAP_WATERMARK_ENABLE
     bool "Panic when heap usage crosses the watermark"
@@ -557,35 +588,88 @@ config VAIOS_KERNEL_LOG_LEVEL
     int "Kernel-internal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
     default 2
     range 0 3
-config TERMINAL_LOG_LEVEL
-    int "Terminal log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
+config SHELL_LOG_LEVEL
+    int "Shell log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
     default 1
     range 0 3
 endmenu
 
-menu "Terminal"
-depends on VAIOS_MODULE_TERMINAL
-config ENABLE_TERMINAL
-    bool "Enable the terminal at boot"
+menu "Shell"
+depends on VAIOS_MODULE_SHELL
+config ENABLE_SHELL
+    bool "Enable the shell at boot"
     default y
 config ALLOWED_MODULES
-    string "Terminal-accessible modules (\"ALL\" or CSV)"
+    string "Shell-accessible modules (\"ALL\" or CSV)"
     default "ALL"
 config CMD_BUFFER_SIZE
-    int "Command history buffer size"
+    int "Command history depth (lines)"
+    range 1 64
     default 10
+    help
+      How many submitted lines the up/down arrows can walk back through. Costs
+      CMD_BUFFER_SIZE * CMD_MAX_LEN bytes of the shell task's stack (the shell's
+      state lives there, not in kernel RAM -- see SHELL_TASK_STACK_SIZE).
+
+      This is a LINE COUNT, not a byte size. The lookup used to size its token
+      buffer by this symbol, which made any command name longer than
+      CMD_BUFFER_SIZE-1 characters impossible to find while registration
+      accepted it -- the two are unrelated quantities that happened to share a
+      name ending in _SIZE.
 config CMD_MAX_LEN
-    int "Maximum command length (bytes)"
-    default 32
+    int "Maximum command line length (bytes)"
+    range 16 256
+    default 64
+    help
+      The whole line, command and arguments together. 32 was tight once
+      arguments existed (`perf save /mnt/0:perf.csv` is 26).
 config MAX_CMD_NUMBER
-    int "Maximum registered commands"
-    default 6
-config ESCAPE_SEQ_LEN
-    int "Escape-sequence buffer length"
-    default 2
-config TERMINAL_TASK_STACK_SIZE
-    int "Terminal task stack size (bytes)"
-    default 1024
+    int "Maximum commands registered at runtime"
+    range 4 64
+    default 16
+    help
+      Slots for shell_register_command, in the shell task's own memory (12
+      bytes each, on its stack). The built-ins and the startup table handed to
+      shell_run are const tables in flash and take none of them.
+      shell_register_command returns 1 once this is reached.
+config SHELL_INPUT_FIFO_SIZE
+    int "Shell input FIFO (bytes)"
+    range 16 512
+    default 64
+    help
+      Staging between a read of fd 0 and the line editor, in the shell task's
+      memory. The console's own 128-byte ring absorbs bursts; this only holds
+      what one read hands over, so it is small.
+config SHELL_MAX_ARGV
+    int "Maximum tokens per command line"
+    range 2 32
+    default 8
+config SHELL_TASK_STACK_SIZE
+    int "Shell task stack size (bytes)"
+    range 512 8192
+    default 4096
+    help
+      The shell's whole state is on this stack now -- history, line, input
+      staging and the runtime registry, about 1 KiB at the defaults -- so it can
+      run unprivileged. Measured on an F401 with it there, the high-water mark
+      was 1828 bytes: 89% of the old 2048, with a command's own frame still to
+      come on top. Under VAIOS_MPU_USER_SEPARATION a task block must be a power
+      of two (an MPU region), so the next size up is 4096 -- 3072 is refused at
+      task creation.
+
+      Before that, measured on an F401 with `perf show`, the high-water mark was
+      948 bytes of a 1024-byte stack -- 93%, with 76 bytes spare. That is too
+      close to trust: shell_run holds the line buffer (CMD_MAX_LEN) and the argv
+      array on its own frame, the print path adds a 128-byte local on top, and a
+      command's own frame sits above all of it.
+
+      1024 was chosen when CMD_MAX_LEN was 32. Raising that to 64 took 32 bytes
+      straight off the headroom and the stack default did not follow, which is
+      how it ended up at 93%.
+
+      Raise it further if your commands recurse or format much; the task's
+      high-water is in `perf show` under [tasks], so this is measurable rather
+      than guessed.
 endmenu
 
 # Per-example feature overlay: EXAMPLE_<TOKEN> entries whose `select`s pull in

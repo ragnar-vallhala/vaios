@@ -155,9 +155,103 @@ extern void v_kernel_tick(void);
 #ifdef NAVHAL
 void hal_timebase_tick(void); // NavHAL timebase.c; not in the public navhal.h
 #endif
+#if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+/* Console input on a UART. With UART DMA, DMA fills a circular ring by
+ * itself and the console is handed what arrived on three events: the line
+ * going idle after a burst, and the ring reaching its half-way and wrap
+ * points -- so a burst costs a handful of interrupts, not one a byte, and one
+ * longer than the ring is drained before DMA can overwrite it. Without DMA,
+ * one RXNE interrupt per byte. (NavHAL's USART vectors are defined only with
+ * UART DMA, but Default_Handler dispatches to whatever is attached, so the
+ * RXNE path works without them -- navhal todo 171.) */
+#define CONSOLE_UART_RX_IRQ 1
+static void (*_console_rx_sink)(const uint8_t *, uint16_t);
+
+static void console_uart_rx_isr(void) {
+  /* RXNEIE also fires on overrun; reading SR (available) then DR clears both. */
+  while (hal_uart_available(BOARD_CONSOLE_UART)) {
+    uint8_t c = (uint8_t)hal_uart_read_char(BOARD_CONSOLE_UART);
+    _console_rx_sink(&c, 1);
+  }
+}
+
+#if NAVHAL_CONFIG_DRV_DMA && NAVHAL_CONFIG_DRV_UART_DMA
+#define CONSOLE_RX_DMA 1
+/* A whole number of cache lines, line-aligned: on the F7 the ring is
+   invalidated before it is read, and invalidation works on whole lines. The
+   half-way interrupt drains it every 128 bytes whatever the line does. */
+#ifndef NAVHAL_CACHE_LINE
+#define NAVHAL_CACHE_LINE 32
+#endif
+#define CONSOLE_RX_RING 256
+static uint8_t _console_rx_ring[CONSOLE_RX_RING]
+    __attribute__((aligned(NAVHAL_CACHE_LINE)));
+static uint16_t _console_rx_tail;
+
+/* From the idle-line and the DMA half/wrap interrupts, which share one
+   priority and so never interrupt each other: one producer at a time. Hands
+   the console every byte DMA has written since last time, in at most two
+   pieces when the ring wrapped. */
+static void console_rx_dma_drain(void) {
+  uint16_t head;
+  if (hal_uart_dma_rx_index(BOARD_CONSOLE_UART, &head) != HAL_OK ||
+      head >= CONSOLE_RX_RING)
+    return;
+  while (_console_rx_tail != head) {
+    uint16_t end = head > _console_rx_tail ? head : CONSOLE_RX_RING;
+    uint16_t n = (uint16_t)(end - _console_rx_tail);
+    hal_uart_dma_rx_sync(BOARD_CONSOLE_UART, _console_rx_tail, n);
+    _console_rx_sink(&_console_rx_ring[_console_rx_tail], n);
+    _console_rx_tail = end == CONSOLE_RX_RING ? 0u : end;
+  }
+}
+#endif
+#endif
+
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+static void (*_console_rx_sink)(const uint8_t *, uint16_t);
+
+/* A host opening the port raises DTR, and the console reports it as one ENQ
+ * (0x05, "who are you") into the RX path -- the byte a terminal answers with
+ * its identity -- and the shell answers with the banner and a prompt. Without
+ * it both were printed once at boot, before anyone listened, and the first
+ * thing a user saw was nothing.
+ *
+ * Polled from the tick because NavHAL tracks DTR (SET_CONTROL_LINE_STATE) but
+ * has no callback for it -- one load per tick, and nothing wakes until a host
+ * actually attaches. The OTG_FS interrupt (level 8) feeds the same sink and
+ * outranks SysTick (14), so the push is made with it masked: the sink's ring has
+ * one producer at a time. */
+/* Not at the edge itself, but this long after it, and only if DTR is still up.
+ * Linux raises DTR inside open(), while the tty is still in its default cooked,
+ * echoing mode; the terminal program switches it to raw a moment later. A
+ * prompt sent into that gap is echoed straight back as typing -- seen on the
+ * F401 as "vaios> v" fragments in the line. */
+#define CONSOLE_ATTACH_SETTLE_TICKS (100000u / TICK_PERIOD_US) /* 100 ms */
+
+static void console_attach_poll(void) {
+  static uint32_t up; /* ticks DTR has been high; 0 = down */
+  if (!_console_rx_sink)
+    return;
+  if (!hal_usb_cdc_connected()) {
+    up = 0;
+    return;
+  }
+  if (up <= CONSOLE_ATTACH_SETTLE_TICKS && ++up == CONSOLE_ATTACH_SETTLE_TICKS) {
+    static const uint8_t enq = 0x05;
+    uint32_t st = ENTER_CRITICAL_FROM_ISR();
+    _console_rx_sink(&enq, 1);
+    EXIT_CRITICAL_FROM_ISR(st);
+  }
+}
+#endif
+
 void SysTick_Handler(void) {
 #ifdef NAVHAL
   hal_timebase_tick();
+#endif
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  console_attach_poll();
 #endif
   v_kernel_tick();
 }
@@ -202,6 +296,32 @@ uint32_t v_port_hw_active_irq_priority(uint32_t *vectactive_out) {
  * Console (log/terminal UART, or semihosting under QEMU)
  * ------------------------------------------------------------------------- */
 
+#if defined(NAVHAL) && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC && VAIOS_PORT_CONSOLE_DMA
+/* A console DMA transfer in flight. A direct write (the console writer, a
+ * kernel print) used to go straight to the data register while the logger's
+ * DMA was still sending, and the two came out interleaved byte by byte -- on a
+ * Nucleo-F401RE, the shell's first prompt woven into the boot log's last line.
+ * So the port tracks its own transfer and a direct write waits for it. */
+static volatile uint8_t _console_dma_busy;
+static uint8_t _console_dma_tracked; /* completion is wired, so busy clears */
+static void (*_console_dma_done_cb)(void);
+
+static void console_dma_done(void) {
+  _console_dma_busy = 0;
+  if (_console_dma_done_cb)
+    _console_dma_done_cb();
+}
+
+static void console_dma_wait(void) {
+  /* Bounded: a panic printing from an interrupt may mask the very DMA
+     interrupt it would wait for. ~100 ms at 84 MHz, far past one log flush
+     (a full 128-byte buffer is 11 ms at 115200). */
+  for (uint32_t guard = 2000000u; _console_dma_busy && guard; guard--)
+    ;
+  _console_dma_busy = 0;
+}
+#endif
+
 void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
 #ifdef NAVHAL
 #if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
@@ -235,8 +355,10 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void)) {
     // it, so DMA1_Stream6_IRQn was right only for USART2 on an F4 that nothing
     // had rebound. This follows whatever the console UART actually got.
     hal_dma_binding_t tx;
-    if (hal_uart_dma_get_binding(BOARD_CONSOLE_UART, true, &tx) == HAL_OK)
-      hal_interrupt_attach_callback(tx.irq, dma_tx_done_cb);
+    _console_dma_done_cb = dma_tx_done_cb;
+    if (hal_uart_dma_get_binding(BOARD_CONSOLE_UART, true, &tx) == HAL_OK &&
+        hal_interrupt_attach_callback(tx.irq, console_dma_done) == HAL_OK)
+      _console_dma_tracked = 1;
   }
 #else
   (void)dma_tx_done_cb;
@@ -253,7 +375,10 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
   // peripheral FIFO, so the buffered logger's "DMA" write is a plain write.
   hal_usb_cdc_write(bytes, (uint16_t)len);
 #elif VAIOS_PORT_CONSOLE_DMA
-  hal_uart_write_dma(BOARD_CONSOLE_UART, bytes, len);
+  console_dma_wait(); /* one transfer at a time, whoever started the last */
+  _console_dma_busy = _console_dma_tracked;
+  if (hal_uart_write_dma(BOARD_CONSOLE_UART, bytes, len) != HAL_OK)
+    _console_dma_busy = 0; /* never started: nothing will complete it */
 #else
   (void)bytes;
   (void)len;
@@ -265,6 +390,9 @@ void v_port_hw_console_write_string(const char *str) {
 #if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
   hal_usb_cdc_write_string(str);
 #else
+#if VAIOS_PORT_CONSOLE_DMA
+  console_dma_wait();
+#endif
   hal_uart_write_string(BOARD_CONSOLE_UART, str);
 #endif
 #else
@@ -272,28 +400,139 @@ void v_port_hw_console_write_string(const char *str) {
 #endif
 }
 
-char v_port_hw_console_read_char(void) {
-#ifdef NAVHAL
-#if NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
-  uint8_t c = 0;
-  while (hal_usb_cdc_read(&c, 1) == 0) // CDC reads never block; the console
-    ;                                  // contract here is blocking
-  return (char)c;
-#else
-  return hal_uart_read_char(BOARD_CONSOLE_UART);
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len)) {
+  if (!sink)
+    return 0;
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  /* The CDC driver calls this from the OTG_FS interrupt instead of queueing
+     for hal_usb_cdc_read. Its callback type is exactly this signature. Kept
+     here as well, for the attach ^L (console_attach_poll). */
+  _console_rx_sink = sink;
+  return hal_usb_cdc_set_rx_callback(sink) == HAL_OK;
+#elif defined(CONSOLE_UART_RX_IRQ)
+  _console_rx_sink = sink;
+#if defined(CONSOLE_RX_DMA)
+  /* Wire the events first and start DMA last: once DMA is reading the data
+     register the RXNE fallback could never see a byte, so DMA starts only when
+     everything that drains it is in place, and anything wired is undone if it
+     cannot. */
+  if (hal_uart_attach_idle_callback(BOARD_CONSOLE_UART, console_rx_dma_drain) ==
+          HAL_OK &&
+      hal_uart_dma_rx_attach_callback(BOARD_CONSOLE_UART,
+                                      console_rx_dma_drain) == HAL_OK &&
+      hal_uart_init_dma_rx(BOARD_CONSOLE_UART, _console_rx_ring,
+                           CONSOLE_RX_RING) == HAL_OK)
+    return 1;
+  hal_uart_dma_rx_attach_callback(BOARD_CONSOLE_UART, NULL);
+  hal_uart_detach_idle_callback(BOARD_CONSOLE_UART);
+  /* no DMA stream for it: fall back to an interrupt per byte */
 #endif
+  if (hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ,
+                                    console_uart_rx_isr) != HAL_OK)
+    return 0;
+  return hal_uart_enable_interrupt(BOARD_CONSOLE_UART, 1, 0) == HAL_OK;
 #else
-  return sh_readc();
+  /* QEMU semihosting has no async RX: the reader polls. */
+  return 0;
 #endif
 }
 
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
-#ifdef NAVHAL
-  hal_interrupt_attach_callback(BOARD_CONSOLE_UART_IRQ, rx_cb);
-  hal_interrupt_enable(BOARD_CONSOLE_UART_IRQ);
+void v_port_hw_system_reset(void) {
+  /* What CMSIS NVIC_SystemReset does: keep the priority grouping, request the
+     reset, and wait for it. The barriers make sure everything before the write
+     has landed and nothing after it runs. */
+  volatile uint32_t *aircr = (volatile uint32_t *)0xE000ED0CUL;
+  __asm volatile("dsb" ::: "memory");
+  *aircr = 0x05FA0000UL | (*aircr & 0x700UL) | (1UL << 2);
+  __asm volatile("dsb" ::: "memory");
+  for (;;)
+    ;
+}
+
+#if defined(NAVHAL) && NAVHAL_CONFIG_DRV_RTC
+/* The crystal: a marginal one takes ten seconds from cold (the NAVIXSM's
+   measured 7-10). No LSI fallback -- an RC that drifts ~5% makes a clock that
+   looks right and is not. */
+#define RTC_LSE_TIMEOUT_MS 15000
+
+int v_port_hw_rtc_start(void) {
+  hal_rtc_config_t cfg = {.clock = HAL_RTC_CLOCK_LSE,
+                          .lse_timeout_ms = RTC_LSE_TIMEOUT_MS};
+  return hal_rtc_init(&cfg) == HAL_OK ? 0 : -1;
+}
+
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  hal_rtc_datetime_t dt;
+  if (!out || hal_rtc_get_datetime(&dt) != HAL_OK)
+    return -1;
+  out->year = dt.year;
+  out->month = dt.month;
+  out->day = dt.day;
+  out->hour = dt.hour;
+  out->minute = dt.minute;
+  out->second = dt.second;
+  return hal_rtc_is_set() ? 0 : 1;
+}
+
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  if (!in || in->year < 2000 || in->year > 2099)
+    return -1;
+  /* The calendar keeps a weekday too: Sakamoto's method, 1 = Monday. */
+  static const uint8_t t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  int y = in->year - (in->month < 3);
+  int w = (y + y / 4 - y / 100 + y / 400 + t[(in->month - 1) % 12] + in->day) % 7;
+  hal_rtc_datetime_t dt = {.year = in->year,
+                           .month = in->month,
+                           .day = in->day,
+                           .weekday = (uint8_t)(w == 0 ? 7 : w),
+                           .hour = in->hour,
+                           .minute = in->minute,
+                           .second = in->second};
+  return hal_rtc_set_datetime(&dt) == HAL_OK ? 0 : -1;
+}
 #else
-  /* QEMU semihosting has no async RX IRQ; the terminal polls instead. */
-  (void)rx_cb;
+int v_port_hw_rtc_start(void) { return -1; }
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  (void)out;
+  return -1;
+}
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  (void)in;
+  return -1;
+}
+#endif
+
+uint32_t v_port_hw_cpu_hz(void) {
+#ifdef NAVHAL
+  return hal_clock_get_sysclk();
+#else
+  return 0; /* QEMU: the no-HAL clock is whatever the model runs at */
+#endif
+}
+
+/* Non-blocking single-byte read. 1 if a byte was taken into *c, 0 if none was
+ * waiting. This is the route-agnostic way in: an interrupt-driven console feeds
+ * its reader from the ISR and needs nothing here, while CDC has no RX interrupt
+ * of its own to hand over, so its reader polls. A caller that does both is
+ * correct on either route without knowing which it has. */
+int v_port_hw_console_try_read(char *c) {
+  if (!c)
+    return 0;
+#if defined(NAVHAL) && NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+  uint8_t b = 0;
+  if (hal_usb_cdc_read(&b, 1) == 0)
+    return 0;
+  *c = (char)b;
+  return 1;
+#elif defined(NAVHAL)
+  if (!hal_uart_available(BOARD_CONSOLE_UART))
+    return 0;
+  *c = hal_uart_read_char(BOARD_CONSOLE_UART);
+  return 1;
+#else
+  (void)c;
+  return 0; /* semihosting: no non-blocking read */
 #endif
 }
 

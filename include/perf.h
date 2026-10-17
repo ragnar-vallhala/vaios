@@ -145,6 +145,9 @@ void v_perf_self_stats(v_perf_task_t *out);
  * use v_perf_dump_to_file (Phase 6b) for long-run capture to avoid
  * stretching the serial console. */
 void v_perf_dump(void);
+/* The same dump through any printf-shaped function -- v_printf for a task's
+   fd 1, so the shell's `perf show > file` captures it. */
+void v_perf_dump_to(int (*pf)(const char *fmt, ...));
 
 /* Zero all counters. The cycle counter and per-task last_scheduled_cyc
  * are re-primed to the current cycle so accounting resumes cleanly. */
@@ -186,6 +189,7 @@ static inline void v_perf_self_stats(v_perf_task_t *out) {
   if (out) { v_perf_task_t z = {0}; *out = z; }
 }
 static inline void v_perf_dump(void) {}
+static inline void v_perf_dump_to(int (*pf)(const char *fmt, ...)) { (void)pf; }
 static inline void v_perf_reset(void) {}
 #if VAIOS_MODULE_VFS
 static inline int v_perf_dump_to_file(const char *path) {

@@ -8,12 +8,203 @@
 #if VAIOS_MODULE_VFS
 #include "vfile.h"
 #include "vfs.h"
+#include "ipc.h" // VA_PASS (v_vfs_mount)
 #endif
 #include "perf.h"
 #include <stddef.h>
 #include <stdint.h>
 
 extern uint32_t systick_count;
+
+/* --- the boot banner ---------------------------------------------------------
+ * What a Linux kernel says first: what this is, built from what, by whom and
+ * when, and what it runs on. All compile-time, so it sits in flash and the
+ * unprivileged shell prints the same text (its `version`, and on attach). The
+ * build identity comes from vaios_build.h, regenerated on every build. */
+#if __has_include("vaios_build.h")
+#include "vaios_build.h"
+#else
+#define VAIOS_BUILD_REV "unknown"
+#define VAIOS_BUILD_TIME "unknown"
+#define VAIOS_BUILD_BY "unknown"
+#endif
+#ifndef VAIOS_VERSION /* from Kconfig; absent only to a bare analyser run */
+#define VAIOS_VERSION "unknown"
+#endif
+#ifndef VAIOS_VERSION_NAME /* the release series' name (Kconfig) */
+#define VAIOS_VERSION_NAME "unnamed"
+#endif
+#if defined(__VERSION__) && defined(__GNUC__) && !defined(__clang__)
+#define VAIOS_CC "gcc " __VERSION__
+#elif defined(__VERSION__)
+#define VAIOS_CC __VERSION__
+#else
+#define VAIOS_CC "an unknown compiler"
+#endif
+
+
+/* --- the renderer ------------------------------------------------------------
+ * neofetch-shaped: the name in figlet's standard font on the left, a panel of
+ * what this image is on the right, a colour strip under it. One row at a time
+ * through `put`, from const data and a stack buffer only -- so the boot path
+ * (print) and an unprivileged shell (its fd-1 writer) render the same thing. */
+#define B_LOGO "\x1B[1;36m"
+#define B_KEY "\x1B[1;36m"
+#define B_TITLE "\x1B[1;37m"
+#define B_DIM "\x1B[2m"
+#define B_RESET "\x1B[0m"
+
+static const char *const _logo[] = {
+    "__      __   _  ____   _____ ",
+    "\\ \\    / /  (_)/ __ \\ / ____|",
+    " \\ \\  / /_ _ _| |  | | (___  ",
+    "  \\ \\/ / _` | | |  | |\\___ \\ ",
+    "   \\  / (_| | | |__| |____) |",
+    "    \\/ \\__,_|_|\\____/|_____/ ",
+};
+#define LOGO_ROWS ((int)(sizeof _logo / sizeof _logo[0]))
+#define LOGO_PAD "                             " /* a logo row's width */
+
+typedef struct {
+  char *p, *end;
+} wbuf_t;
+
+static void put_s(wbuf_t *w, const char *s) {
+  while (*s && w->p < w->end)
+    *w->p++ = *s++;
+  *w->p = '\0';
+}
+
+/* "key" padded to a column: the formatter has no %-Ns. */
+static void put_key(wbuf_t *w, const char *k) {
+  put_s(w, B_KEY);
+  int n = 0;
+  for (; k[n]; n++)
+    ;
+  put_s(w, k);
+  put_s(w, B_RESET);
+  while (n++ < 10)
+    put_s(w, " ");
+}
+
+enum {
+  ROW_TITLE,
+  ROW_RULE,
+  ROW_BOARD,
+  ROW_SOC,
+  ROW_MEMORY,
+  ROW_KERNEL,
+  ROW_UPTIME,
+  ROW_BUILT,
+  ROW_BY,
+  ROW_CC,
+  ROW_GAP,
+  ROW_PALETTE,
+  ROW_PALETTE_BRIGHT,
+  ROW_COUNT
+};
+
+static void info_row(int r, wbuf_t *w, uint32_t cpu_hz, int32_t uptime_s) {
+  char num[48];
+  switch (r) {
+  case ROW_TITLE:
+    put_s(w, B_TITLE "vaios" B_RESET "  " B_DIM VAIOS_BUILD_REV B_RESET);
+    break;
+  case ROW_RULE: {
+    /* as long as the title it underlines */
+    int n = (int)sizeof("vaios  " VAIOS_BUILD_REV) - 1;
+    while (n-- > 0)
+      put_s(w, "-");
+    break;
+  }
+  case ROW_BOARD:
+    put_key(w, "board");
+    put_s(w, VAIOS_PORT_BOARD);
+    break;
+  case ROW_SOC:
+    put_key(w, "soc");
+    put_s(w, VAIOS_PORT_SOC);
+    if (cpu_hz) {
+      print_fmt_buf(num, sizeof num, " @ %d MHz", (int)(cpu_hz / 1000000u));
+      put_s(w, num);
+    }
+    break;
+  case ROW_MEMORY:
+    put_key(w, "memory");
+    print_fmt_buf(num, sizeof num, "%d KiB kernel heap", (int)(HEAP_SIZE / 1024));
+    put_s(w, num);
+    break;
+  case ROW_KERNEL:
+    /* the version and its release name (VAIOS_VERSION_NAME): what this kernel
+       is, and nothing that grows with the build -- what is compiled in is the
+       build's config, not a banner line */
+    put_key(w, "kernel");
+    put_s(w, VAIOS_VERSION " \"" VAIOS_VERSION_NAME "\"");
+    break;
+  case ROW_UPTIME:
+    put_key(w, "uptime");
+    if (uptime_s >= 3600)
+      print_fmt_buf(num, sizeof num, "%dh %dm %ds", (int)(uptime_s / 3600),
+                    (int)(uptime_s / 60 % 60), (int)(uptime_s % 60));
+    else if (uptime_s >= 60)
+      print_fmt_buf(num, sizeof num, "%dm %ds", (int)(uptime_s / 60),
+                    (int)(uptime_s % 60));
+    else
+      print_fmt_buf(num, sizeof num, "%ds", (int)uptime_s);
+    put_s(w, num);
+    break;
+  case ROW_BUILT:
+    put_key(w, "built");
+    put_s(w, VAIOS_BUILD_TIME);
+    break;
+  case ROW_BY:
+    put_key(w, "by");
+    put_s(w, VAIOS_BUILD_BY);
+    break;
+  case ROW_CC:
+    put_key(w, "compiler");
+    put_s(w, VAIOS_CC);
+    break;
+  case ROW_PALETTE:
+  case ROW_PALETTE_BRIGHT:
+    /* the eight colours as backgrounds (40-47), then their bright forms */
+    for (char c = '0'; c <= '7'; c++) {
+      char dark[] = {'\x1B', '[', '4', c, 'm', ' ', ' ', ' ', '\0'};
+      char bright[] = {'\x1B', '[', '1', '0', c, 'm', ' ', ' ', ' ', '\0'};
+      put_s(w, r == ROW_PALETTE ? dark : bright);
+    }
+    put_s(w, B_RESET);
+    break;
+  default: /* ROW_GAP */
+    break;
+  }
+}
+
+void v_banner_print(void (*put)(const char *line), uint32_t cpu_hz,
+                    int32_t uptime_s) {
+  char line[200];
+  /* The logo centred on the text rows (title to compiler), counted as
+     printed: at boot the uptime row is left out. */
+  int top = (ROW_CC + 1 - (uptime_s < 0) - LOGO_ROWS) / 2, printed = 0;
+  for (int r = 0; r < ROW_COUNT; r++) {
+    if (r == ROW_UPTIME && uptime_s < 0)
+      continue; /* at boot: there is no uptime yet */
+    wbuf_t w = {line, line + sizeof line - 3};
+    put_s(&w, "  ");
+    int l = printed++ - top;
+    if (l >= 0 && l < LOGO_ROWS) {
+      put_s(&w, B_LOGO);
+      put_s(&w, _logo[l]);
+      put_s(&w, B_RESET);
+    } else {
+      put_s(&w, LOGO_PAD);
+    }
+    put_s(&w, "  ");
+    info_row(r, &w, cpu_hz, uptime_s);
+    put_s(&w, "\r\n");
+    put(line);
+  }
+}
 
 void v_init(vaios_init_config_t *cfg) {
   // resetting global variables
@@ -34,6 +225,12 @@ void v_init(vaios_init_config_t *cfg) {
 
 #if UART_LOGGING_ENABLE == 1
   v_port_hw_console_init(CONSOLE_BAUDRATE, dma_tx_complete_callback);
+  /* First thing out, as on Linux. Through the kernel print path, so it lands
+     in /dev/kmsg as well and `dmesg` can show it to a terminal that attached
+     after boot -- on USB CDC, every terminal. */
+  print("\r\n");
+  v_banner_print(print, v_port_hw_cpu_hz(), -1);
+  print("\r\n");
   v_log(LOG_INFO, "[VAIOS INIT] kernel tick started with period %d us",
         TICK_PERIOD_US);
   v_log(LOG_INFO, "[VAIOS INIT] console started with baudrate %d bps",
@@ -63,27 +260,26 @@ void v_system_init(vaios_init_config_t *cfg) {
         ;
     }
 
-    if (!v_port_hw_sdio_card_present()) {
-      v_log(LOG_ERROR, "SD slot is empty (card-detect reads no card).");
-      while (1)
-        ;
-    }
-
-    if (v_port_hw_sdio_card_init() != 0) {
-      v_log(LOG_ERROR, "SD Card Handshake Failed!");
-      while (1)
-        ;
-    }
-
+    /* The card, if there is one, mounted where Linux puts removable media:
+       /mnt/sd. One that is absent, does not answer or holds no FAT filesystem
+       leaves the system running without it -- /mnt/sd simply is not there. */
+    if (!v_port_hw_sdio_card_present())
+      v_log(LOG_WARN, "sd: no card in the slot; /mnt/sd not mounted");
+    else if (v_port_hw_sdio_card_init() != 0)
+      v_log(LOG_ERROR, "sd: the card did not answer; /mnt/sd not mounted");
 #if VAIOS_MODULE_VFS
-    /* Mount FatFS via the thread-safe VFS layer */
-    if (vfs_init() != 0) {
-      v_log(LOG_ERROR, "Failed to initialize VFS.");
-      while (1)
-        ;
-    }
+    else if (vfs_init() != 0)
+      v_log(LOG_ERROR, "sd: no FAT filesystem on it; /mnt/sd not mounted");
+#if VAIOS_DEVFS
+    else if (v_vfs_mount("/mnt/sd", "0:") != VA_PASS)
+      v_log(LOG_ERROR, "sd: cannot mount at /mnt/sd");
+#endif
 #endif
   }
+
+  /* The boot log out before anything else prints: nothing is running yet, so
+     waiting here costs nobody. */
+  v_log_drain();
 }
 
 extern uint8_t scheduler_running;

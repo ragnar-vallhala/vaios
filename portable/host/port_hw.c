@@ -12,6 +12,7 @@
 #include "port.h"
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -75,12 +76,30 @@ void v_port_hw_console_write_string(const char *str) {
   fputs(str, stdout);
   fflush(stdout);
 }
-char v_port_hw_console_read_char(void) {
-  int c = getchar();
-  return (c == EOF) ? '\0' : (char)c;
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len)) {
+  (void)sink; // no async stdin in this port: the reader polls
+  return 0;
 }
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) {
-  (void)rx_cb; // no async stdin in this port
+
+uint32_t v_port_hw_cpu_hz(void) { return 0; }
+void v_port_hw_system_reset(void) { exit(0); } /* a host "reset" ends the run */
+/* No RTC on the host port. */
+int v_port_hw_rtc_start(void) { return -1; }
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  (void)out;
+  return -1;
+}
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  (void)in;
+  return -1;
+}
+
+// No non-blocking stdin either: a reader on this port gets its bytes some other
+// way (the unit tests feed the shell directly).
+int v_port_hw_console_try_read(char *c) {
+  (void)c;
+  return 0;
 }
 
 // --- SDIO: none. -------------------------------------------------------------

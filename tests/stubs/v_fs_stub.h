@@ -16,7 +16,7 @@ struct vfs_stub_state {
   int init_ret;
 
   int open_called;
-  const char *open_path;
+  char open_path[64]; /* a copy: the VFS resolves into its own stack */
   int open_flags;
   v_fd_t open_ret;
 
@@ -43,29 +43,38 @@ struct vfs_stub_state {
   long lseek_ret;
 
   int mkdir_called;
-  const char *mkdir_path;
+  char mkdir_path[64]; /* a copy: the VFS resolves into its own stack */
   int mkdir_ret;
 
   int unlink_called;
-  const char *unlink_path;
+  char unlink_path[64]; /* a copy: the VFS resolves into its own stack */
   int unlink_ret;
+
+  int rename_called;
+  char rename_from[64], rename_to[64]; /* copies: the worker's slot is reused */
+  int rename_ret;
+
+  int getfree_called;
+  char getfree_drive[8];
+  uint32_t getfree_total, getfree_free;
+  int getfree_ret;
 
   int sync_called;
   v_fd_t sync_fd;
   int sync_ret;
 
   int preallocate_called;
-  const char *preallocate_path;
+  char preallocate_path[64]; /* a copy: the VFS resolves into its own stack */
   uint32_t preallocate_size;
   int preallocate_ret;
 
   int stat_called;
-  const char *stat_path;
+  char stat_path[64]; /* a copy: the VFS resolves into its own stack */
   int stat_ret;
   v_stat_t stat_out; /* copied into the caller's *st */
 
   int opendir_called;
-  const char *opendir_path;
+  char opendir_path[64]; /* a copy: the VFS resolves into its own stack */
   v_dir_t opendir_ret;
 
   int readdir_called;

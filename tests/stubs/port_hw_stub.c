@@ -45,9 +45,53 @@ void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len) {
   (void)bytes;
   (void)len;
 }
-void v_port_hw_console_write_string(const char *str) { (void)str; }
-char v_port_hw_console_read_char(void) { return 0; }
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void)) { (void)rx_cb; }
+/* What reached the console hardware, for tests of the deferred writer. */
+char g_stub_console_out[512];
+int g_stub_console_out_len;
+void v_port_hw_console_write_string(const char *str) {
+  while (*str && g_stub_console_out_len < (int)sizeof g_stub_console_out - 1)
+    g_stub_console_out[g_stub_console_out_len++] = *str++;
+  g_stub_console_out[g_stub_console_out_len] = '\0';
+}
+/* The console's RX interrupt, for tests: the sink devfs registered is kept so
+ * a test can call it as the ISR would, and g_stub_console_rx_armed decides
+ * whether the port claims to have an interrupt (default: no, the poll path). */
+void (*g_stub_console_rx_sink)(const uint8_t *, uint16_t);
+int g_stub_console_rx_armed;
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len)) {
+  g_stub_console_rx_sink = sink;
+  return g_stub_console_rx_armed;
+}
+/* Returns 0 always: the shell tests drive shell_feed() directly, so the editor
+   is exercised without pretending there is a console here. */
+int v_port_hw_console_try_read(char *c) {
+  (void)c;
+  return 0;
+}
+
+uint32_t v_port_hw_cpu_hz(void) { return 0; }
+int g_stub_resets;
+void v_port_hw_system_reset(void) { g_stub_resets++; }
+
+/* An RTC for `date`: g_stub_rtc_state -1 (none), 0 (set), 1 (running, unset);
+   set stores into g_stub_rtc and makes it "set". */
+v_datetime_t g_stub_rtc = {2000, 1, 1, 0, 0, 0};
+int g_stub_rtc_state = -1;
+int v_port_hw_rtc_start(void) { return g_stub_rtc_state < 0 ? -1 : 0; }
+int v_port_hw_rtc_get(v_datetime_t *out) {
+  if (g_stub_rtc_state < 0)
+    return -1;
+  *out = g_stub_rtc;
+  return g_stub_rtc_state;
+}
+int v_port_hw_rtc_set(const v_datetime_t *in) {
+  if (g_stub_rtc_state < 0 || in->year < 2000 || in->year > 2099)
+    return -1;
+  g_stub_rtc = *in;
+  g_stub_rtc_state = 0;
+  return 0;
+}
 
 int v_port_hw_sdio_init(void) { return -1; }
 int v_port_hw_sdio_card_present(void) { return 0; }

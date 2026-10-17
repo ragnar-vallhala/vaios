@@ -20,8 +20,15 @@
 typedef int vfs_fd_t;
 typedef int vfs_dir_t;
 
-/* FatFS short (8.3) names: 12 chars + NUL (FF_USE_LFN = 0). */
+/* A directory entry's name, NUL included: NavHAL's V_NAME_MAX, which follows
+   FatFs long file names -- 8.3 (13) without them, CONFIG_FS_LFN_MAX + 1 with.
+   vfs.c asserts the two agree, since the name is copied out of NavHAL's. The
+   macros come from navhal_target.h (force-included on NAVHAL builds). */
+#if defined(NAVHAL_CONFIG_FS_LFN) && NAVHAL_CONFIG_FS_LFN
+#define VFS_NAME_MAX (NAVHAL_CONFIG_FS_LFN_MAX + 1)
+#else
 #define VFS_NAME_MAX 13
+#endif
 
 /* One directory entry from vfs_readdir(). */
 typedef struct {
@@ -38,6 +45,12 @@ typedef struct {
   uint8_t exists; /* 0 distinguishes "absent" from "error" */
 } vfs_stat_t;
 
+/* A drive's size and free space, from v_vfs_space. */
+typedef struct {
+  uint32_t total_kib;
+  uint32_t free_kib;
+} vfs_space_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,6 +63,8 @@ int vfs_write(vfs_fd_t fd, const void *buf, size_t count);
 long vfs_lseek(vfs_fd_t fd, long offset, int whence);
 int vfs_mkdir(const char *path);
 int vfs_unlink(const char *path);
+int vfs_rename(const char *from, const char *to);
+int vfs_space(const char *drive, vfs_space_t *out);
 int vfs_sync(vfs_fd_t fd);
 int vfs_preallocate(const char *path, uint32_t size);
 long vfs_size(vfs_fd_t fd);
@@ -103,9 +118,13 @@ int vfs_closedir(vfs_dir_t d);
 #define V_VFS_EAGAIN (-11)  /* no worker is running to service the request */
 #define V_VFS_ETIMEDOUT (-110)
 
-/* Privileged, at init: publish the VFS under a devfs path prefix (which must end
- * in '/', e.g. "/mnt/"). VA_PASS or V_VFS_EINVAL. */
-int v_vfs_mount(const char *prefix);
+/* Privileged, at init: mount FatFs drive `drive` ("0:") at `point`
+ * ("/mnt/sd"), as mount(8) would. Every task then reaches it by that path --
+ * "/mnt/sd/logs/a.csv" -- and never by its drive letter. The point shows up
+ * in devfs's registry (v_devfs_node) as "/mnt/sd/", which is how a listing of /
+ * finds it. v_system_init mounts the SD card at /mnt/sd when one answers.
+ * VA_PASS or V_VFS_EINVAL. */
+int v_vfs_mount(const char *point, const char *drive);
 
 /* One file operation, as a task hands it to the kernel. It lives in the
  * CALLER's memory and is validated there; everything the worker needs is copied
@@ -154,6 +173,11 @@ int v_vfs_flush(int fd, uint32_t ticks);
 int v_vfs_info(const char *path, vfs_stat_t *st, uint32_t ticks);
 int v_vfs_makedir(const char *path, uint32_t ticks);
 int v_vfs_remove(const char *path, uint32_t ticks);
+/* Rename or move, on the same drive; `to` must not exist yet. */
+int v_vfs_rename(const char *from, const char *to, uint32_t ticks);
+/* Size and free space of the drive `drive` is on ("/mnt/sd"). The
+   first call after a mount may scan the whole FAT: give it ticks to match. */
+int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks);
 int v_vfs_diropen(const char *path, uint32_t ticks);
 int v_vfs_dirnext(int fd, vfs_dirent_t *ent, uint32_t ticks);
 // Size of an open file, in bytes (>= 0), or an error. Unlike the privileged

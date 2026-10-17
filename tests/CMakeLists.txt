@@ -108,7 +108,9 @@ set(KERNEL_SOURCES
     "${VAIOS_ROOT}/kernel/structure.c"
     "${VAIOS_ROOT}/kernel/vfs.c"
     "${VAIOS_ROOT}/kernel/vaios.c"
-    "${VAIOS_ROOT}/kernel/terminal.c"
+    # kernel/shell.c is NOT here: it does its I/O through file descriptors, so
+    # it needs VAIOS_DEVFS, which this binary builds with off. It has its own
+    # executable below (vaios_shell_tests), like devfs and the syscall dispatch.
     "${VAIOS_ROOT}/kernel/perf.c"
     "${VAIOS_ROOT}/kernel/periph_bus.c"
     "${VAIOS_ROOT}/kernel/bus.c"
@@ -138,7 +140,6 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_structure.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vaios.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/test_terminal.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_perf.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_uaccess.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_stage5_regress.c"  # expected-fail regressions
@@ -209,7 +210,10 @@ add_executable(vaios_utils_tests
 target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
 # Force VFS off so kernel/perf.c's CSV writer doesn't drag vfs_open/etc into
 # this binary — vaios_utils_tests does not link vfs.c.
-target_compile_definitions(vaios_utils_tests PRIVATE VAIOS_MODULE_VFS=0)
+# DEVFS on so v_printf (task-facing, through fd 1) is compiled and tested;
+# its v_file_write is a capturing stub in utils_stubs.c.
+target_compile_definitions(vaios_utils_tests PRIVATE VAIOS_MODULE_VFS=0
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_HOST_TEST)
 target_compile_options(vaios_utils_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -g -O0
@@ -233,6 +237,7 @@ add_executable(vaios_devfs_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/devfs_main.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_devfs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/console_sem_stub.c"  # console RX wake
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/devfs_stubs.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # console facade
     "${VAIOS_ROOT}/kernel/devfs.c"
@@ -245,6 +250,68 @@ target_compile_options(vaios_devfs_tests PRIVATE
     -g -O0
     -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
 )
+# -------------------------------------------------------------------------
+# vaios_shell_tests — isolated binary for kernel/shell.c.
+#
+# Its own executable because the shell now does I/O through file descriptors, so
+# it needs VAIOS_DEVFS=1 — and vaios_tests builds with DEVFS off. SVC is off so
+# the bodies run directly, as in the devfs binary.
+#
+# It links the REAL kernel/devfs.c rather than faking the fd layer, so the tests
+# drive the actual v_file_read(0, ...) path. /dev/console returns 0 bytes here
+# (port_hw_stub's try_read has nothing), which is what the tests want: input
+# arrives through shell_feed(), the same entry the console itself uses.
+# -------------------------------------------------------------------------
+add_executable(vaios_shell_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/shell_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_shell.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/console_sem_stub.c"  # console RX wake
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/shell_stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"  # console facade
+    "${VAIOS_ROOT}/kernel/shell.c"
+    "${VAIOS_ROOT}/kernel/devfs.c"
+)
+target_include_directories(vaios_shell_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_shell_tests PRIVATE
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=1 VAIOS_MODULE_PERF=0)
+target_compile_options(vaios_shell_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_shell_tests COMMAND vaios_shell_tests)
+set_tests_properties(vaios_shell_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
+)
+
+# The same suite with no card (VAIOS_MODULE_VFS=0), as on a board without one:
+# the file commands still work, on /dev alone, and the card's own are gone.
+add_executable(vaios_shell_novfs_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/shell_main.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_shell.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/console_sem_stub.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/shell_stubs.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/stubs/port_hw_stub.c"
+    "${VAIOS_ROOT}/kernel/shell.c"
+    "${VAIOS_ROOT}/kernel/devfs.c"
+)
+target_include_directories(vaios_shell_novfs_tests PRIVATE ${TEST_INCLUDE_DIRS})
+target_compile_definitions(vaios_shell_novfs_tests PRIVATE
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_MODULE_VFS=0 VAIOS_MODULE_PERF=0)
+target_compile_options(vaios_shell_novfs_tests PRIVATE
+    -Wall -Wextra -Wno-unused-parameter
+    -g -O0
+    -I"${CMAKE_CURRENT_SOURCE_DIR}/stubs"
+)
+add_test(NAME vaios_shell_novfs_tests COMMAND vaios_shell_novfs_tests)
+set_tests_properties(vaios_shell_novfs_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "0 failed"
+    ENVIRONMENT "${VAIOS_SANITIZER_ENV}"
+)
+
 add_test(NAME vaios_devfs_tests COMMAND vaios_devfs_tests)
 set_tests_properties(vaios_devfs_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "0 failed"

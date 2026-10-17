@@ -2,6 +2,11 @@
 #include "ipc.h"
 #include "utils/v_fs.h"
 
+/* vfs_readdir copies VFS_NAME_MAX bytes out of NavHAL's v_dirent_t, so ours
+   may never outgrow theirs. Both follow FS_LFN_MAX now; this keeps it so. */
+_Static_assert(VFS_NAME_MAX <= V_NAME_MAX,
+               "VFS_NAME_MAX would read past NavHAL's v_dirent_t.name");
+
 static MutexHandle_t vfs_mutex = NULL;
 
 static void vfs_lock(void) {
@@ -14,6 +19,54 @@ static void vfs_unlock(void) {
   if (vfs_mutex != NULL) {
     v_mutex_unlock(vfs_mutex);
   }
+}
+
+/* --- mounts ----------------------------------------------------------------
+ * Tasks see one tree, as on Unix: a FatFs drive is mounted at a path --
+ * v_vfs_mount("/mnt/sd", "0:") -- and "/mnt/sd/logs/a.csv" reaches FatFs as
+ * "0:/logs/a.csv". Every path below resolves here, so nobody above this file
+ * sees a drive letter. A path already in FatFs's own form ("0:a") passes as it
+ * is: privileged code and the bare-metal examples use the drives directly. */
+#define VFS_MAX_MOUNTS 2
+#define VFS_PATH_MAX 72 /* a resolved path; never longer than the one given */
+#define VFS_ENOENT (-4) /* under no mount: FatFs's own FR_NO_FILE */
+typedef struct {
+  char node[24]; /* the mount point, '/'-ended: its devfs node, "/mnt/sd/" */
+  char drive;    /* the FatFs drive's digit */
+} vfs_mount_t;
+static vfs_mount_t vfs_mounts[VFS_MAX_MOUNTS];
+static int vfs_mount_count;
+
+/* `path` in FatFs's form, in `out`; NULL for a path under no mount. */
+static const char *vfs_resolve(const char *path, char *out, uint32_t cap) {
+  if (!path)
+    return NULL;
+  const char *c = path;
+  while (*c && *c != ':' && *c != '/')
+    c++;
+  if (*c == ':')
+    return path;
+  for (int i = 0; i < vfs_mount_count; i++) {
+    const char *m = vfs_mounts[i].node, *p = path;
+    while (m[1] && *m == *p) { /* all of it but the closing '/' */
+      m++;
+      p++;
+    }
+    if (m[1] || (*p && *p != '/'))
+      continue; /* not this mount ("/mnt/sdx" is not under "/mnt/sd") */
+    uint32_t o = 0;
+    out[o++] = vfs_mounts[i].drive;
+    out[o++] = ':';
+    if (!*p)
+      out[o++] = '/'; /* the mount point itself: the drive's root */
+    for (; *p && o + 1 < cap; p++)
+      out[o++] = *p;
+    if (*p)
+      return NULL; /* too long to hold */
+    out[o] = '\0';
+    return out;
+  }
+  return NULL;
 }
 
 int vfs_init(void) {
@@ -32,6 +85,9 @@ int vfs_init(void) {
 }
 
 vfs_fd_t vfs_open(const char *path, int flags) {
+  char b[VFS_PATH_MAX];
+  if (!(path = vfs_resolve(path, b, sizeof b)))
+    return VFS_ENOENT;
   vfs_lock();
   vfs_fd_t fd = (vfs_fd_t)v_open(path, flags);
   vfs_unlock();
@@ -67,6 +123,9 @@ long vfs_lseek(vfs_fd_t fd, long offset, int whence) {
 }
 
 int vfs_mkdir(const char *path) {
+  char b[VFS_PATH_MAX];
+  if (!(path = vfs_resolve(path, b, sizeof b)))
+    return VFS_ENOENT;
   vfs_lock();
   int res = v_mkdir(path);
   vfs_unlock();
@@ -74,8 +133,39 @@ int vfs_mkdir(const char *path) {
 }
 
 int vfs_unlink(const char *path) {
+  char b[VFS_PATH_MAX];
+  if (!(path = vfs_resolve(path, b, sizeof b)))
+    return VFS_ENOENT;
   vfs_lock();
   int res = v_unlink(path);
+  vfs_unlock();
+  return res;
+}
+
+int vfs_rename(const char *from, const char *to) {
+  char b1[VFS_PATH_MAX], b2[VFS_PATH_MAX];
+  if (!(from = vfs_resolve(from, b1, sizeof b1)) ||
+      !(to = vfs_resolve(to, b2, sizeof b2)))
+    return VFS_ENOENT;
+  vfs_lock();
+  int res = v_rename(from, to);
+  vfs_unlock();
+  return res;
+}
+
+/* `drive` may be any path on it: "/mnt/sd", "0:". */
+int vfs_space(const char *drive, vfs_space_t *out) {
+  char b[VFS_PATH_MAX], d[3];
+  if (!out)
+    return -1;
+  if (!(drive = vfs_resolve(drive, b, sizeof b)))
+    return VFS_ENOENT;
+  d[0] = drive[0];
+  d[1] = ':';
+  d[2] = '\0';
+  drive = d;
+  vfs_lock();
+  int res = v_getfree(drive, &out->total_kib, &out->free_kib);
   vfs_unlock();
   return res;
 }
@@ -88,6 +178,9 @@ int vfs_sync(vfs_fd_t fd) {
 }
 
 int vfs_preallocate(const char *path, uint32_t size) {
+  char b[VFS_PATH_MAX];
+  if (!(path = vfs_resolve(path, b, sizeof b)))
+    return VFS_ENOENT;
   vfs_lock();
   int res = v_preallocate(path, size);
   vfs_unlock();
@@ -105,6 +198,10 @@ int vfs_stat(const char *path, vfs_stat_t *st) {
   if (st == NULL) {
     return -1;
   }
+  char b[VFS_PATH_MAX];
+  st->exists = 0;
+  if (!(path = vfs_resolve(path, b, sizeof b)))
+    return VFS_ENOENT;
   v_stat_t vs;
   vfs_lock();
   int res = v_stat(path, &vs);
@@ -120,6 +217,9 @@ int vfs_stat(const char *path, vfs_stat_t *st) {
 }
 
 vfs_dir_t vfs_opendir(const char *path) {
+  char b[VFS_PATH_MAX];
+  if (!(path = vfs_resolve(path, b, sizeof b)))
+    return VFS_ENOENT;
   vfs_lock();
   vfs_dir_t d = (vfs_dir_t)v_opendir(path);
   vfs_unlock();
@@ -179,7 +279,6 @@ typedef struct {
 } vfs_handle_t;
 
 static vfs_handle_t vfs_handles[VAIOS_VFS_MAX_OPEN];
-static const char *vfs_mount_prefix; // NULL until v_vfs_mount
 
 static vfs_handle_t *vfs_handle_alloc(void) {
   uint32_t s = ENTER_CRITICAL_FROM_ISR();
@@ -225,13 +324,11 @@ static int vfs_fd_close(void *priv) {
   return r;
 }
 
-static int vfs_fd_open(const char *tail, int flags, void **priv_out) {
-  if (!tail || !*tail)
-    return V_VFS_EINVAL; // the mount point itself is not a file
+static int vfs_fd_open(const char *path, int flags, void **priv_out) {
   vfs_handle_t *h = vfs_handle_alloc();
   if (!h)
     return V_VFS_EBUSY;
-  vfs_fd_t f = vfs_open(tail, flags);
+  vfs_fd_t f = vfs_open(path, flags); // the whole path: it names its mount
   if (f < 0) {
     h->used = 0;
     return (int)f; // the filesystem's own error, not ours
@@ -246,34 +343,28 @@ static const v_file_ops vfs_mount_ops = {.read = vfs_fd_read,
                                          .close = vfs_fd_close,
                                          .open = vfs_fd_open};
 
-int v_vfs_mount(const char *prefix) {
-  if (!prefix || !*prefix)
+int v_vfs_mount(const char *point, const char *drive) {
+  if (!point || point[0] != '/' || !point[1] || !drive || drive[0] < '0' ||
+      drive[0] > '9' || drive[1] != ':' || drive[2] ||
+      vfs_mount_count >= VFS_MAX_MOUNTS)
     return V_VFS_EINVAL;
-  const char *p = prefix;
-  while (*p)
-    p++;
-  if (p[-1] != '/') // a mount claims a subtree, so it must end in '/'
+  vfs_mount_t *m = &vfs_mounts[vfs_mount_count];
+  uint32_t n = 0;
+  for (; point[n]; n++) {
+    if (n + 2 >= sizeof m->node)
+      return V_VFS_EINVAL;
+    m->node[n] = point[n];
+  }
+  if (m->node[n - 1] == '/')
+    return V_VFS_EINVAL; /* "/mnt/sd", as mount(8) takes it */
+  m->node[n++] = '/'; /* devfs's mark of a mount: it claims the subtree */
+  m->node[n] = '\0';
+  m->drive = drive[0];
+  if (v_devfs_register(m->node, &vfs_mount_ops, NULL) != 0)
     return V_VFS_EINVAL;
-  if (v_devfs_register(prefix, &vfs_mount_ops, NULL) != 0)
-    return V_VFS_EINVAL;
-  vfs_mount_prefix = prefix;
+  vfs_mount_count++;
   return VA_PASS;
 }
-
-// A path a task passed in is relative to the mount: strip the prefix if it gave
-// the full one, so both "/mnt/log.csv" and "log.csv" work the way v_file_open's
-// tail does.
-static const char *vfs_strip_prefix(const char *path) {
-  const char *m = vfs_mount_prefix, *p = path;
-  if (!m)
-    return path;
-  while (*m && *m == *p) {
-    m++;
-    p++;
-  }
-  return *m ? path : p;
-}
-
 
 // --- what the worker actually calls -----------------------------------------
 // Handle indices, not fd-table descriptors: a task's file handle must not be a
@@ -287,7 +378,7 @@ static int vfs_fd_open_internal(const char *path, int flags) {
   vfs_handle_t *h = vfs_handle_alloc();
   if (!h)
     return V_VFS_EBUSY;
-  vfs_fd_t f = vfs_open(vfs_strip_prefix(path), flags);
+  vfs_fd_t f = vfs_open(path, flags);
   if (f < 0) {
     h->used = 0;
     return (int)f;
@@ -330,7 +421,7 @@ static int vfs_dir_open_internal(const char *path) {
   vfs_handle_t *h = vfs_handle_alloc();
   if (!h)
     return V_VFS_EBUSY;
-  vfs_dir_t d = vfs_opendir(vfs_strip_prefix(path));
+  vfs_dir_t d = vfs_opendir(path);
   if (d < 0) {
     h->used = 0;
     return (int)d;
@@ -370,6 +461,8 @@ typedef enum {
   VFS_OP_DIRNEXT,
   VFS_OP_SIZE,
   VFS_OP_PREALLOC,
+  VFS_OP_RENAME, // path -> the NUL-terminated new path carried as the payload
+  VFS_OP_SPACE,  // path is the drive; out is a vfs_space_t
 } vfs_op_t;
 
 typedef struct {
@@ -390,6 +483,9 @@ typedef struct {
 } vfs_req_t;
 
 static vfs_req_t vfs_reqs[VAIOS_VFS_IO_SLOTS];
+/* A dirent travels back to a task through the worker's request buffer. */
+_Static_assert(sizeof(vfs_dirent_t) <= VAIOS_VFS_IO_BUF,
+               "a directory entry no longer fits VAIOS_VFS_IO_BUF");
 static SemaphoreHandle_t vfs_work_sem; // counts queued requests
 static StaticSemaphore_t vfs_work_store;
 static uint8_t vfs_worker_seen; // a worker has run at least once
@@ -454,12 +550,21 @@ int v_vfs_submit(const v_vfs_desc_t *d) {
 
   int need_path = d->op == VFS_OP_OPEN || d->op == VFS_OP_STAT ||
                   d->op == VFS_OP_MKDIR || d->op == VFS_OP_REMOVE ||
-                  d->op == VFS_OP_DIROPEN || d->op == VFS_OP_PREALLOC;
+                  d->op == VFS_OP_DIROPEN || d->op == VFS_OP_PREALLOC ||
+                  d->op == VFS_OP_RENAME || d->op == VFS_OP_SPACE;
   if (need_path && vfs_copy_path(r, d->path) != VA_PASS) {
     r->used = 0;
     return V_VFS_EINVAL;
   }
-  if (d->op == VFS_OP_WRITE) { // the payload crosses now, not later
+  if (d->op == VFS_OP_RENAME) { // the new path: a payload, NUL-terminated
+    const char *to = (const char *)d->data;
+    if (!to || d->len < 2 || d->len > sizeof r->path || to[d->len - 1]) {
+      r->used = 0;
+      return V_VFS_EINVAL;
+    }
+  }
+  if (d->op == VFS_OP_WRITE || d->op == VFS_OP_RENAME) {
+    // the payload crosses now, not later
     if (!d->data) {
       r->used = 0;
       return V_VFS_EINVAL;
@@ -582,11 +687,11 @@ int v_vfs_worker_step(uint32_t ticks) {
     break;
   }
   case VFS_OP_PREALLOC:
-    res = vfs_preallocate(vfs_strip_prefix(r->path), r->len);
+    res = vfs_preallocate(r->path, r->len);
     break;
   case VFS_OP_STAT: {
     vfs_stat_t st;
-    res = vfs_stat(vfs_strip_prefix(r->path), &st);
+    res = vfs_stat(r->path, &st);
     if (res == 0 && sizeof st <= sizeof r->buf) {
       for (uint32_t i = 0; i < sizeof st; i++)
         r->buf[i] = ((const uint8_t *)&st)[i];
@@ -595,11 +700,25 @@ int v_vfs_worker_step(uint32_t ticks) {
     break;
   }
   case VFS_OP_MKDIR:
-    res = vfs_mkdir(vfs_strip_prefix(r->path));
+    res = vfs_mkdir(r->path);
     break;
   case VFS_OP_REMOVE:
-    res = vfs_unlink(vfs_strip_prefix(r->path));
+    res = vfs_unlink(r->path);
     break;
+  case VFS_OP_RENAME:
+    res = vfs_rename(r->path,
+                     (const char *)r->buf);
+    break;
+  case VFS_OP_SPACE: {
+    vfs_space_t sp;
+    res = vfs_space(r->path, &sp);
+    if (res == 0) {
+      for (uint32_t i = 0; i < sizeof sp; i++)
+        r->buf[i] = ((const uint8_t *)&sp)[i];
+      out = (uint32_t)sizeof sp;
+    }
+    break;
+  }
   case VFS_OP_DIROPEN:
     res = vfs_dir_open_internal(r->path);
     break;
@@ -756,6 +875,22 @@ int v_vfs_makedir(const char *path, uint32_t ticks) {
 int v_vfs_remove(const char *path, uint32_t ticks) {
   v_vfs_desc_t d = {.op = VFS_OP_REMOVE, .path = path};
   return vfs_do(&d, 0, 0, ticks);
+}
+int v_vfs_rename(const char *from, const char *to, uint32_t ticks) {
+  if (!to)
+    return V_VFS_EINVAL;
+  uint32_t n = 0;
+  while (n < VAIOS_VFS_IO_BUF && to[n])
+    n++;
+  v_vfs_desc_t d = {.op = VFS_OP_RENAME, .path = from, .data = to,
+                    .len = n + 1};
+  return vfs_do(&d, 0, 0, ticks);
+}
+int v_vfs_space(const char *drive, vfs_space_t *out, uint32_t ticks) {
+  if (!out)
+    return V_VFS_EINVAL;
+  v_vfs_desc_t d = {.op = VFS_OP_SPACE, .path = drive};
+  return vfs_do(&d, out, (uint32_t)sizeof *out, ticks);
 }
 int v_vfs_diropen(const char *path, uint32_t ticks) {
   v_vfs_desc_t d = {.op = VFS_OP_DIROPEN, .path = path};

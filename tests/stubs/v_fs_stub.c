@@ -23,7 +23,7 @@ int v_fs_init(void) {
 
 v_fd_t v_open(const char *path, int flags) {
   vfs_stub.open_called++;
-  vfs_stub.open_path = path;
+  strncpy(vfs_stub.open_path, path ? path : "", sizeof vfs_stub.open_path - 1);
   vfs_stub.open_flags = flags;
   return vfs_stub.open_ret;
 }
@@ -60,14 +60,30 @@ long v_lseek(v_fd_t fd, long offset, int whence) {
 
 int v_mkdir(const char *path) {
   vfs_stub.mkdir_called++;
-  vfs_stub.mkdir_path = path;
+  strncpy(vfs_stub.mkdir_path, path ? path : "", sizeof vfs_stub.mkdir_path - 1);
   return vfs_stub.mkdir_ret;
 }
 
 int v_unlink(const char *path) {
   vfs_stub.unlink_called++;
-  vfs_stub.unlink_path = path;
+  strncpy(vfs_stub.unlink_path, path ? path : "", sizeof vfs_stub.unlink_path - 1);
   return vfs_stub.unlink_ret;
+}
+
+int v_rename(const char *from, const char *to) {
+  vfs_stub.rename_called++;
+  strncpy(vfs_stub.rename_from, from, sizeof vfs_stub.rename_from - 1);
+  strncpy(vfs_stub.rename_to, to, sizeof vfs_stub.rename_to - 1);
+  return vfs_stub.rename_ret;
+}
+int v_getfree(const char *drive, uint32_t *total_kib, uint32_t *free_kib) {
+  vfs_stub.getfree_called++;
+  strncpy(vfs_stub.getfree_drive, drive, sizeof vfs_stub.getfree_drive - 1);
+  if (total_kib)
+    *total_kib = vfs_stub.getfree_total;
+  if (free_kib)
+    *free_kib = vfs_stub.getfree_free;
+  return vfs_stub.getfree_ret;
 }
 
 int v_sync(v_fd_t fd) {
@@ -78,14 +94,14 @@ int v_sync(v_fd_t fd) {
 
 int v_preallocate(const char *path, uint32_t size) {
   vfs_stub.preallocate_called++;
-  vfs_stub.preallocate_path = path;
+  strncpy(vfs_stub.preallocate_path, path ? path : "", sizeof vfs_stub.preallocate_path - 1);
   vfs_stub.preallocate_size = size;
   return vfs_stub.preallocate_ret;
 }
 
 int v_stat(const char *path, v_stat_t *st) {
   vfs_stub.stat_called++;
-  vfs_stub.stat_path = path;
+  strncpy(vfs_stub.stat_path, path ? path : "", sizeof vfs_stub.stat_path - 1);
   if (st != NULL)
     *st = vfs_stub.stat_out;
   return vfs_stub.stat_ret;
@@ -93,7 +109,7 @@ int v_stat(const char *path, v_stat_t *st) {
 
 v_dir_t v_opendir(const char *path) {
   vfs_stub.opendir_called++;
-  vfs_stub.opendir_path = path;
+  strncpy(vfs_stub.opendir_path, path ? path : "", sizeof vfs_stub.opendir_path - 1);
   return vfs_stub.opendir_ret;
 }
 

@@ -387,7 +387,7 @@ static void test_bus_snapshotter(void) {
   vfs_stub_reset();
   vfs_stub.open_ret = 4;
   v_bus_snap_t snap;
-  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "/rec.bin"), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "0:/rec.bin"), VA_PASS);
   TEST_ASSERT_EQ(vfs_stub.open_called, 1);
   TEST_ASSERT_EQ(tw.nsubs, 1); /* it subscribed like a reader */
 
@@ -429,7 +429,7 @@ static void test_bus_snapshotter(void) {
 
   /* A filesystem that refuses the open leaves nothing subscribed. */
   vfs_stub.open_ret = -7;
-  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "/nope.bin"), -7);
+  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "0:/nope.bin"), -7);
   TEST_ASSERT_EQ(tw.nsubs, 0);
   TEST_ASSERT_EQ(v_bus_snapshot_start(NULL, &tw, "/x"), V_BUS_EINVAL);
   TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, NULL), V_BUS_EINVAL);
