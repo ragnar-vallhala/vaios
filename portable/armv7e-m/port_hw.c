@@ -723,20 +723,31 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
 }
 
 #if VAIOS_MPU_USER_SEPARATION
-/* Encode the per-task RW-unprivileged region covering the whole block. base must
- * be size-aligned (task_create aligns to `size`). W^X: not executable, so code
- * can't run from stack/heap. */
+/* Encode the per-task RW-unprivileged region over the block [base, base+size).
+ * The region is the next power of two at or above `size`, on a boundary of its
+ * own size; task_create puts the block in the TOP of it, so any eighths below
+ * `base` are switched off with the subregion-disable bits (none when size is a
+ * power of two: then base is that boundary). W^X: not executable, so code can't
+ * run from stack/heap. */
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   if (!hal_mpu_present())
     return -1;
+  uint32_t region =
+      (size & (size - 1u)) ? 1u << (32 - __builtin_clz(size - 1u)) : size;
+  uint32_t rbase = (uint32_t)base & ~(region - 1u);
+  uint32_t off = (uint32_t)base - rbase;
+  if (off && (region < 256u || off % (region / 8u) != 0u ||
+              rbase + region != (uint32_t)base + size))
+    return -1; /* not a layout task_create makes */
   hal_mpu_region_t r = {
-      .base = (uint32_t)base,
-      .size = v_mpu_size_enum(size),
+      .base = rbase,
+      .size = v_mpu_size_enum(region),
       .ap = HAL_MPU_AP_RW, /* unprivileged RW to the task's own block */
       .mem = HAL_MPU_MEM_NORMAL_WB,
       .executable = false,
       .shareable = false,
-      .srd_mask = 0,
+      /* bit i disables eighth i, lowest first: the ones below the block */
+      .srd_mask = off ? (uint8_t)((1u << (off / (region / 8u))) - 1u) : 0u,
   };
   hal_mpu_encoded_t enc;
   if (hal_mpu_encode(VAIOS_MPU_USER_REGION, &r, &enc) != HAL_OK)

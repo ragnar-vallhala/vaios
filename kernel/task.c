@@ -191,6 +191,14 @@ TCB *get_highest_priority_task(void) {
 static uint8_t task_create_soft_oom;
 #endif
 
+#if VAIOS_MPU_USER_SEPARATION
+// The MPU region that holds a task block of `size` bytes: the next power of
+// two (v_port_task_region_encode derives the same from the block).
+static uint32_t task_block_region(uint32_t size) {
+  return (size & (size - 1u)) ? 1u << (32 - __builtin_clz(size - 1u)) : size;
+}
+#endif
+
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority) {
   return task_create_named(entry, arg, size, priority, "");
@@ -207,12 +215,22 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
            (unsigned)size, (unsigned)VAIOS_ARCH_MIN_STACK);
     return 0;
   }
-#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
-  // With per-task MPU regions on, each stack maps onto a single power-of-two MPU
-  // region, so the size must be an exact power of two. Reject anything else
-  // rather than silently rounding, which would desync the caller's view of the
-  // stack from the region geometry. This constraint follows the *feature*, not
-  // the chip: with MPU stack protection off, any size >= the minimum is fine.
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_MPU_STACK_SUBREGIONS
+  // The block takes whole eighths of its power-of-two MPU region (the rest are
+  // disabled subregions), so round up to the next eighth. Regions under 256
+  // bytes have no subregions: those stay whole powers of two.
+  {
+    uint32_t region = task_block_region(size);
+    uint32_t step = region >= 256u ? region / 8u : region;
+    size = (size + step - 1u) & ~(step - 1u);
+  }
+#elif VAIOS_MPU_USER_SEPARATION
+  // With user separation each block maps onto a single power-of-two MPU
+  // region, so the size must be an exact power of two (or see
+  // VAIOS_MPU_STACK_SUBREGIONS). Reject anything else rather than silently
+  // rounding, which would desync the caller's view of the stack from the
+  // region geometry. A stack guard alone needs no such thing: its 32-byte
+  // region only needs the block's base aligned to 32.
   if ((size & (size - 1)) != 0) {
     V_KLOG(LOG_ERROR,
            "[TASK] size %u is not a power of two; task not created",
@@ -232,11 +250,15 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->name = name ? name : "";
   task->stack_size = size;
 #if VAIOS_MPU_USER_SEPARATION
-  // The per-task RW-unprivileged region covers the WHOLE block as one MPU region,
-  // which needs a size-aligned, power-of-two base. Align the block to its own
-  // size (size is already required power-of-two). The guard at the base stays
-  // size-aligned trivially. Encoded in init_task_stack.
-  task->mem_block = (uint32_t *)v_memalign(size, size);
+  // The per-task RW-unprivileged region is the power-of-two region holding the
+  // block, so it starts on a boundary of its own size; the block sits in the
+  // TOP of it, with any disabled subregions below (none for a power-of-two
+  // size, where region == size and this is plain v_memalign). The guard at the
+  // block's base is 32-aligned either way. Encoded in init_task_stack.
+  {
+    uint32_t region = task_block_region(size);
+    task->mem_block = (uint32_t *)v_memalign_off(region, region - size, size);
+  }
 #elif VAIOS_MPU_STACK_GUARD
   // The MPU stack-guard region sits at the stack base, so the base must land on
   // the guard's size boundary. v_memalign gives that; the no-access guard region

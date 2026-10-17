@@ -65,6 +65,29 @@ check "survivor still running after the report" \
 check "no fault escaped the MPU"              "$(echo "$clean" | grep -aq 'BUG:' && echo 0 || echo 1)"
 check "no kernel panic"                       "$(echo "$clean" | grep -aqE 'KERNEL PANIC|System Halted' && echo 0 || echo 1)"
 
+# The same policies with VAIOS_MPU_STACK_SUBREGIONS: stacks that are not powers
+# of two, each block in the top eighths of its region. Seeded through the
+# NavHAL config, which the build copies into a fresh .config.
+#
+# Without the overflow task: Renode does not model subregion-disable (nor
+# region priority on overlap), so an overflow runs on through the disabled
+# eighths below its block -- into other heap blocks -- before it faults. On
+# hardware those eighths fall through to the privileged-only SRAM region and
+# fault at once; tools/run_hw_tests.sh covers that case.
+sub_cfg="$(mktemp)"
+cat "$ROOT_DIR/navhal.config" > "$sub_cfg"
+echo "CONFIG_VAIOS_MPU_STACK_SUBREGIONS=y" >> "$sub_cfg"
+rm -rf "${BUILD_DIR}_sub"
+build_and_run "${BUILD_DIR}_sub" -DNAVHAL_CONFIG_FILE="$sub_cfg" -DFR_NO_OVERFLOW=1
+rm -f "$sub_cfg"
+check "subregions: escaper ran 4 times"        "$([ "$(count '\[fr\] escaper start')" -eq 4 ] && echo 1 || echo 0)"
+check "subregions: child ran twice"            "$([ "$(count '\[fr\] child start')" -eq 2 ] && echo 1 || echo 0)"
+check "subregions: 6 faults, 4 restarts"       "$(echo "$clean" | grep -aq '\[fr\] faults=6 restarts=4' && echo 1 || echo 0)"
+check "subregions: survivor still running" \
+  "$(echo "$clean" | sed -n '/\[fr\] DONE/,$p' | grep -aq 'survivor tick' && echo 1 || echo 0)"
+check "subregions: no fault escaped, no panic" \
+  "$(echo "$clean" | grep -aqE 'BUG:|KERNEL PANIC' && echo 0 || echo 1)"
+
 # The PANIC policy: escaper's first fault must halt the system, unrecovered.
 build_and_run "${BUILD_DIR}_panic" -DFR_PANIC=1
 check "PANIC policy: escaper's first fault halts" \

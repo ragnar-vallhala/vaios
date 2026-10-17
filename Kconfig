@@ -331,6 +331,23 @@ config VAIOS_MPU_USER_SEPARATION
       Tested in CI under Renode (isolation, lifecycle, fd IPC, bus, the
       unprivileged flight app, fault recovery) and on a Nucleo-F401RE and a
       Nucleo-F767ZI.
+config VAIOS_MPU_STACK_SUBREGIONS
+    bool "Stacks in eighths of a region, not whole powers of two"
+    depends on VAIOS_MPU_USER_SEPARATION
+    default n
+    help
+      With user separation each task's block (stack + per-task heap) is one MPU
+      region, so it has to be a power of two: a task needing 2.1 KiB got 4 KiB.
+      With this on, any stack size is accepted and rounded up to the next
+      eighth of the power-of-two region that holds it -- 2.1 KiB takes 2.5 KiB,
+      the top five eighths of a 4 KiB region -- and the MPU's subregion-disable
+      bits switch off the eighths below the block, which go back to the heap
+      for anything else. Regions under 256 bytes have no subregions, so blocks
+      that small stay powers of two. A power-of-two size gives the same layout
+      as with this off.
+
+      The region and its disable bits are encoded once, at task creation; the
+      context switch writes the same two registers either way.
 config VAIOS_MPU_FAULT_RECOVERY
     bool "Contain MPU faults in unprivileged tasks (per-task policy)"
     depends on VAIOS_MPU_USER_SEPARATION

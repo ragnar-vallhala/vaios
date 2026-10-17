@@ -119,11 +119,6 @@ static void test_task_create_oom(void) {
   TEST_ASSERT_EQ(id, 0u);
 }
 
-/* task_create rejects any stack_size that is not a power of two (>= 128 B) and
- * fails loudly — no silent rounding. The size must map 1:1 onto a single
- * power-of-two MPU region for stack protection, so an off-size request must not
- * create a task. Rejection happens before any allocation, so no heap leaks and
- * task_count / the ready lists stay untouched. */
 /* A stack too small to hold the initial context frame (and zero) is invalid on
  * every build, MPU or not. Rejected with no side effects. */
 static void test_task_create_rejects_undersized_stack(void) {
@@ -147,8 +142,11 @@ static void test_task_create_rejects_undersized_stack(void) {
 }
 
 /* The power-of-two requirement is an MPU-region constraint, not a universal one.
- * Non-power-of-two sizes at/above the minimum are rejected only when per-task MPU
- * regions are on; without them they are valid. This binary's config decides. */
+ * Non-power-of-two sizes at/above the minimum are rejected only with per-task
+ * MPU regions (user separation) and no subregions -- no silent rounding, and no
+ * side effects. A stack guard alone has no such need, and with
+ * VAIOS_MPU_STACK_SUBREGIONS the block is rounded up to whole eighths of its
+ * region instead. This binary's config decides. */
 static void test_task_create_non_power_of_two_stack(void) {
   full_reset();
   scheduler_init();
@@ -156,10 +154,10 @@ static void test_task_create_non_power_of_two_stack(void) {
   static const uint32_t np2[] = {200u, 700u, 1000u, 1536u};
   for (unsigned i = 0; i < sizeof(np2) / sizeof(np2[0]); i++) {
     uint32_t id = task_create(dummy_task, NULL, np2[i], 3);
-#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+#if VAIOS_MPU_USER_SEPARATION && !VAIOS_MPU_STACK_SUBREGIONS
     TEST_ASSERT_EQ(id, 0u);      /* not a valid MPU region size */
 #else
-    TEST_ASSERT_EQ(id != 0u, 1); /* accepted: no per-task MPU region here */
+    TEST_ASSERT_EQ(id != 0u, 1); /* accepted */
 #endif
   }
 }

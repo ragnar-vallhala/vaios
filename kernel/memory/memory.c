@@ -165,12 +165,22 @@ void *v_malloc(size_t size) {
 // is handed back to the free index as an ordinary free block. This backs
 // MPU-guarded task stacks, whose base must sit on a region-size boundary.
 void *v_memalign(size_t align, size_t size) {
+  return v_memalign_off(align, 0, size);
+}
+
+// As v_memalign, but the payload sits `offset` bytes past an `align` boundary:
+// payload % align == offset. A task block that uses only the top eighths of its
+// MPU region is placed this way, its region still starting on the boundary.
+// offset must be below align and a multiple of the heap's own alignment.
+void *v_memalign_off(size_t align, size_t offset, size_t size) {
   if (!heap_mem_head) {
     V_KLOG(LOG_ERROR, "[MEMORY] v_memalign before heap init");
     return NULL;
   }
   if (size == 0 || align == 0 || (align & (align - 1)) != 0)
     return NULL; // align must be a non-zero power of two
+  if (offset >= align || (offset & (VHEAP_ALIGN - 1)) != 0)
+    return NULL;
   if (align <= VHEAP_ALIGN)
     return v_malloc(size); // every payload is already VHEAP_ALIGN-aligned
 
@@ -201,8 +211,10 @@ void *v_memalign(size_t align, size_t size) {
 
   uint8_t *payload0 = (uint8_t *)blk + sizeof(Heap_Mem_Block);
   uint8_t *orig_end = payload0 + blk->size; // one past the usable payload
+  // The first address >= payload0 that is `offset` past an align boundary.
   uintptr_t a =
-      ((uintptr_t)payload0 + (align - 1)) & ~(uintptr_t)(align - 1);
+      (((uintptr_t)payload0 - offset + (align - 1)) & ~(uintptr_t)(align - 1)) +
+      offset;
 
   Heap_Mem_Block *aligned;
   if ((uint8_t *)a == payload0) {

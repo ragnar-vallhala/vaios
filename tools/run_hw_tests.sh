@@ -158,7 +158,7 @@ run_example() {
   local name="$1"; shift
   local patterns=("$@")
 
-  emit_suite_header "$name${EXTRA_CMAKE:+ $EXTRA_CMAKE}"
+  emit_suite_header "$name${EXTRA_CMAKE:+ $EXTRA_CMAKE}${LABEL:+ ($LABEL)}"
 
   rm -rf "$BUILD_DIR"
   mkdir "$BUILD_DIR"
@@ -168,7 +168,8 @@ run_example() {
   local uart_log="/tmp/hw_${name}_uart.log"
 
   # NAVHAL_CONFIG_FILE picks the board when it is not navhal.config's;
-  # EXTRA_CMAKE adds per-run options (an example's variant).
+  # EXTRA_CMAKE adds per-run options (an example's variant); LABEL only names
+  # the run in the report.
   # shellcheck disable=SC2086
   if ! ( cd "$BUILD_DIR" && cmake -DNAVHAL=ON -DEXAMPLES=ON \
              ${NAVHAL_CONFIG_FILE:+-DNAVHAL_CONFIG_FILE="$NAVHAL_CONFIG_FILE"} \
@@ -282,6 +283,19 @@ run_example MPU_FAULT_RECOVERY \
   "\[fr\] faults=7 restarts=4" \
   "\[fr\] DONE" \
   "\[fr\] survivor tick"
+
+# ...the same with VAIOS_MPU_STACK_SUBREGIONS (stacks that are not powers of
+# two, above disabled subregions), overflow included: only hardware enforces
+# subregion-disable, so this is where that case is checked.
+sub_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$sub_cfg"
+echo "CONFIG_VAIOS_MPU_STACK_SUBREGIONS=y" >> "$sub_cfg"
+NAVHAL_CONFIG_FILE="$sub_cfg" LABEL="subregions" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] panic child refused" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] DONE" \
+  "\[fr\] survivor tick"
+rm -f "$sub_cfg"
 
 # ...and a task whose policy is PANIC: its first fault stops the system.
 EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \

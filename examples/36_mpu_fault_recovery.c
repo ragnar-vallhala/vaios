@@ -25,10 +25,23 @@
  * still be ticking after a privileged monitor has read the kernel's counters.
  *
  * Built with -DFR_PANIC=1, main gives escaper the PANIC policy instead: its
- * first fault must stop the system.
+ * first fault must stop the system. -DFR_NO_OVERFLOW=1 leaves overflow out
+ * (6 faults, 4 restarts), for a simulator that does not model the MPU's
+ * subregion-disable bits.
  */
 
 extern void v_print(const char *s); /* polling console write (privileged) */
+
+/* With VAIOS_MPU_STACK_SUBREGIONS the stacks are NOT powers of two, so every
+ * block sits in the top eighths of its region above disabled subregions, and
+ * the same faults have to be caught there. Without it they must be. */
+#if VAIOS_MPU_STACK_SUBREGIONS
+#define STK_BIG 1536u  /* 6/8 of a 2 KiB region */
+#define STK_SMALL 768u /* 6/8 of a 1 KiB region */
+#else
+#define STK_BIG 2048u
+#define STK_SMALL 1024u
+#endif
 
 static void uputs(const char *s) {
   int n = 0;
@@ -76,7 +89,7 @@ static void child(void *arg) {
 
 static void survivor(void *arg) {
   (void)arg;
-  v_task_spawn_t cfg = {.entry = child, .stack_size = 1024, .priority = 1,
+  v_task_spawn_t cfg = {.entry = child, .stack_size = STK_SMALL, .priority = 1,
                         .name = "child", .fault_policy = V_FAULT_PANIC};
   uputs(v_task_spawn(&cfg) == V_TASK_EPERM ? "[fr] panic child refused\r\n"
                                            : "[fr] BUG: panic child allowed\r\n");
@@ -116,16 +129,18 @@ int main(void) {
                              .internal_sd_card_setup = 0};
   v_system_init(&cfg);
   v_print("[fr] mpu_fault_recovery: start\r\n");
-  uint32_t esc = task_create_named(escaper, NULL, 2048, 2, "escaper");
+  uint32_t esc = task_create_named(escaper, NULL, STK_BIG, 2, "escaper");
 #ifdef FR_PANIC
   task_set_fault_policy(esc, V_FAULT_PANIC, 0);
 #else
   (void)esc;
 #endif
-  uint32_t ov = task_create_named(overflow, NULL, 2048, 2, "overflow");
+#ifndef FR_NO_OVERFLOW /* see tools/renode_fault_recovery.sh */
+  uint32_t ov = task_create_named(overflow, NULL, STK_BIG, 2, "overflow");
   task_set_fault_policy(ov, V_FAULT_KILL, 0);
-  task_create_named(survivor, NULL, 1024, 1, "survivor");
-  task_create_privileged(monitor, NULL, 2048, 3, "monitor");
+#endif
+  task_create_named(survivor, NULL, STK_SMALL, 1, "survivor");
+  task_create_privileged(monitor, NULL, STK_BIG, 3, "monitor");
   scheduler_start();
   for (;;)
     ;

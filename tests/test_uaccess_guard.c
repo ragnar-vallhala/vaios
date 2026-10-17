@@ -26,6 +26,26 @@ static void setup(void) {
   current_task = &g_task;
 }
 
+/* A stack guard alone needs no power-of-two stacks: only the block's base on a
+ * GUARD boundary. A 1000-byte stack is created, and its block is so aligned. */
+extern void stub_reset_heap(void);
+extern TCB *ready_lists[];
+static void guard_only_dummy(void *arg) {
+  (void)arg;
+  for (;;)
+    ;
+}
+static void test_guard_only_any_stack_size(void) {
+  stub_reset_heap();
+  ready_lists[2] = NULL;
+  uint32_t id = task_create(guard_only_dummy, NULL, 1000, 2);
+  TEST_ASSERT(id != 0u);
+  TEST_ASSERT_NOT_NULL(ready_lists[2]);
+  TEST_ASSERT_EQ((uintptr_t)ready_lists[2]->mem_block & (GUARD - 1u),
+                 (uintptr_t)0);
+  ready_lists[2] = NULL;
+}
+
 /* A pointer inside the no-access guard [mem_block, +GUARD) must be rejected;
  * one at/after the guard boundary is accepted. */
 static void test_bug11_guard_region_rejected(void) {
@@ -99,6 +119,7 @@ static const test_case_t uaccess_guard_cases[] = {
     TEST_CASE(test_guard_upper_region_ok),
     TEST_CASE(test_bug11_strnlen_guard_rejected),
     TEST_CASE(test_stack_highwater_skips_guard),
+    TEST_CASE(test_guard_only_any_stack_size),
 };
 
 const test_suite_t uaccess_guard_suite = {
