@@ -318,11 +318,19 @@ config VAIOS_MPU_USER_SEPARATION
       pointers at the syscall boundary, and gate the raw-handle (non-fd) IPC
       syscalls to privileged callers. See docs/plan/PHASE3_STAGE5_UNPRIV_PLAN.md.
 
-      WORK IN PROGRESS — being built up sub-stage by sub-stage. Currently
-      implemented behind this symbol: the per-task heap allocator
-      (malloc/free/calloc/realloc) routes through SVC so it keeps working once a
-      task can no longer reach current_task directly. The MPU region set and the
-      nPRIV flip itself land in follow-up commits. Off until complete.
+      Complete and in use: task_create* tasks run unprivileged, and the kernel's
+      own service tasks (task_create_privileged) privileged. On switch-in each
+      task gets one RW, execute-never region over its own block (stack + per-task
+      heap), with the stack guard at its base, and the privilege bit is set from
+      the TCB. malloc/free and every other kernel service go through SVC, with
+      user pointers checked at the syscall boundary. An access outside the
+      task's block is a MemManage fault: a panic, or the task's fault policy
+      under VAIOS_MPU_FAULT_RECOVERY. Each task's block is one power-of-two,
+      size-aligned region, so stack sizes must be powers of two.
+
+      Tested in CI under Renode (isolation, lifecycle, fd IPC, bus, the
+      unprivileged flight app, fault recovery) and on a Nucleo-F401RE and a
+      Nucleo-F767ZI.
 config VAIOS_MPU_FAULT_RECOVERY
     bool "Contain MPU faults in unprivileged tasks (per-task policy)"
     depends on VAIOS_MPU_USER_SEPARATION
