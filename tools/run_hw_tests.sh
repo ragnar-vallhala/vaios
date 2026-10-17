@@ -31,6 +31,8 @@
 #   PORT=/dev/ttyACM1 tools/run_hw_tests.sh
 #   USB_LOC=3-2 tools/run_hw_tests.sh          # which probe, by USB port
 #   CAPTURE_SECS=20  tools/run_hw_tests.sh
+#   NAVHAL_CONFIG_FILE=f767.config EXPECT_CHIPID=0x451 USB_LOC=1-1.3 \
+#     tools/run_hw_tests.sh                  # another board than navhal.config's
 # =============================================================================
 set -uo pipefail
 
@@ -156,7 +158,7 @@ run_example() {
   local name="$1"; shift
   local patterns=("$@")
 
-  emit_suite_header "$name"
+  emit_suite_header "$name${EXTRA_CMAKE:+ $EXTRA_CMAKE}"
 
   rm -rf "$BUILD_DIR"
   mkdir "$BUILD_DIR"
@@ -165,8 +167,12 @@ run_example() {
   local build_log="/tmp/hw_${name}_build.log"
   local uart_log="/tmp/hw_${name}_uart.log"
 
+  # NAVHAL_CONFIG_FILE picks the board when it is not navhal.config's;
+  # EXTRA_CMAKE adds per-run options (an example's variant).
+  # shellcheck disable=SC2086
   if ! ( cd "$BUILD_DIR" && cmake -DNAVHAL=ON -DEXAMPLES=ON \
-             -DVAIOS_EXAMPLE="$name" .. > "$cmake_log" 2>&1 ); then
+             ${NAVHAL_CONFIG_FILE:+-DNAVHAL_CONFIG_FILE="$NAVHAL_CONFIG_FILE"} \
+             ${EXTRA_CMAKE:-} -DVAIOS_EXAMPLE="$name" .. > "$cmake_log" 2>&1 ); then
     emit_test_line "build (cmake configure)" FAIL 0 1
     echo "    cmake log: $cmake_log"
     emit_suite_footer "$name" 0 1
@@ -269,6 +275,18 @@ run_example UNIT_TESTS \
   "=== Suite: Structure" \
   "=== Suite: utils" \
   "ON-TARGET RESULT: ALL PASS"
+
+# MPU fault recovery: one task per fault policy (see examples/36_mpu_fault_recovery.c).
+run_example MPU_FAULT_RECOVERY \
+  "\[fr\] panic child refused" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] DONE" \
+  "\[fr\] survivor tick"
+
+# ...and a task whose policy is PANIC: its first fault stops the system.
+EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \
+  "KERNEL PANIC" \
+  "MPU fault in task 2"
 
 # ----- summary ---------------------------------------------------------------
 # Cross-suite table. Renderer is shared with tools/run_tests.sh —
