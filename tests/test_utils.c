@@ -220,6 +220,9 @@ static void test_strncmp_bounded(void) {
  * Suite entry point
  * ---------------------------------------------------------------------- */
 /* --- v_printf: streamed, no length limit ----------------------------------- */
+/* Host only: these read what v_printf wrote from the capturing v_file_write in
+   stubs/utils_stubs.c. The on-target runner links the real one. */
+#ifdef VAIOS_HOST_TEST
 extern char g_out[2048];
 extern int g_out_len, g_take, g_refuse_once;
 int v_printf(const char *fmt, ...);
@@ -286,6 +289,7 @@ static void test_v_printf_retries_partial_writes(void) {
   v_printf("%s=%d;%s", "alpha-beta-gamma", 12345, "the rest of the line");
   TEST_ASSERT_EQ(strcmp(g_out, "alpha-beta-gamma=12345;the rest of the line"), 0);
 }
+#endif /* VAIOS_HOST_TEST */
 
 static const test_case_t utils_cases[] = {
     /* print_fmt_buf */
@@ -316,10 +320,12 @@ static const test_case_t utils_cases[] = {
     TEST_CASE(test_strcmp_equal_and_order),
     TEST_CASE(test_strncmp_bounded),
     TEST_CASE(test_pf_trailing_percent_stops_at_nul),
+#ifdef VAIOS_HOST_TEST
     TEST_CASE(test_v_printf_has_no_length_limit),
     TEST_CASE(test_v_printf_conversions),
     TEST_CASE(test_v_eprintf_goes_to_fd_2),
     TEST_CASE(test_v_printf_retries_partial_writes),
+#endif
 };
 const test_suite_t utils_suite = {
     .name = "utils (print_fmt_buf + v_atof)",

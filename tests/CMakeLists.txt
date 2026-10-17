@@ -213,7 +213,7 @@ target_include_directories(vaios_utils_tests PRIVATE ${TEST_INCLUDE_DIRS})
 # DEVFS on so v_printf (task-facing, through fd 1) is compiled and tested;
 # its v_file_write is a capturing stub in utils_stubs.c.
 target_compile_definitions(vaios_utils_tests PRIVATE VAIOS_MODULE_VFS=0
-    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8)
+    VAIOS_DEVFS=1 VAIOS_MAX_FDS=8 VAIOS_HOST_TEST)
 target_compile_options(vaios_utils_tests PRIVATE
     -Wall -Wextra -Wno-unused-parameter
     -g -O0
