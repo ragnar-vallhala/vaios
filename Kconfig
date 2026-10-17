@@ -323,6 +323,34 @@ config VAIOS_MPU_USER_SEPARATION
       (malloc/free/calloc/realloc) routes through SVC so it keeps working once a
       task can no longer reach current_task directly. The MPU region set and the
       nPRIV flip itself land in follow-up commits. Off until complete.
+config VAIOS_MPU_FAULT_RECOVERY
+    bool "Contain MPU faults in unprivileged tasks (kill instead of panic)"
+    depends on VAIOS_MPU_USER_SEPARATION
+    default n
+    help
+      A MemManage fault raised by an UNPRIVILEGED task in thread mode ends that
+      task (the same teardown as v_task_kill: held mutexes, wait queues, pbus
+      and vfs state are released) and the scheduler carries on. A fault in
+      handler mode, in a privileged task or in the kernel still panics, since
+      kernel state can no longer be trusted. Off by default: with it off the
+      handler panics on every MPU fault, as before.
+config VAIOS_MPU_FAULT_RESTART
+    bool "Restart a task that was ended by an MPU fault"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      After ending the faulting task, create a fresh one with the same entry,
+      argument, stack size, base priority, name and parent. It gets a new id and
+      a new, zeroed block; its old block is freed by the idle task's GC, so the
+      heap must have room for both for a moment. Restarts per task lineage are
+      capped by VAIOS_MPU_FAULT_RESTART_MAX, after which it stays ended. A
+      restart the heap cannot fit is skipped, not a panic -- except that
+      HEAP_WATERMARK_ENABLE still panics when the heap is that close to full.
+config VAIOS_MPU_FAULT_RESTART_MAX
+    int "Restarts allowed per task lineage"
+    depends on VAIOS_MPU_FAULT_RESTART
+    range 1 255
+    default 3
 endmenu
 
 menu "Kernel/user separation (Phase 3)"

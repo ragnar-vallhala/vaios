@@ -104,6 +104,10 @@ typedef struct Task_Control_Block {
   // switch-in. The idle task is privileged (it does kernel housekeeping).
   uint8_t privileged;
 #endif
+#if VAIOS_MPU_FAULT_RESTART
+  // Times this task's lineage has been restarted after an MPU fault.
+  uint8_t fault_restarts;
+#endif
 #if VAIOS_SYSCALL_SVC
   // Deferred blocking-syscall result: set by the waker (v_syscall_wake_result)
   // and written into this task's stacked r0 by PendSV (v_syscall_deliver_result)
@@ -243,6 +247,14 @@ int v_task_info(v_task_info_t *out);
 // without holding a TCB pointer.
 const char *task_get_name_by_id(uint32_t task_id);
 void task_exit_request(uint32_t task_id);
+#if VAIOS_MPU_FAULT_RESTART
+// Recreate `dead`, just ended by a contained MPU fault, from its entry, arg,
+// stack size, base priority, name and parent. Its block must still be
+// allocated (it is until the idle task's GC). Returns the new id, or 0 when the
+// lineage has used VAIOS_MPU_FAULT_RESTART_MAX restarts or the heap is out --
+// never a panic. Kernel-only: called from the MemManage handler.
+uint32_t task_fault_restart(const TCB *dead);
+#endif
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------
@@ -372,5 +384,18 @@ typedef enum {
   TASK_ERROR_TASK_NOT_FOUND,
   TASK_ERROR_INVALID_STATE
 } task_error_t;
+
+#if VAIOS_MPU_FAULT_RECOVERY
+// MPU faults contained by ending an unprivileged task (port MemManage path).
+// Kernel memory: privileged readers only.
+typedef struct {
+  uint32_t faults;     // faults contained
+  uint32_t restarts;   // tasks recreated after a fault (VAIOS_MPU_FAULT_RESTART)
+  uint32_t last_task;  // id of the last task ended by a fault
+  uint32_t last_addr;  // its fault address (0 if MMFAR was not valid)
+  uint32_t last_mmfsr; // its MemManage status bits
+} v_mpu_fault_stats_t;
+extern v_mpu_fault_stats_t v_mpu_fault_stats;
+#endif
 
 #endif // TASK_H

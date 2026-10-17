@@ -185,6 +185,12 @@ TCB *get_highest_priority_task(void) {
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
+#if VAIOS_MPU_FAULT_RESTART
+// Set only around a fault restart (task_fault_restart): out-of-memory then
+// returns 0 instead of panicking.
+static uint8_t task_create_soft_oom;
+#endif
+
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority) {
   return task_create_named(entry, arg, size, priority, "");
@@ -240,6 +246,14 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->mem_block = (uint32_t *)v_malloc(size);
 #endif
   if (!task->mem_block) {
+#if VAIOS_MPU_FAULT_RESTART
+    // A restart after a contained fault must not turn into a panic: give up
+    // the restart instead (the task simply stays ended).
+    if (task_create_soft_oom) {
+      v_free(task);
+      return 0;
+    }
+#endif
     v_panic(__FILE__, __LINE__, "failed to allocate stack for task %u",
             task->task_id);
   }
@@ -255,7 +269,11 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   // create.
   task->privileged = 0;
 #endif
+#if VAIOS_MPU_FAULT_RESTART
+  task->fault_restarts = 0;
+#endif
   task->delay_ticks = 0;
+  task->parent_id = 0; // v_task_spawn sets it; v_malloc does not zero
   task->next = NULL;
   task->prev = NULL;
   task->wait_next = NULL;
@@ -662,6 +680,25 @@ void task_exit_request(uint32_t task_id) {
   reap_orphans(); // anything this task spawned goes with it (M3b)
   v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
+#if VAIOS_MPU_FAULT_RESTART
+uint32_t task_fault_restart(const TCB *dead) {
+  if (!dead || dead->fault_restarts >= VAIOS_MPU_FAULT_RESTART_MAX)
+    return 0;
+  task_create_soft_oom = 1;
+  uint32_t id = task_create_named(dead->entry, dead->arg, dead->stack_size,
+                                  dead->base_priority, dead->name);
+  task_create_soft_oom = 0;
+  TCB *t = id ? get_task_by_id(id) : NULL;
+  if (!t)
+    return 0;
+  ENTER_CRITICAL();
+  t->fault_restarts = (uint8_t)(dead->fault_restarts + 1u);
+  t->parent_id = dead->parent_id;
+  EXIT_CRITICAL();
+  return id;
+}
+#endif
+
 //-----------------------------------------------------------------------------
 // Idle Task Function
 //-----------------------------------------------------------------------------

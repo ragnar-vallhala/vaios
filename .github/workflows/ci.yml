@@ -108,3 +108,6 @@ jobs:
 
       - name: Unprivileged flight app (release gate) in Renode
         run: bash tools/renode_flight_user.sh
+
+      - name: MPU fault containment + restart in Renode
+        run: bash tools/renode_fault_recovery.sh

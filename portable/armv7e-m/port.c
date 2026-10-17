@@ -178,6 +178,67 @@ void NMI_Handler(void) {
 #define SCB_BFAR (*(volatile uint32_t *)0xE000ED38)
 #define MMFSR_MMARVALID (1u << 7)
 #define BFSR_BFARVALID (1u << 7)
+#if VAIOS_MPU_FAULT_RECOVERY
+#define SCB_FPCCR (*(volatile uint32_t *)0xE000EF34)
+#define FPCCR_LSPACT (1u << 0)
+#define EXC_RETURN_THREAD (1u << 3)
+#define EXC_RETURN_PSP (1u << 2)
+v_mpu_fault_stats_t v_mpu_fault_stats;
+
+// Called from the naked MemManage entry with its EXC_RETURN. A fault raised by
+// an unprivileged task in thread mode is contained: the task is ended (and,
+// with VAIOS_MPU_FAULT_RESTART, recreated) and this returns, tail-chaining into
+// the PendSV that task_exit_request pended. Anything else panics, as before:
+// a fault in handler mode or in privileged code means kernel state is suspect.
+void v_port_memmanage(uint32_t exc_return) {
+  extern TCB *current_task;
+  uint32_t mmfsr = SCB_CFSR & 0xFFu; /* MemManage status is CFSR[7:0] */
+  uint32_t addr = (mmfsr & MMFSR_MMARVALID) ? SCB_MMFAR : 0u;
+  TCB *t = current_task;
+  uint32_t id = t ? t->task_id : 0u;
+  int from_user = (exc_return & EXC_RETURN_THREAD) &&
+                  (exc_return & EXC_RETURN_PSP) && t && !t->privileged;
+  if (!from_user)
+    v_panic(__FILE__, __LINE__,
+            "MPU fault in task %u | fault addr 0x%x MMFSR 0x%x", (unsigned)id,
+            (unsigned)addr, (unsigned)mmfsr);
+
+  SCB_CFSR = mmfsr; /* write-1-to-clear the MemManage status */
+  v_mpu_fault_stats.faults++;
+  v_mpu_fault_stats.last_task = id;
+  v_mpu_fault_stats.last_addr = addr;
+  v_mpu_fault_stats.last_mmfsr = mmfsr;
+
+  // The faulting task never runs again, so its stack is not worth keeping, but
+  // the switch-out still pushes onto PSP. After a stack-guard hit PSP points
+  // into the no-access guard; after any fault a pending lazy FP save points at
+  // the old frame. Cancel the lazy save and move PSP to the top of the task's
+  // own block, which stays allocated until the idle task's GC frees it.
+#ifdef _FPU_ENABLED // as PendSV's s16-s31 save; FPCCR exists only with an FPU
+  SCB_FPCCR &= ~FPCCR_LSPACT;
+#endif
+  uint32_t top = (uint32_t)t->mem_block + t->stack_size;
+  __asm volatile("msr psp, %0" ::"r"(top & ~7u) : "memory");
+  // Only now: v_log panics on a PSP near the stack base, which is where a
+  // stack-guard hit left it.
+  V_KLOG(LOG_WARN, "[MPU] fault in task %u contained | addr 0x%x MMFSR 0x%x",
+         (unsigned)id, (unsigned)addr, (unsigned)mmfsr);
+
+  task_exit_request(id); // same teardown as v_task_kill; pends PendSV
+#if VAIOS_MPU_FAULT_RESTART
+  // t stays allocated until the idle task's GC, so it can still be read here.
+  if (task_fault_restart(t))
+    v_mpu_fault_stats.restarts++;
+#endif
+}
+
+__attribute__((naked)) void MemManage_Handler(void) {
+  __asm volatile("   mov r0, lr                 \n"
+                 "   push {r0, lr}              \n" /* keeps SP 8-byte aligned */
+                 "   bl v_port_memmanage        \n"
+                 "   pop {r0, pc}               \n"); /* exception return */
+}
+#else
 void MemManage_Handler(void) {
 #if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_STATIC_PROTECT
   extern TCB *current_task;
@@ -191,6 +252,7 @@ void MemManage_Handler(void) {
   for (;;) {
   }
 }
+#endif
 // Bus fault. Enabled alongside MemManage under the MPU/user-separation config so
 // a stray bus access reports with its BFSR/BFAR instead of escalating silently.
 void BusFault_Handler(void) {
