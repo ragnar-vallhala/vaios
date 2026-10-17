@@ -592,6 +592,18 @@ config SHELL_LOG_LEVEL
     int "Shell log level (0=DEBUG 1=INFO 2=WARN 3=ERROR)"
     default 1
     range 0 3
+config ALLOWED_MODULES
+    string "Log modules let through (\"ALL\" or CSV)"
+    default "ALL"
+    help
+      v_log drops a message that starts with a [MODULE] tag unless MODULE is
+      in this list; untagged messages always pass. "ALL" lets every tag
+      through, e.g. "TASK,MPU" only those two.
+
+      It is a logging setting, not a shell one. It used to sit in the Shell
+      menu, which depends on VAIOS_MODULE_SHELL, so in every build without the
+      shell it came out as "" and silently dropped every tagged message --
+      all of PRIORITY_INVERSION's [LPT]/[MPT]/[HPT] output, for one.
 endmenu
 
 menu "Shell"
@@ -599,9 +611,6 @@ depends on VAIOS_MODULE_SHELL
 config ENABLE_SHELL
     bool "Enable the shell at boot"
     default y
-config ALLOWED_MODULES
-    string "Shell-accessible modules (\"ALL\" or CSV)"
-    default "ALL"
 config CMD_BUFFER_SIZE
     int "Command history depth (lines)"
     range 1 64
