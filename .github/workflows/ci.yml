@@ -114,3 +114,6 @@ jobs:
 
       - name: Zero-copy v_upipe between unprivileged tasks in Renode
         run: bash tools/renode_upipe.sh
+
+      - name: MMIO windows for unprivileged tasks in Renode
+        run: bash tools/renode_mmio_user.sh

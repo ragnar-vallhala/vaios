@@ -334,6 +334,24 @@ config VAIOS_MPU_USER_SEPARATION
       Tested in CI under Renode (isolation, lifecycle, fd IPC, bus, the
       unprivileged flight app, fault recovery) and on a Nucleo-F401RE and a
       Nucleo-F767ZI.
+config VAIOS_TASK_MMIO
+    bool "Peripheral (MMIO) windows for unprivileged tasks"
+    depends on VAIOS_MPU_USER_SEPARATION && VAIOS_ARCH_CORTEX_M4
+    default n
+    help
+      Lets privileged code give an unprivileged task direct read/write to
+      one peripheral window (v_task_grant_mmio), mapped as one more MPU
+      region (region 6, Device memory, execute-never) on that task's switch-in.
+      The task drives the device's registers itself, with no syscall; every
+      other peripheral still faults for it. One window per task, a power of
+      two in size and aligned to it; kept across a fault restart.
+
+      A window over a peripheral that can write memory (a DMA controller) or
+      that controls others (RCC, the flash interface) hands the task the whole
+      system. Interrupts stay with privileged code.
+
+      Costs every task one more region on the switch: two more words in the
+      PendSV burst.
 config VAIOS_UPIPE
     bool "Zero-copy pipe between two unprivileged tasks (v_upipe)"
     depends on VAIOS_MPU_USER_SEPARATION && VAIOS_ARCH_CORTEX_M4

@@ -346,6 +346,15 @@ EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \
   "KERNEL PANIC" \
   "MPU fault in task 2"
 
+# MMIO windows: an unprivileged task drives GPIOA (the LED) through its
+# window, faults on RCC and is restarted with the window kept; an ungranted
+# task faults on GPIOA (see examples/38_mmio_user.c).
+run_example MMIO_USER \
+  "\[mm\] gpio ok" \
+  "contained \| addr 0x40023830" \
+  "contained \| addr 0x40020014" \
+  "\[mm\] faults=3 restarts=1"
+
 # v_upipe: two unprivileged tasks through the zero-copy pipe and, for
 # comparison, a bus pipe topic; a third task touching the pipe is killed. Last,
 # because -DVAIOS_MODULE_BUS=ON stays in the build dir's cache. The ns/msg lines

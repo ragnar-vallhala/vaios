@@ -613,6 +613,9 @@ int v_port_hw_sdio_card_init(void) {
 /* A v_upipe block, mapped into its two tasks (VAIOS_UPIPE). Between the task's
  * block region and the guard; it never overlaps either. */
 #define VAIOS_MPU_UPIPE_REGION 5u
+/* A task's MMIO window (VAIOS_TASK_MMIO). Above the static peripheral region
+ * 1, so it opens that window to the task. */
+#define VAIOS_MPU_MMIO_REGION 6u
 
 /* What an encoder leaves in `out` when it cannot encode: the region, disabled
  * (RBAR VALID selects it, RASR 0 turns it off), so the context switch can write
@@ -775,25 +778,38 @@ int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   return 0;
 }
 
-int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]) {
-  v_mpu_region_off(VAIOS_MPU_UPIPE_REGION, out);
+/* A grant: [base, base+size), size a power of two and base aligned to it, RW
+ * to unprivileged code, execute-never, as `region`. */
+static int v_mpu_grant_encode(uint32_t region, void *base, uint32_t size,
+                              hal_mpu_mem_t mem, uint32_t out[2]) {
+  v_mpu_region_off(region, out);
   if (!base || !hal_mpu_present())
     return -1;
   hal_mpu_region_t r = {
       .base = (uint32_t)base,
       .size = v_mpu_size_enum(size),
       .ap = HAL_MPU_AP_RW,
-      .mem = HAL_MPU_MEM_NORMAL_WB,
+      .mem = mem,
       .executable = false,
       .shareable = false,
       .srd_mask = 0,
   };
   hal_mpu_encoded_t enc;
-  if (hal_mpu_encode(VAIOS_MPU_UPIPE_REGION, &r, &enc) != HAL_OK)
+  if (hal_mpu_encode(region, &r, &enc) != HAL_OK)
     return -1;
   out[0] = enc.rbar;
   out[1] = enc.rasr;
   return 0;
+}
+
+int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  return v_mpu_grant_encode(VAIOS_MPU_UPIPE_REGION, base, size,
+                            HAL_MPU_MEM_NORMAL_WB, out);
+}
+
+int v_port_mmio_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  return v_mpu_grant_encode(VAIOS_MPU_MMIO_REGION, base, size,
+                            HAL_MPU_MEM_DEVICE, out);
 }
 #endif
 
@@ -815,6 +831,12 @@ int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)base;
   (void)size;
   v_mpu_region_off(VAIOS_MPU_UPIPE_REGION, out);
+  return -1;
+}
+int v_port_mmio_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  (void)base;
+  (void)size;
+  v_mpu_region_off(VAIOS_MPU_MMIO_REGION, out);
   return -1;
 }
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {

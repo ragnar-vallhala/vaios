@@ -52,12 +52,16 @@ typedef struct v_wnode {
 } v_wnode;
 #endif
 
-// MPU regions a task carries (see mpu_regs): its block region with user
-// separation, its stack guard with the guard on, its v_upipe (last) with
-// VAIOS_UPIPE.
+// MPU regions a task carries (see mpu_regs), in this order: its block region
+// with user separation, its stack guard with the guard on, then the grants --
+// its MMIO window (VAIOS_TASK_MMIO) and its v_upipe (VAIOS_UPIPE), last.
+#define V_TASK_MPU_GRANTS ((VAIOS_TASK_MMIO ? 1 : 0) + (VAIOS_UPIPE ? 1 : 0))
 #define VAIOS_TASK_MPU_REGIONS                                                 \
   ((VAIOS_MPU_USER_SEPARATION ? 1 : 0) + (VAIOS_MPU_STACK_GUARD ? 1 : 0) +    \
-   (VAIOS_UPIPE ? 1 : 0))
+   V_TASK_MPU_GRANTS)
+// Index of a grant's RBAR/RASR pair in mpu_regs (word index = 2 * pair).
+#define V_MPU_PAIR_UPIPE (VAIOS_TASK_MPU_REGIONS - 1)
+#define V_MPU_PAIR_MMIO (VAIOS_TASK_MPU_REGIONS - V_TASK_MPU_GRANTS)
 
 typedef struct Task_Control_Block {
   uint32_t *sp;           // Current stack pointer (PSP)
@@ -296,6 +300,16 @@ v_fault_policy_t task_fault_policy(const TCB *t);
 // panic. Kernel-only: called from the MemManage handler.
 uint32_t task_fault_restart(TCB *dead);
 #endif
+// Give task `task_id` unprivileged read/write to the MMIO window
+// [base, base + size) (VAIOS_TASK_MMIO): size a power of two >= 32, base
+// aligned to it, the window inside the peripheral range 0x40000000..0x5FFFFFFF.
+// Device memory, execute-never, one window per task (a second call replaces
+// the first), kept across a fault restart. Privileged callers only. A
+// peripheral that can write memory itself (a DMA controller, or one that
+// masters the bus) or that clocks/resets others (RCC) hands the task the whole
+// system: that judgement is the caller's. Returns VA_PASS or V_TASK_EINVAL.
+int v_task_grant_mmio(uint32_t task_id, uintptr_t base, uint32_t size);
+
 #if VAIOS_TASK_CHECKPOINT
 // Save `len` bytes (1..VAIOS_TASK_CHECKPOINT_MAX) as the calling task's
 // checkpoint, replacing the last one. Kept across fault restarts. VA_PASS,

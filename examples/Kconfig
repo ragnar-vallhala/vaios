@@ -68,6 +68,19 @@ config EXAMPLE_UPIPE
 	select VAIOS_MODULE_BUS
 	select VAIOS_UPIPE
 
+config EXAMPLE_MMIO_USER
+	bool "mmio_user"
+	# MPU_FAULT_RECOVERY's closure (a task outside its window is restarted
+	# or killed), plus MMIO windows.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_TASK_HEAP
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_MPU_FAULT_RECOVERY
+	select VAIOS_TASK_MMIO
+
 config EXAMPLE_SD_USER
 	bool "sd_user"
 	# An unprivileged task using the SD card through the VFS mount (M5's

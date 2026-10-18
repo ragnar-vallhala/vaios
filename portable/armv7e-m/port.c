@@ -518,7 +518,11 @@ __attribute__((naked)) void PendSV_Handler(void) {
       "   ldr r1, =current_task               \n"
       "   ldr r1, [r1]                        \n"
       "   addw r2, r1, %[regs]                \n"
-#if VAIOS_TASK_MPU_REGIONS == 3
+#if VAIOS_TASK_MPU_REGIONS == 4
+      "   ldmia r2, {r4-r11}                  \n"
+      "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
+      "   stmia r2, {r4-r11}                  \n" /* RBAR RASR, A1, A2, A3 */
+#elif VAIOS_TASK_MPU_REGIONS == 3
       "   ldmia r2, {r4-r9}                   \n"
       "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
       "   stmia r2, {r4-r9}                   \n" /* RBAR RASR, A1, A2 */
@@ -712,6 +716,11 @@ void init_task_stack(TCB *task) {
 #if VAIOS_MPU_STACK_GUARD
   // No-access guard at the stack base: a store past the bottom traps.
   (void)v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE, r);
+  r += 2;
+#endif
+#if VAIOS_TASK_MMIO
+  // No MMIO window until v_task_grant_mmio: region 6 disabled.
+  (void)v_port_mmio_region_encode(NULL, 0, r);
   r += 2;
 #endif
 #if VAIOS_UPIPE

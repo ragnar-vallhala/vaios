@@ -777,13 +777,15 @@ uint32_t task_fault_restart(TCB *dead) {
   dead->ckpt = NULL;
 #endif
 #if VAIOS_UPIPE
-  // Same pipe, same end: the new task reattaches, region and all.
+  // Same pipe, same end: the new task reattaches.
   t->upipe = dead->upipe;
   t->upipe_role = dead->upipe_role;
-  t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 2] =
-      dead->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 2];
-  t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 1] =
-      dead->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 1];
+#endif
+#if V_TASK_MPU_GRANTS
+  // ...and keeps its grants' regions (MMIO window, pipe): the tail of mpu_regs.
+  memcpy(&t->mpu_regs[2 * (VAIOS_TASK_MPU_REGIONS - V_TASK_MPU_GRANTS)],
+         &dead->mpu_regs[2 * (VAIOS_TASK_MPU_REGIONS - V_TASK_MPU_GRANTS)],
+         8u * V_TASK_MPU_GRANTS);
 #endif
   EXIT_CRITICAL();
   return id;
@@ -818,6 +820,27 @@ int v_task_restore(void *buf, uint32_t len) {
   if (n)
     memcpy(buf, t->ckpt, n);
   return (int)n;
+}
+#endif
+
+#if VAIOS_TASK_MMIO
+int v_task_grant_mmio(uint32_t task_id, uintptr_t base, uint32_t size) {
+  if (size < 32u || (size & (size - 1u)) || (base & (size - 1u)) ||
+      base < 0x40000000u || base + size - 1u > 0x5FFFFFFFu)
+    return V_TASK_EINVAL;
+  uint32_t enc[2];
+  if (v_port_mmio_region_encode((void *)base, size, enc) != 0)
+    return V_TASK_EINVAL;
+  ENTER_CRITICAL();
+  TCB *t = get_task_by_id(task_id);
+  if (t) {
+    t->mpu_regs[2 * V_MPU_PAIR_MMIO] = enc[0];
+    t->mpu_regs[2 * V_MPU_PAIR_MMIO + 1] = enc[1];
+    if (t == current_task)
+      v_port_apply_current_mpu(); // granting itself: map it now
+  }
+  EXIT_CRITICAL();
+  return t ? VA_PASS : V_TASK_EINVAL;
 }
 #endif
 
@@ -867,9 +890,8 @@ v_upipe_t *v_upipe_create(uint32_t slot, uint32_t n, uint32_t prod_id,
     TCB *t = ends[i];
     t->upipe = k;
     t->upipe_role = (uint8_t)(i + 1);
-    // The pipe's pair is the last in mpu_regs (see VAIOS_TASK_MPU_REGIONS).
-    t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 2] = enc[0];
-    t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 1] = enc[1];
+    t->mpu_regs[2 * V_MPU_PAIR_UPIPE] = enc[0];
+    t->mpu_regs[2 * V_MPU_PAIR_UPIPE + 1] = enc[1];
   }
   if (current_task == tp || current_task == tc)
     v_port_apply_current_mpu(); // the creator is an end: map it now

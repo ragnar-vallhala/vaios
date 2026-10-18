@@ -153,6 +153,9 @@ int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]);
 // to it) as region 5: RW to unprivileged code, execute-never. base NULL (or an
 // encode failure) leaves the region disabled. Returns 0 when encoded.
 int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]);
+// As v_port_upipe_region_encode, for a task's MMIO window (region 6): Device
+// memory instead of Normal.
+int v_port_mmio_region_encode(void *base, uint32_t size, uint32_t out[2]);
 // Program the running task's MPU regions now (the switch does it otherwise).
 void v_port_apply_current_mpu(void);
 #endif
