@@ -16,6 +16,11 @@
  *
  * Build with I2C, I2C_DMA, SPI and USB_CDC enabled in NavHAL, and the console
  * routed to the UART (the CDC port is this example's).
+ *
+ * On any other board (a Nucleo: nothing on the buses) the same tasks run with
+ * output on the console, and the checks invert: every I2C read must fail and
+ * be recovered (i2c err = rec = all reads), the rogue's read fails too, and
+ * the bus must still be serving after the crash task is killed.
  */
 #ifndef NAVHAL
 #error "NAVHAL is required for this example"
@@ -30,12 +35,20 @@
 #include "vfs.h"
 #include <stdint.h>
 
-#if !NAVHAL_CONFIG_DRV_I2C || !NAVHAL_CONFIG_DRV_SPI ||                        \
-    !NAVHAL_CONFIG_DRV_USB_CDC || NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
-#error "needs NavHAL I2C, SPI and USB_CDC, and the console off CDC"
+#if !NAVHAL_CONFIG_DRV_I2C || !NAVHAL_CONFIG_DRV_SPI
+#error "needs NavHAL I2C and SPI"
 #endif
 
+#if NAVHAL_CONFIG_BOARD_NAVIXSM_F401RE
+#if !NAVHAL_CONFIG_DRV_USB_CDC || NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
+#error "NAVIXSM: needs NavHAL USB_CDC, and the console off CDC"
+#endif
+#define HAVE_SENSORS 1
 #define RUNS 2000u
+#else
+#define HAVE_SENSORS 0
+#define RUNS 50u // each read NACKs: ~1e6-spin HAL timeout, then a bus reset
+#endif
 #define STK 2048
 
 extern void v_print(const char *s); /* polling console write (privileged) */
@@ -49,14 +62,19 @@ static v_spi_dev_t imu_dev = {
             .firstbit = HAL_SPI_FIRSTBIT_MSB},
     .hz = 1000000u,
 };
+#if HAVE_SENSORS
 static v_stream_t cdc;
+#define OUT_OPEN() v_file_open("/dev/cdc0", VFS_O_WRONLY)
+#define CDC_DROPPED cdc.dropped
+#else
+#define OUT_OPEN() 1 // the console
+#define CDC_DROPPED 0u
+#endif
 
-static int out = -1; // each task's own fd for /dev/cdc0
-
-static void say(const char *fmt, int a, int b, int c) {
+// `out` is the calling task's own fd: an unprivileged task has no writable
+// globals (they sit in kernel RAM), so nothing here may be static.
+static void say(int out, const char *fmt, int a, int b, int c) {
   char buf[96];
-  if (out < 0)
-    out = v_file_open("/dev/cdc0", VFS_O_WRONLY);
   int n = print_fmt_buf(buf, sizeof buf, fmt, a, b, c);
   for (int done = 0; done < n;) {
     int w = v_file_write(out, buf + done, (uint32_t)(n - done));
@@ -71,6 +89,7 @@ static void say(const char *fmt, int a, int b, int c) {
 // Read register `reg` (n bytes, big-endian) RUNS times; expect `want`.
 static void check_reg(const char *dev, const char *tag, uint8_t reg,
                       uint32_t n, uint32_t want) {
+  int out = OUT_OPEN();
   int fd = v_pbus_open(dev);
   uint32_t bad = 0, err = 0, last = 0;
   for (uint32_t i = 0; i < RUNS && fd >= 0; i++) {
@@ -83,9 +102,9 @@ static void check_reg(const char *dev, const char *tag, uint8_t reg,
     last = n == 2 ? (uint32_t)(rx[0] << 8 | rx[1]) : rx[0];
     bad += last != want;
   }
-  say(tag, (int)last, (int)bad, (int)err);
+  say(out, tag, (int)last, (int)bad, (int)err);
   if (fd < 0)
-    say("[bm] open failed\r\n", 0, 0, 0);
+    say(out, "[bm] open failed\r\n", 0, 0, 0);
 }
 
 static void imu(void *arg) {
@@ -113,25 +132,27 @@ static void ina(void *arg) {
 
 static void rogue(void *arg) {
   (void)arg;
+  int out = OUT_OPEN();
   int fd = v_pbus_open("baro0");
   uint8_t reg = 0x0D, id = 0;
   v_pbus_xfer_t x = {.addr = 0x44, .tx = &reg, .tx_len = 1, .rx = &id,
                      .rx_len = 1};
   int rc = v_pbus_xfer(fd, &x, 1, 20);
-  say("[bm] rogue asked 0x44, got 0x%x rc=%d\r\n", id, rc, 0);
+  say(out, "[bm] rogue asked 0x44, got 0x%x rc=%d\r\n", id, rc, 0);
   for (;;)
     v_delay(1000);
 }
 
 static void crash(void *arg) {
   (void)arg;
+  int out = OUT_OPEN();
   int fd = v_pbus_open("ina0");
   uint8_t reg = 0xFE, rx[2];
   v_pbus_xfer_t x = {.tx = &reg, .tx_len = 1, .rx = rx, .rx_len = 2};
   v_pbus_xfer_submit(fd, &x, 3);
-  say("[bm] crash faults mid-transfer\r\n", 0, 0, 0);
+  say(out, "[bm] crash faults mid-transfer\r\n", 0, 0, 0);
   (void)*(volatile uint32_t *)0x20000000u; // kernel RAM: MemManage -> killed
-  say("[bm] BUG: crash survived\r\n", 0, 0, 0);
+  say(out, "[bm] BUG: crash survived\r\n", 0, 0, 0);
   for (;;)
     v_delay(1000);
 }
@@ -140,14 +161,16 @@ static void i2c_worker(void *m) {
   for (;;)
     v_pbus_mgr_step(m, 100);
 }
+#if HAVE_SENSORS
 static void cdc_writer(void *s) {
   for (;;)
     v_stream_writer_step(s, 100);
 }
+#endif
 
 static void monitor(void *arg) {
   (void)arg;
-  int fd = v_file_open("/dev/cdc0", VFS_O_WRONLY);
+  int fd = OUT_OPEN();
   for (;;) {
     task_delay(3000);
     char buf[128];
@@ -156,7 +179,7 @@ static void monitor(void *arg) {
         "[bm] i2c err=%u rec=%u  spi err=%u rec=%u  cdc drop=%u faults=%u\r\n",
         (unsigned)i2c1.errors, (unsigned)i2c1.recoveries,
         (unsigned)spi1.errors, (unsigned)spi1.recoveries,
-        (unsigned)cdc.dropped, (unsigned)v_mpu_fault_stats.faults);
+        (unsigned)CDC_DROPPED, (unsigned)v_mpu_fault_stats.faults);
     v_file_write(fd, buf, (uint32_t)n);
   }
 }
@@ -184,13 +207,17 @@ int main(void) {
   if (v_pbus_spi_attach(&spi1, HAL_SPI_1) ||
       v_pbus_spi_add(&spi1, &imu_dev, "imu0"))
     v_print("[bm] BUG: spi setup\r\n");
+#if HAVE_SENSORS
   if (v_stream_cdc_attach(&cdc, "/dev/cdc0"))
     v_print("[bm] BUG: cdc setup\r\n");
+#endif
 
   // Workers above their users; users at 2..3.
   task_create_privileged(i2c_worker, &i2c1, STK, 6, "i2c1");
   task_create_privileged(i2c_worker, &spi1, STK, 6, "spi1");
+#if HAVE_SENSORS
   task_create_privileged(cdc_writer, &cdc, STK, 5, "cdcw");
+#endif
   task_create_privileged(monitor, NULL, STK, 1, "monitor");
   task_create_named(imu, NULL, STK, 2, "imu");
   task_create_named(baro, NULL, STK, 2, "baro");
