@@ -420,8 +420,25 @@ typedef struct {
   uint32_t last_task;  // id of the last task ended by a fault
   uint32_t last_addr;  // its fault address (0 if MMFAR was not valid)
   uint32_t last_mmfsr; // its MemManage status bits
+#if VAIOS_MPU_FAULT_ISR
+  uint32_t isr_faults; // faults contained by abandoning an ISR
+  uint32_t last_irq;   // the last IRQ disabled for one
+#endif
 } v_mpu_fault_stats_t;
 extern v_mpu_fault_stats_t v_mpu_fault_stats;
+#endif
+
+#if VAIOS_MPU_FAULT_ISR
+// Let an MPU fault in IRQ `irqn`'s handler be contained (VAIOS_MPU_FAULT_ISR):
+// the handler is abandoned, the IRQ disabled and marked failed, and the task it
+// interrupted carries on. Privileged code only. The IRQ must sit below
+// MemManage (priority > 0), or its fault escalates to HardFault. VA_PASS, or
+// V_TASK_EINVAL for a bad number.
+int v_irq_set_containable(int irqn);
+// The lowest IRQ disabled by a contained fault since the last call, cleared as
+// it is returned, or -1 if none. For a supervisor task to poll and reset that
+// driver. Privileged code only.
+int v_irq_failed_take(void);
 #endif
 
 #endif // TASK_H

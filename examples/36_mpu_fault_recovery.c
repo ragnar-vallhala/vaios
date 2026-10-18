@@ -1,3 +1,4 @@
+#include "navhal.h"
 #include "port.h"
 #include "task.h"
 #include "utils.h"
@@ -29,9 +30,18 @@
  * jumps into SRAM, which is execute-never for privileged code too: it runs
  * twice, so faults = 9 and restarts = 5.
  *
+ * With VAIOS_MPU_FAULT_ISR, a privileged task (irqtest) makes the USART1 and
+ * USART6 IRQs (neither is a Nucleo console) containable and hooks a handler
+ * into both that jumps into SRAM. It pends USART1 with no FP state live (a
+ * basic frame), then USART6 with s0 live (an extended frame, lazily stacked),
+ * then USART1 again: two faults contained, both IRQs disabled, so the third
+ * pend runs nothing; irqtest carries on each time, s0 intact.
+ *
  * Built with -DFR_PANIC=1, main gives escaper the PANIC policy instead: its
  * first fault must stop the system. -DFR_PRIV_CRIT=1 makes priv fault inside a
- * critical section, which must stop the system whatever its policy. -DFR_NO_OVERFLOW=1 leaves overflow out
+ * critical section, which must stop the system whatever its policy.
+ * -DFR_ISR_PANIC=1 leaves irqtest's IRQs not containable: the first must stop
+ * the system. -DFR_NO_OVERFLOW=1 leaves overflow out
  * (6 faults, 4 restarts), for a simulator that does not model the MPU's
  * subregion-disable bits.
  */
@@ -108,6 +118,61 @@ static void priv(void *arg) {
 }
 #endif
 
+#if VAIOS_MPU_FAULT_ISR
+#define NVIC_ISPR ((volatile uint32_t *)0xE000E200)
+static void bad_isr(void) {
+  uint16_t ram[2] = {0x4770u, 0x4770u}; /* bx lr: never runs, SRAM is XN */
+  ((void (*)(void))((uintptr_t)ram | 1u))();
+}
+
+static void pend(int irq) {
+  NVIC_ISPR[irq >> 5] = 1u << (irq & 31); /* the IRQ fires right here */
+  __asm volatile("dsb\n isb" ::: "memory");
+}
+
+static void irqtest(void *arg) {
+  (void)arg;
+  task_delay(100);
+  const int irqs[2] = {USART1_IRQn, USART6_IRQn};
+  for (int i = 0; i < 2; i++) {
+#ifndef FR_ISR_PANIC /* not opted in: the first fault must stop the system */
+    v_irq_set_containable(irqs[i]);
+#endif
+    hal_interrupt_attach_callback(irqs[i], bad_isr);
+    hal_interrupt_enable_with_priority(irqs[i], HAL_IRQ_PRIORITY_DEFAULT);
+  }
+  pend(irqs[0]);
+  v_print("[fr] irqtest resumed\r\n");
+#ifdef _FPU_ENABLED
+  /* s0 live across the IRQ: the task's frame is the extended one. */
+  uint32_t in = 0x40490FDBu, out = 0;
+  __asm volatile("vmov s0, %[in]      \n"
+                 "str %[bit], [%[ispr]] \n"
+                 "dsb                 \n"
+                 "isb                 \n"
+                 "vmov %[out], s0     \n"
+                 : [out] "=&r"(out)
+                 : [in] "r"(in), [bit] "r"(1u << (irqs[1] & 31)),
+                   [ispr] "r"(&NVIC_ISPR[irqs[1] >> 5])
+                 : "s0", "memory");
+  v_print(out == in ? "[fr] irqtest resumed, s0 kept\r\n"
+                    : "[fr] BUG: s0 lost\r\n");
+#else
+  pend(irqs[1]);
+  v_print("[fr] irqtest resumed, s0 kept\r\n");
+#endif
+  pend(irqs[0]); /* disabled now: nothing runs */
+  v_print("[fr] irqtest resumed\r\n");
+  int a = v_irq_failed_take(), b = v_irq_failed_take(), c = v_irq_failed_take();
+  char buf[80];
+  print_fmt_buf(buf, sizeof buf, "[fr] irq failed=%d,%d,%d expected=%d,%d,-1\r\n",
+                a, b, c, irqs[0], irqs[1]);
+  v_print(buf);
+  for (;;)
+    task_delay(1000);
+}
+#endif
+
 static void survivor(void *arg) {
   (void)arg;
   v_task_spawn_t cfg = {.entry = child, .stack_size = STK_SMALL, .priority = 1,
@@ -140,6 +205,12 @@ static void monitor(void *arg) {
                   (unsigned)v_mpu_fault_stats.last_addr,
                   (unsigned)v_mpu_fault_stats.last_mmfsr);
     v_print(buf);
+#if VAIOS_MPU_FAULT_ISR
+    print_fmt_buf(buf, sizeof buf, "[fr] isr_faults=%u last_irq=%u\r\n",
+                  (unsigned)v_mpu_fault_stats.isr_faults,
+                  (unsigned)v_mpu_fault_stats.last_irq);
+    v_print(buf);
+#endif
     v_print("[fr] DONE\r\n");
     task_delay(2000);
   }
@@ -163,6 +234,9 @@ int main(void) {
 #if VAIOS_MPU_FAULT_PRIV
   uint32_t pv = task_create_privileged(priv, NULL, STK_BIG, 2, "priv");
   task_set_fault_policy(pv, V_FAULT_RESTART, 1);
+#endif
+#if VAIOS_MPU_FAULT_ISR
+  task_create_privileged(irqtest, NULL, STK_BIG, 2, "irqtest");
 #endif
   task_create_named(survivor, NULL, STK_SMALL, 1, "survivor");
   task_create_privileged(monitor, NULL, STK_BIG, 3, "monitor");

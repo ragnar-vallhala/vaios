@@ -313,6 +313,24 @@ NAVHAL_CONFIG_FILE="$priv_cfg" LABEL="privileged, critical section" \
   "fault addr 0x0 MMFSR 0x1"
 rm -f "$priv_cfg"
 
+# ...with VAIOS_MPU_FAULT_ISR: faults in two opted-in IRQ handlers (one with
+# the interrupted task's FP state live) are contained and the IRQs disabled;
+# one not opted in still stops the system.
+isr_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$isr_cfg"
+echo "CONFIG_VAIOS_MPU_FAULT_ISR=y" >> "$isr_cfg"
+NAVHAL_CONFIG_FILE="$isr_cfg" LABEL="ISR" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] isr_faults=2 last_irq=71" \
+  "\[fr\] irq failed=37,71,-1" \
+  "\[fr\] irqtest resumed, s0 kept" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] survivor tick"
+NAVHAL_CONFIG_FILE="$isr_cfg" LABEL="ISR not opted in" \
+  EXTRA_CMAKE="-DFR_ISR_PANIC=1" run_example MPU_FAULT_RECOVERY \
+  "KERNEL PANIC" \
+  "fault addr 0x0 MMFSR 0x1"
+rm -f "$isr_cfg"
+
 # ...and a task whose policy is PANIC: its first fault stops the system.
 EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \
   "KERNEL PANIC" \

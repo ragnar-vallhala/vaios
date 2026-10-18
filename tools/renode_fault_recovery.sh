@@ -42,7 +42,7 @@ build_and_run() {
   done
   clean="$(sed -E 's/.*usart2: \[[^]]*\] ?//; s/\x1b\[[0-9;]*m//g' "$log")"
   echo "---- captured UART ----"
-  echo "$clean" | grep -aE '\[fr\] (esc|over|child|priv|panic|faults|DONE|BUG)|contained|PANIC|MPU fault|Halt' || true
+  echo "$clean" | grep -aE '\[fr\] (esc|over|child|priv|irq|isr|panic|faults|DONE|BUG)|contained|PANIC|MPU fault|Halt' || true
   echo "-----------------------"
   rm -f "$log"
 }
@@ -104,6 +104,25 @@ rm -f "$priv_cfg"
 check "privileged in a critical section: halts" \
   "$(echo "$clean" | grep -aqE 'KERNEL PANIC' && echo "$clean" | grep -aq 'MPU fault in task' && echo 1 || echo 0)"
 check "privileged in a critical section: not restarted" "$([ "$(count '\[fr\] priv start')" -eq 1 ] && echo 1 || echo 0)"
+
+# VAIOS_MPU_FAULT_ISR: a fault in an opted-in IRQ handler is contained and the
+# IRQ disabled -- once with a basic task frame, once with an extended one --
+# and a handler that was not opted in still halts.
+isr_cfg="$(mktemp)"
+cat "$ROOT_DIR/navhal.config" > "$isr_cfg"
+echo "CONFIG_VAIOS_MPU_FAULT_ISR=y" >> "$isr_cfg"
+rm -rf "${BUILD_DIR}_isr" "${BUILD_DIR}_isrpanic"
+build_and_run "${BUILD_DIR}_isr" -DNAVHAL_CONFIG_FILE="$isr_cfg"
+check "ISR: two handler faults contained"      "$(echo "$clean" | grep -aq '\[fr\] isr_faults=2 last_irq=71' && echo 1 || echo 0)"
+check "ISR: both IRQs reported failed, once"   "$(echo "$clean" | grep -aq '\[fr\] irq failed=37,71,-1' && echo 1 || echo 0)"
+check "ISR: interrupted task resumed, s0 kept" "$(echo "$clean" | grep -aq '\[fr\] irqtest resumed, s0 kept' && echo 1 || echo 0)"
+check "ISR: task faults unaffected (7, 4)"     "$(echo "$clean" | grep -aq '\[fr\] faults=7 restarts=4' && echo 1 || echo 0)"
+check "ISR: no fault escaped, no panic" \
+  "$(echo "$clean" | grep -aqE 'BUG:|KERNEL PANIC' && echo 0 || echo 1)"
+build_and_run "${BUILD_DIR}_isrpanic" -DNAVHAL_CONFIG_FILE="$isr_cfg" -DFR_ISR_PANIC=1
+rm -f "$isr_cfg"
+check "ISR not opted in: halts" \
+  "$(echo "$clean" | grep -aqE 'KERNEL PANIC' && echo "$clean" | grep -aq 'fault addr 0x0 MMFSR 0x1' && echo 1 || echo 0)"
 
 # The PANIC policy: escaper's first fault must halt the system, unrecovered.
 build_and_run "${BUILD_DIR}_panic" -DFR_PANIC=1

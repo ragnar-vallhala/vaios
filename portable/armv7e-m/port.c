@@ -1,3 +1,4 @@
+#include "ipc.h" // VA_PASS
 #include "port.h"
 #include "syscall.h"
 #include "task.h"
@@ -186,6 +187,103 @@ void NMI_Handler(void) {
 #define EXC_RETURN_PSP (1u << 2)
 v_mpu_fault_stats_t v_mpu_fault_stats;
 
+#if VAIOS_MPU_FAULT_ISR
+#define NVIC_ICER ((volatile uint32_t *)0xE000E180)
+#define NVIC_ICPR ((volatile uint32_t *)0xE000E280)
+#define NVIC_IABR ((volatile uint32_t *)0xE000E300)
+#define SCB_SHCSR (*(volatile uint32_t *)0xE000ED24)
+#define SCB_VTOR_REG (*(volatile uint32_t *)0xE000ED08)
+#define SHCSR_ACTIVE 0xD8Bu /* MEMFAULT BUSFAULT USGFAULT SVCALL MONITOR PENDSV SYSTICK */
+#define SHCSR_MEMFAULTACT (1u << 0)
+#define FPCCR_LSPEN (1u << 30)
+#define XPSR_ICI_IT 0x0600FC00u
+#define IRQ_WORDS 4u /* 128 IRQs: enough for every F4/F7 */
+static uint32_t irq_containable[IRQ_WORDS];
+static volatile uint32_t irq_failed[IRQ_WORDS];
+// What isr_abandon finishes the ISR with: its stack top and its EXC_RETURN.
+__attribute__((used)) uint32_t v_isr_abandon_msp, v_isr_abandon_exc;
+
+int v_irq_set_containable(int irqn) {
+  if (irqn < 0 || (uint32_t)irqn >= 32u * IRQ_WORDS)
+    return V_TASK_EINVAL;
+  ENTER_CRITICAL();
+  irq_containable[irqn >> 5] |= 1u << (irqn & 31);
+  EXIT_CRITICAL();
+  return VA_PASS;
+}
+
+int v_irq_failed_take(void) {
+  int irq = -1;
+  ENTER_CRITICAL();
+  for (uint32_t w = 0; w < IRQ_WORDS && irq < 0; w++)
+    if (irq_failed[w]) {
+      uint32_t b = (uint32_t)__builtin_ctz(irq_failed[w]);
+      irq_failed[w] &= ~(1u << b);
+      irq = (int)(w * 32u + b);
+    }
+  EXIT_CRITICAL();
+  return irq;
+}
+
+// Runs in place of the abandoned ISR, as that ISR: drops everything it had on
+// MSP and does its exception return, back to the task it interrupted.
+__attribute__((naked)) static void isr_abandon(void) {
+  __asm volatile("   ldr r0, =v_isr_abandon_msp \n"
+                 "   ldr r0, [r0]               \n"
+                 "   msr msp, r0                \n"
+                 "   ldr r0, =v_isr_abandon_exc \n"
+                 "   ldr r0, [r0]               \n"
+                 "   bx r0                      \n");
+}
+
+// A fault in handler mode, `frame` its stacked frame on MSP. Contained only
+// when the ISR's own state can be undone exactly, which needs all of:
+//  - a containable IRQ (v_irq_set_containable), the only active exception
+//    besides this one: it interrupted a task, so it began at the top of MSP
+//    and returns to thread mode on PSP;
+//  - no FP use in the ISR (a basic frame here), so FPCCR.LSPACT still tells
+//    whether the task's frame is the extended one;
+//  - BASEPRI and PRIMASK clear: not inside a FromISR critical section, where
+//    a kernel list may be half-updated.
+// Then the IRQ is disabled and marked failed, and this exception returns into
+// isr_abandon instead of the faulting instruction.
+static int isr_contain(uint32_t exc_return, uint32_t *frame) {
+  extern uint8_t scheduler_running;
+  uint32_t basepri, primask;
+  __asm volatile("mrs %0, basepri" : "=r"(basepri));
+  __asm volatile("mrs %0, primask" : "=r"(primask));
+  if (exc_return != 0xFFFFFFF1u || !scheduler_running || basepri || primask)
+    return 0;
+  uint32_t ipsr = frame[7] & 0x1FFu;
+  if (ipsr < 16u)
+    return 0; // SysTick, PendSV, SVCall: the kernel itself
+  uint32_t irq = ipsr - 16u, w = irq >> 5, bit = 1u << (irq & 31u);
+  if (w >= IRQ_WORDS || !(irq_containable[w] & bit))
+    return 0;
+  for (uint32_t i = 0; i < IRQ_WORDS; i++)
+    if (NVIC_IABR[i] != (i == w ? bit : 0u))
+      return 0;
+  if (SCB_SHCSR & SHCSR_ACTIVE & ~SHCSR_MEMFAULTACT)
+    return 0; // no other system handler active (MemManage's own bit: Renode
+              // does not model the active bits)
+  uint32_t exc = 0xFFFFFFFDu;
+#ifdef _FPU_ENABLED
+  if (!(SCB_FPCCR & FPCCR_LSPEN))
+    return 0; // without lazy stacking LSPACT says nothing
+  if (SCB_FPCCR & FPCCR_LSPACT)
+    exc = 0xFFFFFFEDu;
+#endif
+  NVIC_ICER[w] = bit;
+  NVIC_ICPR[w] = bit;
+  irq_failed[w] |= bit;
+  v_isr_abandon_msp = *(volatile uint32_t *)SCB_VTOR_REG; // MSP's top
+  v_isr_abandon_exc = exc;
+  frame[6] = (uint32_t)isr_abandon & ~1u;
+  frame[7] = (frame[7] & ~XPSR_ICI_IT) | (1u << 24);
+  return 1;
+}
+#endif
+
 // What a thread-mode fault in `t` does. An unprivileged task follows its
 // policy. A privileged one panics unless VAIOS_MPU_FAULT_PRIV is on, its policy
 // was set explicitly (so kernel tasks such as idle keep panicking), and it was
@@ -210,13 +308,26 @@ static v_fault_policy_t fault_policy_for(const TCB *t) {
 // a task in thread mode follows fault_policy_for(): the task ended, or ended
 // and recreated, then this returns, tail-chaining into the PendSV that
 // task_exit_request pended -- or a panic. A fault in handler mode panics, as
-// before: kernel state is suspect.
-void v_port_memmanage(uint32_t exc_return) {
+// before (kernel state is suspect), unless isr_contain can undo it.
+void v_port_memmanage(uint32_t exc_return, uint32_t *msp_frame) {
   extern TCB *current_task;
   uint32_t mmfsr = SCB_CFSR & 0xFFu; /* MemManage status is CFSR[7:0] */
   uint32_t addr = (mmfsr & MMFSR_MMARVALID) ? SCB_MMFAR : 0u;
   TCB *t = current_task;
   uint32_t id = t ? t->task_id : 0u;
+#if VAIOS_MPU_FAULT_ISR
+  if (!(exc_return & EXC_RETURN_THREAD) && isr_contain(exc_return, msp_frame)) {
+    uint32_t irq = (msp_frame[7] & 0x1FFu) - 16u;
+    SCB_CFSR = mmfsr;
+    v_mpu_fault_stats.isr_faults++;
+    v_mpu_fault_stats.last_irq = irq;
+    V_KLOG(LOG_WARN, "[MPU] fault in IRQ %u contained, IRQ disabled | addr 0x%x "
+           "MMFSR 0x%x", (unsigned)irq, (unsigned)addr, (unsigned)mmfsr);
+    return;
+  }
+#else
+  (void)msp_frame;
+#endif
   int from_task = (exc_return & EXC_RETURN_THREAD) &&
                   (exc_return & EXC_RETURN_PSP) && t;
   v_fault_policy_t policy = from_task ? fault_policy_for(t) : V_FAULT_PANIC;
@@ -254,6 +365,7 @@ void v_port_memmanage(uint32_t exc_return) {
 
 __attribute__((naked)) void MemManage_Handler(void) {
   __asm volatile("   mov r0, lr                 \n"
+                 "   mrs r1, msp                \n" /* the frame, if on MSP */
                  "   push {r0, lr}              \n" /* keeps SP 8-byte aligned */
                  "   bl v_port_memmanage        \n"
                  "   pop {r0, pc}               \n"); /* exception return */

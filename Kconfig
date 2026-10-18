@@ -377,6 +377,23 @@ config VAIOS_MPU_FAULT_PRIV
       section (nesting 0, BASEPRI and PRIMASK clear) -- exactly where
       v_task_kill or a preemption could already end it, so no kernel list is
       half-updated. A fault inside a critical section still panics.
+config VAIOS_MPU_FAULT_ISR
+    bool "Contain MPU faults in opted-in IRQ handlers"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      A MemManage fault in the handler of an IRQ registered with
+      v_irq_set_containable() abandons that handler instead of panicking:
+      the IRQ is disabled in the NVIC and marked failed for
+      v_irq_failed_take(), and the task it interrupted resumes. Only when
+      the handler's state can be undone exactly: it is the only active
+      exception (it interrupted a task, not another handler), it did not
+      use the FPU, and it was not inside a critical section. Anything else
+      in handler mode -- nested handlers, SysTick, PendSV, SVCall, a fault
+      inside the kernel's critical sections, BusFault, UsageFault -- still
+      panics, since there is no way to tell what it left half-done. The
+      driver is stopped, not repaired: its peripheral may need a reset
+      before the IRQ is enabled again.
 config VAIOS_MPU_FAULT_RESTART
     bool "Default policy: restart (otherwise kill)"
     depends on VAIOS_MPU_FAULT_RECOVERY
