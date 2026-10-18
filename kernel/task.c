@@ -218,6 +218,10 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   TCB *task = (TCB *)v_malloc(sizeof(TCB));
   if (!task)
     return 0;
+  // A recycled heap block holds the last owner's bytes, and a field nothing
+  // below sets would keep them: a stale has_syscall_result made the first
+  // switch-in overwrite the new task's r0 -- its arg -- with a dead value.
+  v_memset(task, 0, sizeof(TCB));
   task->task_id = ++task_count;
   task->name = name ? name : "";
   task->stack_size = size;

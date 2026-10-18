@@ -25,7 +25,10 @@
 #include "vfs.h"
 #include "periph_bus.h"
 #include "syscall.h"
+#include "memory.h"
+#include "task.h"
 #include <stdint.h>
+#include <string.h>
 
 /* From tests/stubs/syscall_stubs.c. Sets current_task to a synthetic caller
  * with a `size`-byte block (in 32-bit-addressable memory so pointers survive
@@ -47,6 +50,30 @@ uint32_t syscall_set_caller(uint32_t size, int unprivileged);
 static intptr_t call(uint32_t num, uintptr_t a0, uintptr_t a1, uintptr_t a2) {
   uintptr_t args[4] = {a0, a1, a2, 0};
   return v_syscall_dispatch(num, args);
+}
+
+/* ---- Task creation on a recycled heap block --------------------------------
+ * A new TCB used to keep has_syscall_result / syscall_result from whatever
+ * last held its heap block, and the first switch-in then wrote that stale
+ * result over the task's stacked r0 -- its arg (todo 130). */
+extern void stub_reset_heap(void);
+static void idle_entry(void *arg) {
+  (void)arg;
+}
+static void test_new_task_on_dirty_block_has_no_syscall_result(void) {
+  stub_reset_heap();
+  void *dirty = v_malloc(sizeof(TCB));
+  TEST_ASSERT(dirty != NULL);
+  memset(dirty, 0xA5, sizeof(TCB));
+  v_free(dirty);
+  int arg;
+  uint32_t id = task_create(idle_entry, &arg, 256, 3);
+  TEST_ASSERT(id != 0);
+  TCB *t = (TCB *)dirty;
+  TEST_ASSERT(t->task_id == id); // the TCB really reused the dirtied block
+  TEST_ASSERT(t->has_syscall_result == 0);
+  TEST_ASSERT(t->syscall_result == 0);
+  TEST_ASSERT(t->arg == &arg);
 }
 
 /* ---- Privileged-only gate: raw-handle IPC is denied to unprivileged callers */
@@ -436,6 +463,7 @@ static void test_bug2_wait_nfds_multiply_overflow(void) {
 }
 
 static const test_case_t syscall_cases[] = {
+    TEST_CASE(test_new_task_on_dirty_block_has_no_syscall_result),
     TEST_CASE(test_unpriv_sem_give_denied),
     TEST_CASE(test_unpriv_sem_take_denied),
     TEST_CASE(test_unpriv_mutex_lock_denied),
