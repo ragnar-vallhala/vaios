@@ -760,6 +760,7 @@ uint32_t task_fault_restart(const TCB *dead) {
   t->fault_restart_max = dead->fault_restart_max;
   t->fault_restarts = (uint8_t)(dead->fault_restarts + 1u);
   t->parent_id = dead->parent_id;
+  t->privileged = dead->privileged; // a privileged task (FAULT_PRIV) stays one
   EXIT_CRITICAL();
   return id;
 }

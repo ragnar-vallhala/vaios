@@ -297,6 +297,22 @@ NAVHAL_CONFIG_FILE="$sub_cfg" LABEL="subregions" run_example MPU_FAULT_RECOVERY 
   "\[fr\] survivor tick"
 rm -f "$sub_cfg"
 
+# ...with VAIOS_MPU_FAULT_PRIV: a privileged task's fault is contained too.
+priv_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$priv_cfg"
+echo "CONFIG_VAIOS_MPU_FAULT_PRIV=y" >> "$priv_cfg"
+NAVHAL_CONFIG_FILE="$priv_cfg" LABEL="privileged" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] faults=9 restarts=5" \
+  "\[fr\] DONE" \
+  "\[fr\] survivor tick"
+# ...but not inside a critical section: that still stops the system (the
+# privileged task's fault is the one with IACCVIOL, MMFSR 0x1).
+NAVHAL_CONFIG_FILE="$priv_cfg" LABEL="privileged, critical section" \
+  EXTRA_CMAKE="-DFR_PRIV_CRIT=1" run_example MPU_FAULT_RECOVERY \
+  "KERNEL PANIC" \
+  "fault addr 0x0 MMFSR 0x1"
+rm -f "$priv_cfg"
+
 # ...and a task whose policy is PANIC: its first fault stops the system.
 EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \
   "KERNEL PANIC" \

@@ -1,3 +1,4 @@
+#include "port.h"
 #include "task.h"
 #include "utils.h"
 #include "vaios.h"
@@ -24,8 +25,13 @@
  * which an unprivileged parent may not have, then ticks throughout and must
  * still be ticking after a privileged monitor has read the kernel's counters.
  *
+ * With VAIOS_MPU_FAULT_PRIV, a PRIVILEGED task (priv, RESTART with a cap of 1)
+ * jumps into SRAM, which is execute-never for privileged code too: it runs
+ * twice, so faults = 9 and restarts = 5.
+ *
  * Built with -DFR_PANIC=1, main gives escaper the PANIC policy instead: its
- * first fault must stop the system. -DFR_NO_OVERFLOW=1 leaves overflow out
+ * first fault must stop the system. -DFR_PRIV_CRIT=1 makes priv fault inside a
+ * critical section, which must stop the system whatever its policy. -DFR_NO_OVERFLOW=1 leaves overflow out
  * (6 faults, 4 restarts), for a simulator that does not model the MPU's
  * subregion-disable bits.
  */
@@ -87,6 +93,21 @@ static void child(void *arg) {
     v_delay(1000);
 }
 
+#if VAIOS_MPU_FAULT_PRIV
+static void priv(void *arg) {
+  (void)arg;
+  v_print("[fr] priv start\r\n");
+#ifdef FR_PRIV_CRIT
+  ENTER_CRITICAL();
+#endif
+  uint16_t ram[2] = {0x4770u, 0x4770u}; /* bx lr: never runs, SRAM is XN */
+  ((void (*)(void))((uintptr_t)ram | 1u))();
+  v_print("[fr] BUG: priv not stopped\r\n");
+  for (;;)
+    task_delay(1000);
+}
+#endif
+
 static void survivor(void *arg) {
   (void)arg;
   v_task_spawn_t cfg = {.entry = child, .stack_size = STK_SMALL, .priority = 1,
@@ -138,6 +159,10 @@ int main(void) {
 #ifndef FR_NO_OVERFLOW /* see tools/renode_fault_recovery.sh */
   uint32_t ov = task_create_named(overflow, NULL, STK_BIG, 2, "overflow");
   task_set_fault_policy(ov, V_FAULT_KILL, 0);
+#endif
+#if VAIOS_MPU_FAULT_PRIV
+  uint32_t pv = task_create_privileged(priv, NULL, STK_BIG, 2, "priv");
+  task_set_fault_policy(pv, V_FAULT_RESTART, 1);
 #endif
   task_create_named(survivor, NULL, STK_SMALL, 1, "survivor");
   task_create_privileged(monitor, NULL, STK_BIG, 3, "monitor");

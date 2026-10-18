@@ -360,10 +360,23 @@ config VAIOS_MPU_FAULT_RECOVERY
       creates a fresh one with the same entry, argument, stack size, base
       priority, name and parent, up to the task's restart cap; PANIC stops the
       system. The policy is set per task with task_set_fault_policy() or
-      v_task_spawn_t; the two options below are the defaults for tasks that do
-      not set one. A fault in handler mode, in a privileged task or in the
-      kernel always panics, since kernel state can no longer be trusted. Off
+      v_task_spawn_t; the options below are the defaults for tasks that do
+      not set one. A fault in handler mode or in a privileged task panics
+      (see VAIOS_MPU_FAULT_PRIV and VAIOS_MPU_FAULT_ISR), since kernel state
+      can no longer be trusted. Off
       by default: with it off every MPU fault panics, as before.
+config VAIOS_MPU_FAULT_PRIV
+    bool "Also contain faults in privileged tasks"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      A MemManage fault in a PRIVILEGED task follows its policy too, when two
+      things hold. Its policy was set explicitly (task_set_fault_policy or
+      v_task_spawn_t): V_FAULT_DEFAULT still panics, so kernel tasks such as
+      the idle task never get ended. And it faulted outside every critical
+      section (nesting 0, BASEPRI and PRIMASK clear) -- exactly where
+      v_task_kill or a preemption could already end it, so no kernel list is
+      half-updated. A fault inside a critical section still panics.
 config VAIOS_MPU_FAULT_RESTART
     bool "Default policy: restart (otherwise kill)"
     depends on VAIOS_MPU_FAULT_RECOVERY

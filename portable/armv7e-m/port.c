@@ -186,21 +186,40 @@ void NMI_Handler(void) {
 #define EXC_RETURN_PSP (1u << 2)
 v_mpu_fault_stats_t v_mpu_fault_stats;
 
+// What a thread-mode fault in `t` does. An unprivileged task follows its
+// policy. A privileged one panics unless VAIOS_MPU_FAULT_PRIV is on, its policy
+// was set explicitly (so kernel tasks such as idle keep panicking), and it was
+// where v_task_kill could have ended it anyway: outside every critical section.
+// MemManage outranks BASEPRI, so a fault inside one still lands here, with the
+// kernel's lists possibly half-updated.
+static v_fault_policy_t fault_policy_for(const TCB *t) {
+  if (!t->privileged)
+    return task_fault_policy(t);
+#if VAIOS_MPU_FAULT_PRIV
+  uint32_t basepri, primask;
+  __asm volatile("mrs %0, basepri" : "=r"(basepri));
+  __asm volatile("mrs %0, primask" : "=r"(primask));
+  if (t->fault_policy != V_FAULT_DEFAULT && critical_nesting == 0 &&
+      basepri == 0 && primask == 0)
+    return task_fault_policy(t);
+#endif
+  return V_FAULT_PANIC;
+}
+
 // Called from the naked MemManage entry with its EXC_RETURN. A fault raised by
-// an unprivileged task in thread mode follows that task's policy
-// (task_fault_policy): ended, or ended and recreated, then this returns,
-// tail-chaining into the PendSV that task_exit_request pended -- or a panic if
-// its policy says so. Anything else panics, as before: a fault in handler mode
-// or in privileged code means kernel state is suspect.
+// a task in thread mode follows fault_policy_for(): the task ended, or ended
+// and recreated, then this returns, tail-chaining into the PendSV that
+// task_exit_request pended -- or a panic. A fault in handler mode panics, as
+// before: kernel state is suspect.
 void v_port_memmanage(uint32_t exc_return) {
   extern TCB *current_task;
   uint32_t mmfsr = SCB_CFSR & 0xFFu; /* MemManage status is CFSR[7:0] */
   uint32_t addr = (mmfsr & MMFSR_MMARVALID) ? SCB_MMFAR : 0u;
   TCB *t = current_task;
   uint32_t id = t ? t->task_id : 0u;
-  int from_user = (exc_return & EXC_RETURN_THREAD) &&
-                  (exc_return & EXC_RETURN_PSP) && t && !t->privileged;
-  v_fault_policy_t policy = from_user ? task_fault_policy(t) : V_FAULT_PANIC;
+  int from_task = (exc_return & EXC_RETURN_THREAD) &&
+                  (exc_return & EXC_RETURN_PSP) && t;
+  v_fault_policy_t policy = from_task ? fault_policy_for(t) : V_FAULT_PANIC;
   if (policy == V_FAULT_PANIC)
     v_panic(__FILE__, __LINE__,
             "MPU fault in task %u | fault addr 0x%x MMFSR 0x%x", (unsigned)id,

@@ -227,8 +227,8 @@ typedef struct {
 #define V_TASK_EAGAIN (-11) // this task already has VAIOS_TASK_MAX_CHILDREN
 #define V_TASK_EINVAL (-22) // bad descriptor
 // What an MPU fault in a task does, with VAIOS_MPU_FAULT_RECOVERY on (with it
-// off every fault panics). Only a fault in an UNPRIVILEGED task can be anything
-// but PANIC: a privileged task may have left kernel state half-written.
+// off every fault panics). A privileged task panics too, unless
+// VAIOS_MPU_FAULT_PRIV is on and its policy is set explicitly (see Kconfig).
 typedef enum {
   V_FAULT_DEFAULT = 0, // the build's: RESTART with VAIOS_MPU_FAULT_RESTART, else KILL
   V_FAULT_KILL,        // end this task (and its children); the rest carries on

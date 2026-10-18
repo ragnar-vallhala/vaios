@@ -42,7 +42,7 @@ build_and_run() {
   done
   clean="$(sed -E 's/.*usart2: \[[^]]*\] ?//; s/\x1b\[[0-9;]*m//g' "$log")"
   echo "---- captured UART ----"
-  echo "$clean" | grep -aE '\[fr\] (esc|over|child|panic|faults|DONE|BUG)|contained|PANIC|MPU fault|Halt' || true
+  echo "$clean" | grep -aE '\[fr\] (esc|over|child|priv|panic|faults|DONE|BUG)|contained|PANIC|MPU fault|Halt' || true
   echo "-----------------------"
   rm -f "$log"
 }
@@ -87,6 +87,23 @@ check "subregions: survivor still running" \
   "$(echo "$clean" | sed -n '/\[fr\] DONE/,$p' | grep -aq 'survivor tick' && echo 1 || echo 0)"
 check "subregions: no fault escaped, no panic" \
   "$(echo "$clean" | grep -aqE 'BUG:|KERNEL PANIC' && echo 0 || echo 1)"
+
+# VAIOS_MPU_FAULT_PRIV: a privileged task (RESTART, cap 1) faults too, and is
+# contained like the others; inside a critical section it must still halt.
+priv_cfg="$(mktemp)"
+cat "$ROOT_DIR/navhal.config" > "$priv_cfg"
+echo "CONFIG_VAIOS_MPU_FAULT_PRIV=y" >> "$priv_cfg"
+rm -rf "${BUILD_DIR}_priv" "${BUILD_DIR}_privcrit"
+build_and_run "${BUILD_DIR}_priv" -DNAVHAL_CONFIG_FILE="$priv_cfg"
+check "privileged: priv ran twice (cap 1)"     "$([ "$(count '\[fr\] priv start')" -eq 2 ] && echo 1 || echo 0)"
+check "privileged: 9 faults, 5 restarts"       "$(echo "$clean" | grep -aq '\[fr\] faults=9 restarts=5' && echo 1 || echo 0)"
+check "privileged: no fault escaped, no panic" \
+  "$(echo "$clean" | grep -aqE 'BUG:|KERNEL PANIC' && echo 0 || echo 1)"
+build_and_run "${BUILD_DIR}_privcrit" -DNAVHAL_CONFIG_FILE="$priv_cfg" -DFR_PRIV_CRIT=1
+rm -f "$priv_cfg"
+check "privileged in a critical section: halts" \
+  "$(echo "$clean" | grep -aqE 'KERNEL PANIC' && echo "$clean" | grep -aq 'MPU fault in task' && echo 1 || echo 0)"
+check "privileged in a critical section: not restarted" "$([ "$(count '\[fr\] priv start')" -eq 1 ] && echo 1 || echo 0)"
 
 # The PANIC policy: escaper's first fault must halt the system, unrecovered.
 build_and_run "${BUILD_DIR}_panic" -DFR_PANIC=1

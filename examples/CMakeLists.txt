@@ -74,6 +74,10 @@ elseif(VAIOS_EXAMPLE STREQUAL "MPU_FAULT_RECOVERY")
   if(DEFINED FR_PANIC)
     target_compile_definitions(main PRIVATE FR_PANIC=${FR_PANIC})
   endif()
+  # -DFR_PRIV_CRIT=1: the privileged task faults inside a critical section.
+  if(DEFINED FR_PRIV_CRIT)
+    target_compile_definitions(main PRIVATE FR_PRIV_CRIT=${FR_PRIV_CRIT})
+  endif()
   # -DFR_NO_OVERFLOW=1: no stack-overflow task (see the example's header).
   if(DEFINED FR_NO_OVERFLOW)
     target_compile_definitions(main PRIVATE FR_NO_OVERFLOW=${FR_NO_OVERFLOW})
