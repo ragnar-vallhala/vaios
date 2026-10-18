@@ -631,11 +631,16 @@ static inline hal_mpu_size_t v_mpu_size_enum(uint32_t bytes) {
  * free for the Phase 3 per-task set. Safe core = SRAM W^X + peripherals priv+XN;
  * flash-RO and the NULL trap are separately gated (each has a hazard, below). */
 static void v_mpu_static_protect(void) {
-  /* 0: SRAM (128 KB covers the 96 KB part): RW, execute-never (W^X). vaios runs
-   *    wholly from flash (no ramfuncs), so XN on RAM catches execute-from-stack/
-   *    heap without breaking anything. */
-  static const hal_mpu_region_t sram = {
-      .base = 0x20000000u, .size = HAL_MPU_SIZE_128KB,
+  /* 0: SRAM, all of it: RW, execute-never (W^X). vaios runs wholly from flash
+   *    (no ramfuncs), so XN on RAM catches execute-from-stack/heap without
+   *    breaking anything. Sized from the linker's end of RAM, rounded up to a
+   *    power of two: 128 KB on the F401's 96, 512 KB on the F767's 496. A fixed
+   *    128 KB left the F767's MSP and upper heap executable. */
+  extern uint32_t _estack;
+  uint32_t ram = (uint32_t)&_estack - 0x20000000u;
+  uint32_t log2_size = 32u - (uint32_t)__builtin_clz(ram - 1u); // ceil(log2)
+  const hal_mpu_region_t sram = {
+      .base = 0x20000000u, .size = (hal_mpu_size_t)(log2_size - 1u),
 #if VAIOS_MPU_USER_SEPARATION
       /* Kernel-only: unprivileged tasks reach only their own block, granted by
        * the higher-numbered per-task region (VAIOS_MPU_USER_REGION) on switch-in.
