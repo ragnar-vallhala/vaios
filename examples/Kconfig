@@ -68,6 +68,19 @@ config EXAMPLE_UPIPE
 	select VAIOS_MODULE_BUS
 	select VAIOS_UPIPE
 
+config EXAMPLE_BUS_MANAGERS
+	bool "bus_managers"
+	# Unprivileged tasks on I2C/SPI devices and the CDC stream, with
+	# MPU_FAULT_RECOVERY's closure for the task that faults mid-transfer.
+	# NavHAL's I2C, I2C_DMA, SPI and USB_CDC come from the board config.
+	select VAIOS_MPU_ENABLE
+	select VAIOS_MPU_STATIC_PROTECT
+	select VAIOS_SYSCALL_SVC
+	select VAIOS_DEVFS
+	select VAIOS_TASK_HEAP
+	select VAIOS_MPU_USER_SEPARATION
+	select VAIOS_MPU_FAULT_RECOVERY
+
 config EXAMPLE_MMIO_USER
 	bool "mmio_user"
 	# MPU_FAULT_RECOVERY's closure (a task outside its window is restarted

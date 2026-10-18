@@ -70,6 +70,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "MPU_USER_DEMO")
   add_executable(main 33_mpu_user_demo.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "MMIO_USER")
   add_executable(main 38_mmio_user.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "BUS_MANAGERS")
+  add_executable(main 39_bus_managers.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "UPIPE")
   add_executable(main 37_upipe.c ${STARTUP_FILE})
   # -DSTREAM=1: same priority, 64-slot ring (syscalls amortised).
