@@ -72,6 +72,10 @@ elseif(VAIOS_EXAMPLE STREQUAL "MMIO_USER")
   add_executable(main 38_mmio_user.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "UPIPE")
   add_executable(main 37_upipe.c ${STARTUP_FILE})
+  # -DSTREAM=1: same priority, 64-slot ring (syscalls amortised).
+  if(DEFINED STREAM)
+    target_compile_definitions(main PRIVATE STREAM=${STREAM})
+  endif()
 elseif(VAIOS_EXAMPLE STREQUAL "MPU_FAULT_RECOVERY")
   add_executable(main 36_mpu_fault_recovery.c ${STARTUP_FILE})
   # -DFR_PANIC=1: the escaper's policy is PANIC, so its first fault halts.

@@ -22,6 +22,21 @@
 #define SLOT 256u
 #define STK 2048
 
+/* -DSTREAM=1: producer and consumer share a priority and the ring has 64
+ * slots, so the producer fills it and the consumer drains it in batches: the
+ * sleep/kick syscalls are amortised over many messages. */
+#ifdef STREAM
+#define PRIO_PROD 2
+#define PRIO_CONS 2
+#define RING 64
+#define TAG "stream "
+#else
+#define PRIO_PROD 2
+#define PRIO_CONS 3
+#define RING 4
+#define TAG ""
+#endif
+
 #define BLOCK (SLOT + V_BUS_HDR_SIZE) // a pipe topic's message is one block
 V_BUS_POOL(pool, BLOCK, 6); // any bigger and the heap no longer fits the F401
 static v_bus_t bus;
@@ -66,13 +81,18 @@ static void producer(void *arg) {
   uint32_t buf[SLOT / 4];
   for (int s = 0; s < 2; s++) {
     uint32_t words = sizes[s] / 4u;
+    uint32_t waits = 0; // v_upipe_wait calls: a task's statics are kernel RAM
     for (uint32_t i = 0; i < N; i++) {
       uint32_t *slot;
-      while (!(slot = v_upipe_reserve(p)))
+      while (!(slot = v_upipe_reserve(p))) {
+        waits++;
         v_upipe_wait(p, 1, 10);
+      }
       fill(slot, words, i);
       v_upipe_commit(p);
     }
+    say("[up] " TAG "%u B: upipe prod waits/1000msg %u\r\n", (int)sizes[s],
+        (int)(waits * 1000u / N));
     for (uint32_t i = 0; i < N; i++) {
       fill(buf, words, i);
       int rc;
@@ -97,11 +117,14 @@ static void consumer(void *arg) {
   int bad = rfd < 0;
   for (int s = 0; s < 2; s++) {
     uint32_t words = sizes[s] / 4u;
+    uint32_t waits = 0;
     uint32_t t0 = v_get_ticks();
     for (uint32_t i = 0; i < N; i++) {
       const uint32_t *slot;
-      while (!(slot = v_upipe_peek(p)))
+      while (!(slot = v_upipe_peek(p))) {
+        waits++;
         v_upipe_wait(p, 0, 10);
+      }
       if (!check(slot, words, i) && !bad) {
         say("[up] upipe data bad at %u\r\n", (int)i, 0);
         bad = 1;
@@ -124,9 +147,11 @@ static void consumer(void *arg) {
     }
     uint32_t t2 = v_get_ticks();
     // ms for N messages -> ns per message (1 tick = 1 ms)
-    say("[up] %u B: upipe %u ns/msg", (int)sizes[s],
+    say("[up] " TAG "%u B: upipe %u ns/msg", (int)sizes[s],
         (int)((t1 - t0) * 1000000u / N));
     say(", bus %u ns/msg\r\n", (int)((t2 - t1) * 1000000u / N), 0);
+    say("[up] " TAG "%u B: upipe cons waits/1000msg %u\r\n", (int)sizes[s],
+        (int)(waits * 1000u / N));
   }
   say(bad ? "[up] data FAIL\r\n" : "[up] data ok\r\n", 0, 0);
   for (;;)
@@ -161,9 +186,9 @@ int main(void) {
   v_bus_init(&bus, pool_blocks, pool_desc, BLOCK, 6);
   v_bus_topic_declare(&bus, &topic, "bench.pipe", &PIPE_CFG);
   v_print("[up] upipe: start\r\n");
-  uint32_t prod = task_create_named(producer, NULL, STK, 2, "prod");
-  uint32_t cons = task_create_named(consumer, NULL, STK, 3, "cons");
-  pipe_addr = v_upipe_create(SLOT, 4, prod, cons);
+  uint32_t prod = task_create_named(producer, NULL, STK, PRIO_PROD, "prod");
+  uint32_t cons = task_create_named(consumer, NULL, STK, PRIO_CONS, "cons");
+  pipe_addr = v_upipe_create(SLOT, RING, prod, cons);
   if (!pipe_addr)
     v_print("[up] BUG: v_upipe_create failed\r\n");
   uint32_t in = task_create_named(intruder, pipe_addr, STK, 4, "intruder");
