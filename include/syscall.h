@@ -99,6 +99,9 @@ typedef enum {
   SYS_devfs_node = 51,  // the i-th devfs node's name (ls /dev): the registry is
                         //   kernel memory. args[1]/args[2] are the caller's
                         //   buffer, written.
+  SYS_task_checkpoint = 52, // save / load the caller's checkpoint
+  SYS_task_restore = 53,    //   (VAIOS_TASK_CHECKPOINT). args[0]/args[1]
+                            //   are the caller's buffer.
   SYS_MAX
 } v_syscall_t;
 

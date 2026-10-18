@@ -114,6 +114,12 @@ typedef struct Task_Control_Block {
   uint8_t fault_restart_max;
   uint8_t fault_restarts;
 #endif
+#if VAIOS_TASK_CHECKPOINT
+  // Last v_task_checkpoint (VAIOS_TASK_CHECKPOINT_MAX bytes, allocated on the
+  // first one) and its length; moved to the new task by a fault restart.
+  uint8_t *ckpt;
+  uint16_t ckpt_len;
+#endif
 #if VAIOS_SYSCALL_SVC
   // Deferred blocking-syscall result: set by the waker (v_syscall_wake_result)
   // and written into this task's stacked r0 by PendSV (v_syscall_deliver_result)
@@ -275,11 +281,21 @@ int task_set_fault_policy(uint32_t task_id, v_fault_policy_t policy,
 // `t`'s policy with V_FAULT_DEFAULT resolved: KILL, RESTART or PANIC.
 v_fault_policy_t task_fault_policy(const TCB *t);
 // Recreate `dead`, just ended by a contained MPU fault, from its entry, arg,
-// stack size, base priority, name, parent and fault policy. Its block must
+// stack size, base priority, name, parent, fault policy and checkpoint (which
+// moves to the new task). Its block must
 // still be allocated (it is until the idle task's GC). Returns the new id, or
 // 0 when the lineage has used its restarts or the heap is out -- never a
 // panic. Kernel-only: called from the MemManage handler.
-uint32_t task_fault_restart(const TCB *dead);
+uint32_t task_fault_restart(TCB *dead);
+#endif
+#if VAIOS_TASK_CHECKPOINT
+// Save `len` bytes (1..VAIOS_TASK_CHECKPOINT_MAX) as the calling task's
+// checkpoint, replacing the last one. Kept across fault restarts. VA_PASS,
+// V_TASK_EINVAL for a bad length, V_TASK_ENOMEM if the buffer can't be had.
+int v_task_checkpoint(const void *buf, uint32_t len);
+// Copy the calling task's last checkpoint into `buf`, at most `len` bytes.
+// Returns the bytes copied: 0 if there is none (a first start).
+int v_task_restore(void *buf, uint32_t len);
 #endif
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions

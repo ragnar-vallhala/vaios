@@ -331,6 +331,16 @@ NAVHAL_CONFIG_FILE="$isr_cfg" LABEL="ISR not opted in" \
   "fault addr 0x0 MMFSR 0x1"
 rm -f "$isr_cfg"
 
+# ...with VAIOS_TASK_CHECKPOINT: escaper's run count survives its restarts.
+ck_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$ck_cfg"
+echo "CONFIG_VAIOS_TASK_CHECKPOINT=y" >> "$ck_cfg"
+NAVHAL_CONFIG_FILE="$ck_cfg" LABEL="checkpoint" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] escaper run 4" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] survivor tick"
+rm -f "$ck_cfg"
+
 # ...and a task whose policy is PANIC: its first fault stops the system.
 EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \
   "KERNEL PANIC" \

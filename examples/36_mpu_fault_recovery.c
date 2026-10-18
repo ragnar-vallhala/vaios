@@ -37,6 +37,9 @@
  * then USART1 again: two faults contained, both IRQs disabled, so the third
  * pend runs nothing; irqtest carries on each time, s0 intact.
  *
+ * With VAIOS_TASK_CHECKPOINT, escaper counts its runs in a checkpoint, so its
+ * four runs print run 1 to run 4 instead of starting from scratch each time.
+ *
  * Built with -DFR_PANIC=1, main gives escaper the PANIC policy instead: its
  * first fault must stop the system. -DFR_PRIV_CRIT=1 makes priv fault inside a
  * critical section, which must stop the system whatever its policy.
@@ -69,6 +72,16 @@ static void uputs(const char *s) {
 static void escaper(void *arg) {
   (void)arg;
   uputs("[fr] escaper start\r\n");
+#if VAIOS_TASK_CHECKPOINT
+  /* Counts its own runs across restarts: 0 restored on the first. */
+  uint32_t runs = 0;
+  v_task_restore(&runs, sizeof runs);
+  runs++;
+  v_task_checkpoint(&runs, sizeof runs);
+  char b[32];
+  print_fmt_buf(b, sizeof b, "[fr] escaper run %u\r\n", (unsigned)runs);
+  uputs(b);
+#endif
   volatile uint32_t v = *(volatile uint32_t *)0x20000010; /* kernel SRAM */
   (void)v;
   uputs("[fr] BUG: escaper not stopped\r\n");

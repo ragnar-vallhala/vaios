@@ -15,6 +15,7 @@ void v_vfs_task_teardown(struct Task_Control_Block *t);
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
+#include <string.h> // memcpy (checkpoints)
 #include <stdint.h>
 //-----------------------------------------------------------------------------
 // Global Variables
@@ -295,6 +296,10 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->fault_policy = V_FAULT_DEFAULT;
   task->fault_restart_max = 0;
   task->fault_restarts = 0;
+#endif
+#if VAIOS_TASK_CHECKPOINT
+  task->ckpt = NULL;
+  task->ckpt_len = 0;
 #endif
   task->delay_ticks = 0;
   task->parent_id = 0; // v_task_spawn sets it; v_malloc does not zero
@@ -741,7 +746,7 @@ v_fault_policy_t task_fault_policy(const TCB *t) {
 #endif
 }
 
-uint32_t task_fault_restart(const TCB *dead) {
+uint32_t task_fault_restart(TCB *dead) {
   if (!dead)
     return 0;
   uint8_t max = dead->fault_restart_max ? dead->fault_restart_max
@@ -761,8 +766,44 @@ uint32_t task_fault_restart(const TCB *dead) {
   t->fault_restarts = (uint8_t)(dead->fault_restarts + 1u);
   t->parent_id = dead->parent_id;
   t->privileged = dead->privileged; // a privileged task (FAULT_PRIV) stays one
+#if VAIOS_TASK_CHECKPOINT
+  t->ckpt = dead->ckpt; // moved, so the GC of `dead` does not free it
+  t->ckpt_len = dead->ckpt_len;
+  dead->ckpt = NULL;
+#endif
   EXIT_CRITICAL();
   return id;
+}
+#endif
+
+#if VAIOS_TASK_CHECKPOINT
+int v_task_checkpoint(const void *buf, uint32_t len) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc2(SYS_task_checkpoint, (uintptr_t)buf, len);
+#endif
+  TCB *t = current_task;
+  if (!t || !buf || len == 0 || len > VAIOS_TASK_CHECKPOINT_MAX)
+    return V_TASK_EINVAL;
+  if (!t->ckpt && !(t->ckpt = v_malloc(VAIOS_TASK_CHECKPOINT_MAX)))
+    return V_TASK_ENOMEM;
+  memcpy(t->ckpt, buf, len);
+  t->ckpt_len = (uint16_t)len;
+  return VA_PASS;
+}
+
+int v_task_restore(void *buf, uint32_t len) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (int)v_svc2(SYS_task_restore, (uintptr_t)buf, len);
+#endif
+  TCB *t = current_task;
+  if (!t || !buf)
+    return V_TASK_EINVAL;
+  uint32_t n = t->ckpt_len < len ? t->ckpt_len : len;
+  if (n)
+    memcpy(buf, t->ckpt, n);
+  return (int)n;
 }
 #endif
 
@@ -803,6 +844,10 @@ void idle_task_function(void *arg) {
         V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
               to_free->task_id);
         v_port_free_task_stack(to_free); // release any separate port context
+#if VAIOS_TASK_CHECKPOINT
+        if (to_free->ckpt) // NULL if a restart took it
+          v_free(to_free->ckpt);
+#endif
         if (to_free->mem_block) {
           v_free(to_free->mem_block);
           to_free->mem_block = NULL;

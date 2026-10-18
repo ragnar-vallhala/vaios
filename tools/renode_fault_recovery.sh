@@ -124,6 +124,18 @@ rm -f "$isr_cfg"
 check "ISR not opted in: halts" \
   "$(echo "$clean" | grep -aqE 'KERNEL PANIC' && echo "$clean" | grep -aq 'fault addr 0x0 MMFSR 0x1' && echo 1 || echo 0)"
 
+# VAIOS_TASK_CHECKPOINT: escaper's run count survives its restarts.
+ck_cfg="$(mktemp)"
+cat "$ROOT_DIR/navhal.config" > "$ck_cfg"
+echo "CONFIG_VAIOS_TASK_CHECKPOINT=y" >> "$ck_cfg"
+rm -rf "${BUILD_DIR}_ckpt"
+build_and_run "${BUILD_DIR}_ckpt" -DNAVHAL_CONFIG_FILE="$ck_cfg"
+rm -f "$ck_cfg"
+check "checkpoint: escaper resumed its count, run 1..4" \
+  "$([ "$(echo "$clean" | grep -ao '\[fr\] escaper run [0-9]*' | tr '\n' ' ')" = '[fr] escaper run 1 [fr] escaper run 2 [fr] escaper run 3 [fr] escaper run 4 ' ] && echo 1 || echo 0)"
+check "checkpoint: 7 faults, 4 restarts, no panic" \
+  "$(echo "$clean" | grep -aq '\[fr\] faults=7 restarts=4' && ! echo "$clean" | grep -aqE 'BUG:|KERNEL PANIC' && echo 1 || echo 0)"
+
 # The PANIC policy: escaper's first fault must halt the system, unrecovered.
 build_and_run "${BUILD_DIR}_panic" -DFR_PANIC=1
 check "PANIC policy: escaper's first fault halts" \

@@ -394,6 +394,25 @@ config VAIOS_MPU_FAULT_ISR
       panics, since there is no way to tell what it left half-done. The
       driver is stopped, not repaired: its peripheral may need a reset
       before the IRQ is enabled again.
+config VAIOS_TASK_CHECKPOINT
+    bool "Tasks can keep a checkpoint across a fault restart"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      v_task_checkpoint(buf, len) copies up to VAIOS_TASK_CHECKPOINT_MAX
+      bytes of a task's state into a kernel-held buffer; v_task_restore(buf,
+      len) copies it back. The buffer goes with the task through a fault
+      restart, so the new instance can carry on from the last checkpoint
+      instead of from scratch, and is freed when the task ends for good.
+      A copy, not shared memory: a task that faults halfway through
+      changing its state cannot have corrupted the checkpoint it resumes
+      from. Costs one copy per checkpoint and a buffer per task that
+      takes one.
+config VAIOS_TASK_CHECKPOINT_MAX
+    int "Largest checkpoint, bytes"
+    depends on VAIOS_TASK_CHECKPOINT
+    range 4 4096
+    default 128
 config VAIOS_MPU_FAULT_RESTART
     bool "Default policy: restart (otherwise kill)"
     depends on VAIOS_MPU_FAULT_RECOVERY
