@@ -149,6 +149,12 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]);
 // Pre-encode the per-task RW-unprivileged region over the whole `size`-byte
 // block at `base` (Stage 5). Returns 0 on success, non-zero if unavailable.
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]);
+// Encode a v_upipe block [base, base+size) (size a power of two, base aligned
+// to it) as region 5: RW to unprivileged code, execute-never. base NULL (or an
+// encode failure) leaves the region disabled. Returns 0 when encoded.
+int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]);
+// Program the running task's MPU regions now (the switch does it otherwise).
+void v_port_apply_current_mpu(void);
 #endif
 // Apply a pre-encoded region pair to the hardware (context-switch fast path).
 void v_port_mpu_apply(const uint32_t enc[2], uint32_t count);

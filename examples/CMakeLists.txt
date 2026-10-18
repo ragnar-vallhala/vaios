@@ -68,6 +68,8 @@ elseif(VAIOS_EXAMPLE STREQUAL "TASK_HEAP_TEST")
   add_executable(main 15_task_heap_test.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "MPU_USER_DEMO")
   add_executable(main 33_mpu_user_demo.c ${STARTUP_FILE})
+elseif(VAIOS_EXAMPLE STREQUAL "UPIPE")
+  add_executable(main 37_upipe.c ${STARTUP_FILE})
 elseif(VAIOS_EXAMPLE STREQUAL "MPU_FAULT_RECOVERY")
   add_executable(main 36_mpu_fault_recovery.c ${STARTUP_FILE})
   # -DFR_PANIC=1: the escaper's policy is PANIC, so its first fault halts.

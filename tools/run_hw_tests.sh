@@ -346,6 +346,17 @@ EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \
   "KERNEL PANIC" \
   "MPU fault in task 2"
 
+# v_upipe: two unprivileged tasks through the zero-copy pipe and, for
+# comparison, a bus pipe topic; a third task touching the pipe is killed. Last,
+# because -DVAIOS_MODULE_BUS=ON stays in the build dir's cache. The ns/msg lines
+# are the measurement (see examples/37_upipe.c).
+EXTRA_CMAKE="-DVAIOS_MODULE_BUS=ON" run_example UPIPE \
+  "fault in task 4 contained" \
+  "\[up\] 8 B: upipe [0-9]+ ns/msg, bus [0-9]+ ns/msg" \
+  "\[up\] 256 B: upipe [0-9]+ ns/msg, bus [0-9]+ ns/msg" \
+  "\[up\] data ok" \
+  "\[up\] faults=1 last addr"
+
 # ----- summary ---------------------------------------------------------------
 # Cross-suite table. Renderer is shared with tools/run_tests.sh —
 # tools/lib/test_summary.awk owns the layout.

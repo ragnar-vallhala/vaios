@@ -102,6 +102,11 @@ typedef enum {
   SYS_task_checkpoint = 52, // save / load the caller's checkpoint
   SYS_task_restore = 53,    //   (VAIOS_TASK_CHECKPOINT). args[0]/args[1]
                             //   are the caller's buffer.
+  SYS_upipe_self = 54,  // the caller's v_upipe (VAIOS_UPIPE), 0 if none.
+  SYS_upipe_sleep = 55, // park until the peer kicks, or args[0] ticks.
+                        //   Blocking, deferred-result, like SYS_q_wait.
+  SYS_upipe_kick = 56,  // wake the peer. No pointers: the kernel finds the
+                        //   pipe and the end from the caller's TCB.
   SYS_MAX
 } v_syscall_t;
 

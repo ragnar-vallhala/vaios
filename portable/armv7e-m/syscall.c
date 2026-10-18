@@ -22,6 +22,7 @@
 #include "vfs.h"        // the VFS mount + its syscalls (M5)
 #include "port.h"
 #include "task.h"
+#include "upipe.h"
 #include "vfile.h"
 #include "utils.h"  // v_get_ticks (SYS_ticks)
 #include <stdint.h>
@@ -317,6 +318,14 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
   case SYS_task_restore:
     /* args[0] = buffer, args[1] = room: the last checkpoint, copied out. */
     return v_task_restore((void *)(uintptr_t)args[0], args[1]);
+#endif
+#if VAIOS_UPIPE
+  case SYS_upipe_self:
+    return (int)(uintptr_t)v_upipe_self();
+  case SYS_upipe_sleep:
+    return v_upipe_sleep(args[0]);
+  case SYS_upipe_kick:
+    return v_upipe_kick();
 #endif
 #if VAIOS_MODULE_PERF
   case SYS_perf_snapshot:

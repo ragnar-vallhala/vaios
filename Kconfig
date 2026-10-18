@@ -216,6 +216,9 @@ config HEAP_SIZE
     # 8.3 KiB) left 0x16000 264 bytes past the end of an F401's RAM once the
     # console gained an output queue. Its three tasks run in far less.
     default 0x14000 if EXAMPLE_FLIGHT_USER
+    # The upipe example's bus pool (6 x 268 B) left 0x16000 ending 24 bytes
+    # under the top of an F401's RAM: the clear wiped main's stack.
+    default 0x14000 if EXAMPLE_UPIPE
     default 0x16000
 config HEAP_WATERMARK_ENABLE
     bool "Panic when heap usage crosses the watermark"
@@ -331,6 +334,21 @@ config VAIOS_MPU_USER_SEPARATION
       Tested in CI under Renode (isolation, lifecycle, fd IPC, bus, the
       unprivileged flight app, fault recovery) and on a Nucleo-F401RE and a
       Nucleo-F767ZI.
+config VAIOS_UPIPE
+    bool "Zero-copy pipe between two unprivileged tasks (v_upipe)"
+    depends on VAIOS_MPU_USER_SEPARATION && VAIOS_ARCH_CORTEX_M4
+    default n
+    help
+      A single-producer, single-consumer ring in its own block, mapped into
+      both tasks as one more MPU region (region 5). The data moves entirely in
+      user space -- reserve, write in place, commit; peek, read in place,
+      release -- with no syscall, copy or kernel lock. A syscall happens only
+      to sleep on an empty/full ring, and on commit/release only when the peer
+      is asleep. The two tasks can corrupt the ring's contents but nothing
+      else; any other task touching it faults. One pipe per task.
+
+      Costs every task one more region on the switch: two more words in the
+      PendSV burst (a task with no pipe writes the region disabled).
 config VAIOS_MPU_STACK_SUBREGIONS
     bool "Stacks in eighths of a region, not whole powers of two"
     depends on VAIOS_MPU_USER_SEPARATION

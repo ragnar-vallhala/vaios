@@ -111,3 +111,6 @@ jobs:
 
       - name: MPU fault containment + restart in Renode
         run: bash tools/renode_fault_recovery.sh
+
+      - name: Zero-copy v_upipe between unprivileged tasks in Renode
+        run: bash tools/renode_upipe.sh

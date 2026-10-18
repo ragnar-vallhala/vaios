@@ -12,6 +12,7 @@ void v_vfs_task_teardown(struct Task_Control_Block *t);
 #else
 #define v_vfs_task_teardown(t) ((void)(t))
 #endif
+#include "upipe.h"
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
@@ -300,6 +301,10 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
 #if VAIOS_TASK_CHECKPOINT
   task->ckpt = NULL;
   task->ckpt_len = 0;
+#endif
+#if VAIOS_UPIPE
+  task->upipe = NULL;
+  task->upipe_role = 0;
 #endif
   task->delay_ticks = 0;
   task->parent_id = 0; // v_task_spawn sets it; v_malloc does not zero
@@ -771,6 +776,15 @@ uint32_t task_fault_restart(TCB *dead) {
   t->ckpt_len = dead->ckpt_len;
   dead->ckpt = NULL;
 #endif
+#if VAIOS_UPIPE
+  // Same pipe, same end: the new task reattaches, region and all.
+  t->upipe = dead->upipe;
+  t->upipe_role = dead->upipe_role;
+  t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 2] =
+      dead->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 2];
+  t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 1] =
+      dead->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 1];
+#endif
   EXIT_CRITICAL();
   return id;
 }
@@ -804,6 +818,101 @@ int v_task_restore(void *buf, uint32_t len) {
   if (n)
     memcpy(buf, t->ckpt, n);
   return (int)n;
+}
+#endif
+
+#if VAIOS_UPIPE
+// Kernel half of a v_upipe: the shared block and one wake semaphore per end
+// (0 = the consumer's, data arrived; 1 = the producer's, room freed).
+// ponytail: never freed -- a pipe lives as long as the system, and a restarted
+// task reattaches to it. Add teardown when pipes are created at run time.
+struct v_upipe_k {
+  v_upipe_t *p;
+  SemaphoreHandle_t wake[2];
+};
+
+v_upipe_t *v_upipe_create(uint32_t slot, uint32_t n, uint32_t prod_id,
+                          uint32_t cons_id) {
+  slot = (slot + 3u) & ~3u;
+  if (slot == 0 || slot > 0xFFFFu || n < 2 || n > 0x8000u || (n & (n - 1u)) ||
+      prod_id == cons_id)
+    return NULL;
+  uint32_t bytes = sizeof(v_upipe_t) + slot * n;
+  uint32_t size = 32u; // the MPU's smallest region
+  while (size < bytes)
+    size <<= 1;
+  TCB *tp = get_task_by_id(prod_id), *tc = get_task_by_id(cons_id);
+  if (!tp || !tc || tp->upipe || tc->upipe)
+    return NULL;
+  uint32_t enc[2];
+  struct v_upipe_k *k = v_malloc(sizeof *k);
+  v_upipe_t *p = v_memalign(size, size);
+  if (!k || !p || v_port_upipe_region_encode(p, size, enc) != 0 ||
+      !(k->wake[0] = v_semaphore_create_binary()) ||
+      !(k->wake[1] = v_semaphore_create_binary())) {
+    // ponytail: a semaphore made before a later failure leaks; only on OOM
+    if (p)
+      v_free(p);
+    if (k)
+      v_free(k);
+    return NULL;
+  }
+  memset(p, 0, size);
+  p->slot = (uint16_t)slot;
+  p->n = (uint16_t)n;
+  k->p = p;
+  ENTER_CRITICAL();
+  TCB *ends[2] = {tp, tc};
+  for (int i = 0; i < 2; i++) {
+    TCB *t = ends[i];
+    t->upipe = k;
+    t->upipe_role = (uint8_t)(i + 1);
+    // The pipe's pair is the last in mpu_regs (see VAIOS_TASK_MPU_REGIONS).
+    t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 2] = enc[0];
+    t->mpu_regs[2 * VAIOS_TASK_MPU_REGIONS - 1] = enc[1];
+  }
+  if (current_task == tp || current_task == tc)
+    v_port_apply_current_mpu(); // the creator is an end: map it now
+  EXIT_CRITICAL();
+  return p;
+}
+
+v_upipe_t *v_upipe_self(void) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (v_upipe_t *)v_svc0(SYS_upipe_self);
+#endif
+  TCB *t = current_task;
+  return t && t->upipe ? t->upipe->p : NULL;
+}
+
+int v_upipe_sleep(uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (int)v_svc1(SYS_upipe_sleep, ticks);
+#endif
+  TCB *t = current_task;
+  if (!t || !t->upipe)
+    return V_TASK_EINVAL;
+  // The header is shared with user space: a peer can garble wr/rd, which only
+  // makes this sleep or not -- the kernel reads nothing else from it.
+  v_upipe_t *p = t->upipe->p;
+  int prod = t->upipe_role == 1;
+  if (prod ? p->wr - p->rd < p->n : p->wr != p->rd)
+    return VA_PASS; // ready already: don't sleep on a token that may be spent
+  return v_semaphore_take(t->upipe->wake[prod], ticks);
+}
+
+int v_upipe_kick(void) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (int)v_svc0(SYS_upipe_kick);
+#endif
+  TCB *t = current_task;
+  if (!t || !t->upipe)
+    return V_TASK_EINVAL;
+  // the producer wakes the consumer's semaphore (0), the consumer the producer's
+  return v_semaphore_give(t->upipe->wake[t->upipe_role == 2]);
 }
 #endif
 

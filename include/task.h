@@ -53,9 +53,11 @@ typedef struct v_wnode {
 #endif
 
 // MPU regions a task carries (see mpu_regs): its block region with user
-// separation, its stack guard with the guard on.
+// separation, its stack guard with the guard on, its v_upipe (last) with
+// VAIOS_UPIPE.
 #define VAIOS_TASK_MPU_REGIONS                                                 \
-  ((VAIOS_MPU_USER_SEPARATION ? 1 : 0) + (VAIOS_MPU_STACK_GUARD ? 1 : 0))
+  ((VAIOS_MPU_USER_SEPARATION ? 1 : 0) + (VAIOS_MPU_STACK_GUARD ? 1 : 0) +    \
+   (VAIOS_UPIPE ? 1 : 0))
 
 typedef struct Task_Control_Block {
   uint32_t *sp;           // Current stack pointer (PSP)
@@ -113,6 +115,12 @@ typedef struct Task_Control_Block {
   uint8_t fault_policy;
   uint8_t fault_restart_max;
   uint8_t fault_restarts;
+#endif
+#if VAIOS_UPIPE
+  // The v_upipe this task is one end of (NULL: none), and which end:
+  // 1 = producer, 2 = consumer. Carried over to a restarted task.
+  struct v_upipe_k *upipe;
+  uint8_t upipe_role;
 #endif
 #if VAIOS_TASK_CHECKPOINT
   // Last v_task_checkpoint (VAIOS_TASK_CHECKPOINT_MAX bytes, allocated on the

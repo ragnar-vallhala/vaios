@@ -610,6 +610,9 @@ int v_port_hw_sdio_card_init(void) {
  * static SRAM region 0 (so it grants the task its own block) and below the guard
  * region 7 (so the guard still wins at the base). Regions 5,6 stay free. */
 #define VAIOS_MPU_USER_REGION 4u
+/* A v_upipe block, mapped into its two tasks (VAIOS_UPIPE). Between the task's
+ * block region and the guard; it never overlaps either. */
+#define VAIOS_MPU_UPIPE_REGION 5u
 
 /* What an encoder leaves in `out` when it cannot encode: the region, disabled
  * (RBAR VALID selects it, RASR 0 turns it off), so the context switch can write
@@ -771,6 +774,27 @@ int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   out[1] = enc.rasr;
   return 0;
 }
+
+int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  v_mpu_region_off(VAIOS_MPU_UPIPE_REGION, out);
+  if (!base || !hal_mpu_present())
+    return -1;
+  hal_mpu_region_t r = {
+      .base = (uint32_t)base,
+      .size = v_mpu_size_enum(size),
+      .ap = HAL_MPU_AP_RW,
+      .mem = HAL_MPU_MEM_NORMAL_WB,
+      .executable = false,
+      .shareable = false,
+      .srd_mask = 0,
+  };
+  hal_mpu_encoded_t enc;
+  if (hal_mpu_encode(VAIOS_MPU_UPIPE_REGION, &r, &enc) != HAL_OK)
+    return -1;
+  out[0] = enc.rbar;
+  out[1] = enc.rasr;
+  return 0;
+}
 #endif
 
 void v_port_mpu_apply(const uint32_t enc[2], uint32_t count) {
@@ -787,6 +811,12 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
   return -1;
 }
 #if VAIOS_MPU_USER_SEPARATION
+int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  (void)base;
+  (void)size;
+  v_mpu_region_off(VAIOS_MPU_UPIPE_REGION, out);
+  return -1;
+}
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)base;
   (void)size;
