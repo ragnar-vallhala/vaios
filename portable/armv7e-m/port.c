@@ -31,7 +31,14 @@ void v_port_halt(void) {
 #define ICSR (*(volatile uint32_t *)0xE000ED04)
 #define ICSR_PENDSVSET (1 << 28)
 
-void v_port_trigger_pendsv(void) { ICSR |= ICSR_PENDSVSET; }
+// The barriers make the switch happen here, before the caller's next
+// instruction. Without them a Cortex-M7 running from cache executes a few more
+// instructions first, and a thread-mode semaphore take then reads its own
+// wait_sem still set and reports a timeout while the task is still queued.
+void v_port_trigger_pendsv(void) {
+  ICSR |= ICSR_PENDSVSET;
+  __asm volatile("dsb\n isb" ::: "memory");
+}
 
 // Top of RAM, from the linker script (startup.s / the board linker.ld both
 // export it). Only its address is taken, never dereferenced.
