@@ -288,8 +288,9 @@ config VAIOS_MPU_STACK_GUARD
       MPU-less targets.
 
       REQUIRES every task stack size to be an exact power of two, because each
-      maps onto a single MPU region. task_create/task_create_named REFUSE any
-      other size and return 0 — check that return (see include/task.h), because a
+      maps onto a single MPU region (VAIOS_MPU_STACK_SUBREGIONS relaxes that to
+      eighths of one). task_create/task_create_named REFUSE any other size and
+      return 0 — check that return (see include/task.h), because a
       task that was never created surfaces later and far away: current_task stays
       NULL and the first-task launch faults.
 config VAIOS_MPU_GUARD_SIZE

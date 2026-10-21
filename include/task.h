@@ -209,9 +209,11 @@ void v_port_free_task_stack(TCB *task);
 //   - the heap had no room for the TCB or the stack
 //   - `size` is below VAIOS_ARCH_MIN_STACK (the port's exception frame will not fit)
 //   - `size` is not a power of two AND a per-task MPU region is in use
-//     (VAIOS_MPU_STACK_GUARD / VAIOS_MPU_USER_SEPARATION): each stack maps onto one
-//     region, so the size is rejected rather than silently rounded, which would
-//     desync the caller's view of its own stack from the region geometry.
+//     (VAIOS_MPU_STACK_GUARD / VAIOS_MPU_USER_SEPARATION), unless
+//     VAIOS_MPU_STACK_SUBREGIONS rounds it up to an eighth of a region: each
+//     stack maps onto one region, so the size is rejected rather than silently
+//     rounded, which would desync the caller's view of its own stack from the
+//     region geometry.
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority);
 // As task_create — including the 0 return and every reason for it — but also tags
