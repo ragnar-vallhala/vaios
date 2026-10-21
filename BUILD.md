@@ -150,7 +150,8 @@ Builds, flashes, and UART-captures a curated set of examples on a connected
 board, grepping for required PASS lines:
 
 ```bash
-tools/run_hw_tests.sh                  # default port /dev/ttyACM0
+tools/run_hw_tests.sh                  # console of the probe at USB_LOC
+USB_LOC=3-1 tools/run_hw_tests.sh      # pick the board, by the USB port its probe is in
 PORT=/dev/ttyACM1 tools/run_hw_tests.sh
 CAPTURE_SECS=20    tools/run_hw_tests.sh
 ```
@@ -327,7 +328,7 @@ Layers (each skips cleanly if its prerequisites are missing):
 | `host` | host unit suite (`run_tests.sh`) | `gcc` |
 | `coverage` | gcov report (`coverage.sh`) | `gcc`, `gcov` |
 | `sitl` | UNIT_TESTS in Renode (`build_pil` + `renode.resc`) | `arm-none-eabi-gcc`, `renode` |
-| `pitl` | hardware regression (`run_hw_tests.sh`) | ARM toolchain, `st-flash`, a board |
+| `pitl` | hardware regression (`run_hw_tests.sh`) | ARM toolchain, `openocd`, and a board whose probe has a serial console — this suite reads the UART, so a clone ST-LINK with no VCP (the NAVIXSM-F401RE's) cannot run it; use `USB_LOC=` to name a board with one, or `tools/pitl_run.sh --kmsg` over SWD for a board without. It ERASES the board it runs on. |
 
 Exit code = number of layers that **failed** (skipped layers don't count).
 

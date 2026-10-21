@@ -31,6 +31,33 @@ _PROBE_TARGET_PINNED=${OPENOCD_TARGET:+1}
 OPENOCD_TARGET="${OPENOCD_TARGET:-target/stm32f4x.cfg}"
 GDB_PORT="${GDB_PORT:-3333}"
 
+# probe_consoles — echo "<usb-loc> <ttyACM>" for every attached ST-LINK that has
+# a serial console, one per line.
+#
+# Two filters, and both matter. The device has to be an ST-LINK by product id, not
+# merely ST by vendor id: 0483:5740 is a board's own USB CDC, which has a ttyACM and
+# is not a debug probe at all, so vendor alone picks a console attached to nothing
+# that can flash. And it has to have a VCP, which a clone ST-LINK (the
+# NAVIXSM-F401RE's, and a flight controller's) does not have at all -- so this can
+# never return a board whose probe is a clone, worth knowing before one is chosen to
+# flash. A caller still has to confirm the probe answers; see probe_chipid.
+probe_consoles() {
+  local d loc pid tty
+  for d in /sys/bus/usb/devices/*-*; do
+    [ -f "$d/idVendor" ] || continue
+    [ "$(cat "$d/idVendor")" = "0483" ] || continue
+    pid=$(cat "$d/idProduct" 2>/dev/null)
+    case "$pid" in
+      # V1, V2, V2-1 and its variants, V3 and its bootloader.
+      3744|3748|374a|374b|374d|374e|374f|3752|3753|3754) ;;
+      *) continue ;;
+    esac
+    loc=$(basename "$d")
+    tty=$(find "$d/" -maxdepth 3 -name 'ttyACM*' -printf '%f\n' 2>/dev/null | head -1)
+    [ -n "$tty" ] && [ -e "/dev/$tty" ] && echo "$loc $tty"
+  done
+}
+
 # probe_target_from_build <build-dir> — point OpenOCD at the family this build
 # was configured for, instead of the F4 default.
 #
