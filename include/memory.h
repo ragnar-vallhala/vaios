@@ -28,6 +28,10 @@ void *v_malloc(size_t size);
 // whose base must land on a region-size boundary. Returns NULL on bad args or
 // exhaustion; falls back to v_malloc when align <= the default 8-byte alignment.
 void *v_memalign(size_t align, size_t size);
+// As v_memalign, with the payload `offset` bytes past an `align` boundary
+// (payload % align == offset); offset < align, a multiple of 8. For a task
+// block that fills only the top eighths of its MPU region.
+void *v_memalign_off(size_t align, size_t offset, size_t size);
 
 // Free memory
 void v_free(void *ptr);

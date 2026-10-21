@@ -249,6 +249,32 @@ static void test_memalign_small_align_falls_back(void) {
   v_free(p);
 }
 
+/* v_memalign_off: the payload lands `offset` past an align boundary (a task
+ * block in the top eighths of its MPU region), usable, and freed cleanly. */
+static void test_memalign_off_places_at_offset(void) {
+  reset();
+  uint32_t count0 = v_get_heap_allocation_count();
+  uint32_t used0 = v_get_heap_allocation_size();
+  for (size_t off = 0; off < 1024; off += 128) {
+    size_t size = 1024 - off; /* top eighths of a 1 KiB region */
+    void *p = v_memalign_off(1024, off, size);
+    TEST_ASSERT_NOT_NULL(p);
+    TEST_ASSERT_EQ((uintptr_t)p & 1023u, (uintptr_t)off);
+    for (size_t i = 0; i < size; i++)
+      ((volatile uint8_t *)p)[i] = (uint8_t)i;
+    v_free(p);
+  }
+  TEST_ASSERT_EQ(v_get_heap_allocation_count(), count0);
+  TEST_ASSERT_EQ(v_get_heap_allocation_size(), used0);
+}
+
+/* An offset past the window or off the heap's 8-byte grain is refused. */
+static void test_memalign_off_bad_args(void) {
+  reset();
+  TEST_ASSERT_NULL(v_memalign_off(256, 256, 64)); /* offset == align */
+  TEST_ASSERT_NULL(v_memalign_off(256, 12, 64));  /* not a multiple of 8 */
+}
+
 /* Alloc + free of an aligned block leaves the heap exactly as it was — the
  * aligned block and its leading slack both coalesce back. */
 static void test_memalign_no_leak(void) {
@@ -372,6 +398,8 @@ static const test_case_t memory_cases[] = {
     TEST_CASE(test_memalign_bad_args),
     TEST_CASE(test_memalign_small_align_falls_back),
     TEST_CASE(test_memalign_no_leak),
+    TEST_CASE(test_memalign_off_places_at_offset),
+    TEST_CASE(test_memalign_off_bad_args),
     TEST_CASE(test_memalign_leading_slack_reusable),
     TEST_CASE(test_memalign_leading_underflow_regression),
     TEST_CASE(test_memalign_underalloc_regression),

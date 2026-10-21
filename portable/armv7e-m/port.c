@@ -1,7 +1,9 @@
+#include "ipc.h" // VA_PASS
 #include "port.h"
 #include "syscall.h"
 #include "task.h"
 #include "utils.h"
+#include <stddef.h>
 #include <stdint.h>
 
 extern void v_print(const char *str);
@@ -178,6 +180,197 @@ void NMI_Handler(void) {
 #define SCB_BFAR (*(volatile uint32_t *)0xE000ED38)
 #define MMFSR_MMARVALID (1u << 7)
 #define BFSR_BFARVALID (1u << 7)
+#if VAIOS_MPU_FAULT_RECOVERY
+#define SCB_FPCCR (*(volatile uint32_t *)0xE000EF34)
+#define FPCCR_LSPACT (1u << 0)
+#define EXC_RETURN_THREAD (1u << 3)
+#define EXC_RETURN_PSP (1u << 2)
+v_mpu_fault_stats_t v_mpu_fault_stats;
+
+#if VAIOS_MPU_FAULT_ISR
+#define NVIC_ICER ((volatile uint32_t *)0xE000E180)
+#define NVIC_ICPR ((volatile uint32_t *)0xE000E280)
+#define NVIC_IABR ((volatile uint32_t *)0xE000E300)
+#define SCB_SHCSR (*(volatile uint32_t *)0xE000ED24)
+#define SCB_VTOR_REG (*(volatile uint32_t *)0xE000ED08)
+#define SHCSR_ACTIVE 0xD8Bu /* MEMFAULT BUSFAULT USGFAULT SVCALL MONITOR PENDSV SYSTICK */
+#define SHCSR_MEMFAULTACT (1u << 0)
+#define FPCCR_LSPEN (1u << 30)
+#define XPSR_ICI_IT 0x0600FC00u
+#define IRQ_WORDS 4u /* 128 IRQs: enough for every F4/F7 */
+static uint32_t irq_containable[IRQ_WORDS];
+static volatile uint32_t irq_failed[IRQ_WORDS];
+// What isr_abandon finishes the ISR with: its stack top and its EXC_RETURN.
+__attribute__((used)) uint32_t v_isr_abandon_msp, v_isr_abandon_exc;
+
+int v_irq_set_containable(int irqn) {
+  if (irqn < 0 || (uint32_t)irqn >= 32u * IRQ_WORDS)
+    return V_TASK_EINVAL;
+  ENTER_CRITICAL();
+  irq_containable[irqn >> 5] |= 1u << (irqn & 31);
+  EXIT_CRITICAL();
+  return VA_PASS;
+}
+
+int v_irq_failed_take(void) {
+  int irq = -1;
+  ENTER_CRITICAL();
+  for (uint32_t w = 0; w < IRQ_WORDS && irq < 0; w++)
+    if (irq_failed[w]) {
+      uint32_t b = (uint32_t)__builtin_ctz(irq_failed[w]);
+      irq_failed[w] &= ~(1u << b);
+      irq = (int)(w * 32u + b);
+    }
+  EXIT_CRITICAL();
+  return irq;
+}
+
+// Runs in place of the abandoned ISR, as that ISR: drops everything it had on
+// MSP and does its exception return, back to the task it interrupted.
+__attribute__((naked)) static void isr_abandon(void) {
+  __asm volatile("   ldr r0, =v_isr_abandon_msp \n"
+                 "   ldr r0, [r0]               \n"
+                 "   msr msp, r0                \n"
+                 "   ldr r0, =v_isr_abandon_exc \n"
+                 "   ldr r0, [r0]               \n"
+                 "   bx r0                      \n");
+}
+
+// A fault in handler mode, `frame` its stacked frame on MSP. Contained only
+// when the ISR's own state can be undone exactly, which needs all of:
+//  - a containable IRQ (v_irq_set_containable), the only active exception
+//    besides this one: it interrupted a task, so it began at the top of MSP
+//    and returns to thread mode on PSP;
+//  - no FP use in the ISR (a basic frame here), so FPCCR.LSPACT still tells
+//    whether the task's frame is the extended one;
+//  - BASEPRI and PRIMASK clear: not inside a FromISR critical section, where
+//    a kernel list may be half-updated.
+// Then the IRQ is disabled and marked failed, and this exception returns into
+// isr_abandon instead of the faulting instruction.
+static int isr_contain(uint32_t exc_return, uint32_t *frame) {
+  extern uint8_t scheduler_running;
+  uint32_t basepri, primask;
+  __asm volatile("mrs %0, basepri" : "=r"(basepri));
+  __asm volatile("mrs %0, primask" : "=r"(primask));
+  if (exc_return != 0xFFFFFFF1u || !scheduler_running || basepri || primask)
+    return 0;
+  uint32_t ipsr = frame[7] & 0x1FFu;
+  if (ipsr < 16u)
+    return 0; // SysTick, PendSV, SVCall: the kernel itself
+  uint32_t irq = ipsr - 16u, w = irq >> 5, bit = 1u << (irq & 31u);
+  if (w >= IRQ_WORDS || !(irq_containable[w] & bit))
+    return 0;
+  for (uint32_t i = 0; i < IRQ_WORDS; i++)
+    if (NVIC_IABR[i] != (i == w ? bit : 0u))
+      return 0;
+  if (SCB_SHCSR & SHCSR_ACTIVE & ~SHCSR_MEMFAULTACT)
+    return 0; // no other system handler active (MemManage's own bit: Renode
+              // does not model the active bits)
+  uint32_t exc = 0xFFFFFFFDu;
+#ifdef _FPU_ENABLED
+  if (!(SCB_FPCCR & FPCCR_LSPEN))
+    return 0; // without lazy stacking LSPACT says nothing
+  if (SCB_FPCCR & FPCCR_LSPACT)
+    exc = 0xFFFFFFEDu;
+#endif
+  NVIC_ICER[w] = bit;
+  NVIC_ICPR[w] = bit;
+  irq_failed[w] |= bit;
+  v_isr_abandon_msp = *(volatile uint32_t *)SCB_VTOR_REG; // MSP's top
+  v_isr_abandon_exc = exc;
+  frame[6] = (uint32_t)isr_abandon & ~1u;
+  frame[7] = (frame[7] & ~XPSR_ICI_IT) | (1u << 24);
+  return 1;
+}
+#endif
+
+// What a thread-mode fault in `t` does. An unprivileged task follows its
+// policy. A privileged one panics unless VAIOS_MPU_FAULT_PRIV is on, its policy
+// was set explicitly (so kernel tasks such as idle keep panicking), and it was
+// where v_task_kill could have ended it anyway: outside every critical section.
+// MemManage outranks BASEPRI, so a fault inside one still lands here, with the
+// kernel's lists possibly half-updated.
+static v_fault_policy_t fault_policy_for(const TCB *t) {
+  if (!t->privileged)
+    return task_fault_policy(t);
+#if VAIOS_MPU_FAULT_PRIV
+  uint32_t basepri, primask;
+  __asm volatile("mrs %0, basepri" : "=r"(basepri));
+  __asm volatile("mrs %0, primask" : "=r"(primask));
+  if (t->fault_policy != V_FAULT_DEFAULT && critical_nesting == 0 &&
+      basepri == 0 && primask == 0)
+    return task_fault_policy(t);
+#endif
+  return V_FAULT_PANIC;
+}
+
+// Called from the naked MemManage entry with its EXC_RETURN. A fault raised by
+// a task in thread mode follows fault_policy_for(): the task ended, or ended
+// and recreated, then this returns, tail-chaining into the PendSV that
+// task_exit_request pended -- or a panic. A fault in handler mode panics, as
+// before (kernel state is suspect), unless isr_contain can undo it.
+void v_port_memmanage(uint32_t exc_return, uint32_t *msp_frame) {
+  extern TCB *current_task;
+  uint32_t mmfsr = SCB_CFSR & 0xFFu; /* MemManage status is CFSR[7:0] */
+  uint32_t addr = (mmfsr & MMFSR_MMARVALID) ? SCB_MMFAR : 0u;
+  TCB *t = current_task;
+  uint32_t id = t ? t->task_id : 0u;
+#if VAIOS_MPU_FAULT_ISR
+  if (!(exc_return & EXC_RETURN_THREAD) && isr_contain(exc_return, msp_frame)) {
+    uint32_t irq = (msp_frame[7] & 0x1FFu) - 16u;
+    SCB_CFSR = mmfsr;
+    v_mpu_fault_stats.isr_faults++;
+    v_mpu_fault_stats.last_irq = irq;
+    V_KLOG(LOG_WARN, "[MPU] fault in IRQ %u contained, IRQ disabled | addr 0x%x "
+           "MMFSR 0x%x", (unsigned)irq, (unsigned)addr, (unsigned)mmfsr);
+    return;
+  }
+#else
+  (void)msp_frame;
+#endif
+  int from_task = (exc_return & EXC_RETURN_THREAD) &&
+                  (exc_return & EXC_RETURN_PSP) && t;
+  v_fault_policy_t policy = from_task ? fault_policy_for(t) : V_FAULT_PANIC;
+  if (policy == V_FAULT_PANIC)
+    v_panic(__FILE__, __LINE__,
+            "MPU fault in task %u | fault addr 0x%x MMFSR 0x%x", (unsigned)id,
+            (unsigned)addr, (unsigned)mmfsr);
+
+  SCB_CFSR = mmfsr; /* write-1-to-clear the MemManage status */
+  v_mpu_fault_stats.faults++;
+  v_mpu_fault_stats.last_task = id;
+  v_mpu_fault_stats.last_addr = addr;
+  v_mpu_fault_stats.last_mmfsr = mmfsr;
+
+  // The faulting task never runs again, so its stack is not worth keeping, but
+  // the switch-out still pushes onto PSP. After a stack-guard hit PSP points
+  // into the no-access guard; after any fault a pending lazy FP save points at
+  // the old frame. Cancel the lazy save and move PSP to the top of the task's
+  // own block, which stays allocated until the idle task's GC frees it.
+#ifdef _FPU_ENABLED // as PendSV's s16-s31 save; FPCCR exists only with an FPU
+  SCB_FPCCR &= ~FPCCR_LSPACT;
+#endif
+  uint32_t top = (uint32_t)t->mem_block + t->stack_size;
+  __asm volatile("msr psp, %0" ::"r"(top & ~7u) : "memory");
+  // Only now: v_log panics on a PSP near the stack base, which is where a
+  // stack-guard hit left it.
+  V_KLOG(LOG_WARN, "[MPU] fault in task %u contained | addr 0x%x MMFSR 0x%x",
+         (unsigned)id, (unsigned)addr, (unsigned)mmfsr);
+
+  task_exit_request(id); // same teardown as v_task_kill; pends PendSV
+  // t stays allocated until the idle task's GC, so it can still be read here.
+  if (policy == V_FAULT_RESTART && task_fault_restart(t))
+    v_mpu_fault_stats.restarts++;
+}
+
+__attribute__((naked)) void MemManage_Handler(void) {
+  __asm volatile("   mov r0, lr                 \n"
+                 "   mrs r1, msp                \n" /* the frame, if on MSP */
+                 "   push {r0, lr}              \n" /* keeps SP 8-byte aligned */
+                 "   bl v_port_memmanage        \n"
+                 "   pop {r0, pc}               \n"); /* exception return */
+}
+#else
 void MemManage_Handler(void) {
 #if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_STATIC_PROTECT
   extern TCB *current_task;
@@ -191,6 +384,7 @@ void MemManage_Handler(void) {
   for (;;) {
   }
 }
+#endif
 // Bus fault. Enabled alongside MemManage under the MPU/user-separation config so
 // a stray bus access reports with its BFSR/BFAR instead of escalating silently.
 void BusFault_Handler(void) {
@@ -315,7 +509,44 @@ __attribute__((naked)) void PendSV_Handler(void) {
       "   dsb                                 \n"
       "   isb                                 \n"
       "   bl set_next_task                    \n"
-      "   bl v_port_apply_current_mpu         \n" /* swap task MPU regions */
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+      /* The incoming task's MPU regions, inline: its pre-encoded RBAR/RASR
+         pairs (TCB mpu_regs) in one load and one store to RBAR, RASR and their
+         A1 alias, which program both regions; then its privilege into
+         CONTROL.nPRIV; then a single barrier for both. r4-r7 are free: the
+         outgoing task's are saved and the incoming one's are loaded below. */
+      "   ldr r1, =current_task               \n"
+      "   ldr r1, [r1]                        \n"
+      "   addw r2, r1, %[regs]                \n"
+#if VAIOS_TASK_MPU_REGIONS == 4
+      "   ldmia r2, {r4-r11}                  \n"
+      "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
+      "   stmia r2, {r4-r11}                  \n" /* RBAR RASR, A1, A2, A3 */
+#elif VAIOS_TASK_MPU_REGIONS == 3
+      "   ldmia r2, {r4-r9}                   \n"
+      "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
+      "   stmia r2, {r4-r9}                   \n" /* RBAR RASR, A1, A2 */
+#elif VAIOS_TASK_MPU_REGIONS == 2
+      "   ldmia r2, {r4-r7}                   \n"
+      "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
+      "   stmia r2, {r4-r7}                   \n" /* RBAR RASR RBAR_A1 RASR_A1 */
+#else
+      "   ldmia r2, {r4-r5}                   \n"
+      "   ldr r2, =0xE000ED9C                 \n" /* MPU_RBAR */
+      "   stmia r2, {r4-r5}                   \n" /* RBAR RASR */
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+      "   ldrb r4, [r1, %[priv]]              \n" /* TCB privileged */
+      "   mrs r5, control                     \n"
+      "   orr r5, r5, #1                      \n" /* nPRIV: unprivileged... */
+      "   cmp r4, #0                          \n"
+      "   it ne                               \n"
+      "   bicne r5, r5, #1                    \n" /* ...unless privileged */
+      "   msr control, r5                     \n"
+#endif
+      "   dsb                                 \n"
+      "   isb                                 \n"
+#endif
 #if VAIOS_SYSCALL_SVC
       "   bl v_syscall_deliver_result         \n" /* deliver blocked syscall r0 */
 #endif
@@ -346,6 +577,12 @@ __attribute__((naked)) void PendSV_Handler(void) {
       "                                       \n"
       "   .ltorg                              \n" ::"i"(
           MAX_SYSCALL_INTERRUPT_PRIORITY)
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+      , [regs] "i"(offsetof(TCB, mpu_regs))
+#endif
+#if VAIOS_MPU_USER_SEPARATION
+      , [priv] "i"(offsetof(TCB, privileged))
+#endif
       : "r0", "r1", "r2", "r3");
 }
 
@@ -467,21 +704,29 @@ void init_task_stack(TCB *task) {
 
   task->sp = sp;
 
-#if VAIOS_MPU_STACK_GUARD
-  // Pre-encode the no-access guard region at the stack base (lowest address).
-  // Applied on every switch to this task; a store past the bottom traps into
-  // MemManage_Handler. Encode fails cleanly (invalid) on MPU-less targets.
-  task->mpu_guard_valid =
-      (v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE,
-                                 task->mpu_guard) == 0);
-#endif
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+  // Pre-encode this task's regions, in mpu_regs order. An encoder that fails
+  // (no MPU) leaves its pair encoding the region as disabled.
+  uint32_t *r = task->mpu_regs;
 #if VAIOS_MPU_USER_SEPARATION
-  // Pre-encode the RW-unprivileged region over the whole block. Applied with the
-  // guard on switch-in; grants the (unprivileged) task access to only its own
-  // stack+heap. Base is size-aligned by task_create.
-  task->mpu_block_valid =
-      (v_port_task_region_encode(task->mem_block, task->stack_size,
-                                 task->mpu_block) == 0);
+  // RW-unprivileged over the block: the task reaches its own stack+heap only.
+  (void)v_port_task_region_encode(task->mem_block, task->stack_size, r);
+  r += 2;
+#endif
+#if VAIOS_MPU_STACK_GUARD
+  // No-access guard at the stack base: a store past the bottom traps.
+  (void)v_port_stack_guard_encode(task->mem_block, VAIOS_MPU_GUARD_SIZE, r);
+  r += 2;
+#endif
+#if VAIOS_TASK_MMIO
+  // No MMIO window until v_task_grant_mmio: region 6 disabled.
+  (void)v_port_mmio_region_encode(NULL, 0, r);
+  r += 2;
+#endif
+#if VAIOS_UPIPE
+  // No pipe yet: region 5 disabled (v_upipe_create fills this pair).
+  (void)v_port_upipe_region_encode(NULL, 0, r);
+#endif
 #endif
 }
 
@@ -497,28 +742,10 @@ void v_port_apply_current_mpu(void) {
   TCB *t = current_task;
   if (!t)
     return;
-  // Assemble this task's region set into one contiguous array and program it in
-  // a single hal_mpu_apply (one barrier). Each encoded pair carries its own
-  // region number in RBAR, so order is irrelevant; the guard (region 7) wins on
-  // overlap with the block region (region 4) at the base regardless.
-  uint32_t set[4];
-  uint32_t count = 0;
-#if VAIOS_MPU_USER_SEPARATION
-  if (t->mpu_block_valid) {
-    set[count * 2] = t->mpu_block[0];
-    set[count * 2 + 1] = t->mpu_block[1];
-    count++;
-  }
-#endif
-#if VAIOS_MPU_STACK_GUARD
-  if (t->mpu_guard_valid) {
-    set[count * 2] = t->mpu_guard[0];
-    set[count * 2 + 1] = t->mpu_guard[1];
-    count++;
-  }
-#endif
-  if (count)
-    v_port_mpu_apply(set, count);
+  // The C form of PendSV's burst (see there), for load_next_task_from_isr.
+  // Each pair carries its region number in RBAR, so order is irrelevant; the
+  // guard (region 7) wins on overlap with the block region (region 4).
+  v_port_mpu_apply(t->mpu_regs, VAIOS_TASK_MPU_REGIONS);
 #if VAIOS_MPU_USER_SEPARATION
   // Set thread-mode privilege (CONTROL.nPRIV, bit 0) for the incoming task.
   // Written here in handler mode; it takes effect on exception return to thread.

@@ -52,6 +52,17 @@ typedef struct v_wnode {
 } v_wnode;
 #endif
 
+// MPU regions a task carries (see mpu_regs), in this order: its block region
+// with user separation, its stack guard with the guard on, then the grants --
+// its MMIO window (VAIOS_TASK_MMIO) and its v_upipe (VAIOS_UPIPE), last.
+#define V_TASK_MPU_GRANTS ((VAIOS_TASK_MMIO ? 1 : 0) + (VAIOS_UPIPE ? 1 : 0))
+#define VAIOS_TASK_MPU_REGIONS                                                 \
+  ((VAIOS_MPU_USER_SEPARATION ? 1 : 0) + (VAIOS_MPU_STACK_GUARD ? 1 : 0) +    \
+   V_TASK_MPU_GRANTS)
+// Index of a grant's RBAR/RASR pair in mpu_regs (word index = 2 * pair).
+#define V_MPU_PAIR_UPIPE (VAIOS_TASK_MPU_REGIONS - 1)
+#define V_MPU_PAIR_MMIO (VAIOS_TASK_MPU_REGIONS - V_TASK_MPU_GRANTS)
+
 typedef struct Task_Control_Block {
   uint32_t *sp;           // Current stack pointer (PSP)
   uint32_t *mem_block;    // Base of allocated stack memory
@@ -85,24 +96,41 @@ typedef struct Task_Control_Block {
 #if VAIOS_MODULE_PERF
   v_perf_task_t perf; // Per-task perf counters (see perf.h)
 #endif
-#if VAIOS_MPU_STACK_GUARD
-  // Pre-encoded MPU stack-guard region (RBAR/RASR word pair), applied on
-  // context switch. Opaque here (mirrors NavHAL's hal_mpu_encoded_t) so task.h
-  // stays architecture-independent. Valid only when mpu_guard_valid != 0.
-  uint32_t mpu_guard[2];
-  uint8_t mpu_guard_valid;
+#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
+  // This task's MPU regions, pre-encoded as RBAR/RASR word pairs (opaque here,
+  // mirroring NavHAL's hal_mpu_encoded_t, so task.h stays architecture-
+  // independent), written on every switch-in in one burst: first the
+  // RW-unprivileged region over the task's block (user separation), then the
+  // no-access stack guard at its base, which wins on the overlap. A region that
+  // could not be encoded is stored disabled, never skipped, so the switch writes
+  // a fixed count with no branches.
+  uint32_t mpu_regs[2 * VAIOS_TASK_MPU_REGIONS];
 #endif
 #if VAIOS_MPU_USER_SEPARATION
-  // Pre-encoded per-task RW-unprivileged region over the WHOLE block, applied on
-  // context switch alongside the guard. Grants the running (unprivileged) task
-  // access to only its own stack+heap; the higher-numbered guard still wins at
-  // the base. Valid only when mpu_block_valid != 0.
-  uint32_t mpu_block[2];
-  uint8_t mpu_block_valid;
   // Privilege of this task's thread-mode execution: 0 = unprivileged (the
   // default for user tasks), 1 = privileged. Applied to CONTROL.nPRIV on
   // switch-in. The idle task is privileged (it does kernel housekeeping).
   uint8_t privileged;
+#endif
+#if VAIOS_MPU_FAULT_RECOVERY
+  // What an MPU fault in this task does (v_fault_policy_t) and how many
+  // restarts it gets (0 = VAIOS_MPU_FAULT_RESTART_MAX); both carried over to a
+  // restarted task, as is the count of restarts its lineage has used.
+  uint8_t fault_policy;
+  uint8_t fault_restart_max;
+  uint8_t fault_restarts;
+#endif
+#if VAIOS_UPIPE
+  // The v_upipe this task is one end of (NULL: none), and which end:
+  // 1 = producer, 2 = consumer. Carried over to a restarted task.
+  struct v_upipe_k *upipe;
+  uint8_t upipe_role;
+#endif
+#if VAIOS_TASK_CHECKPOINT
+  // Last v_task_checkpoint (VAIOS_TASK_CHECKPOINT_MAX bytes, allocated on the
+  // first one) and its length; moved to the new task by a fault restart.
+  uint8_t *ckpt;
+  uint16_t ckpt_len;
 #endif
 #if VAIOS_SYSCALL_SVC
   // Deferred blocking-syscall result: set by the waker (v_syscall_wake_result)
@@ -216,6 +244,15 @@ typedef struct {
 #define V_TASK_ENOMEM (-12) // no stack available
 #define V_TASK_EAGAIN (-11) // this task already has VAIOS_TASK_MAX_CHILDREN
 #define V_TASK_EINVAL (-22) // bad descriptor
+// What an MPU fault in a task does, with VAIOS_MPU_FAULT_RECOVERY on (with it
+// off every fault panics). A privileged task panics too, unless
+// VAIOS_MPU_FAULT_PRIV is on and its policy is set explicitly (see Kconfig).
+typedef enum {
+  V_FAULT_DEFAULT = 0, // the build's: RESTART with VAIOS_MPU_FAULT_RESTART, else KILL
+  V_FAULT_KILL,        // end this task (and its children); the rest carries on
+  V_FAULT_RESTART,     // end it, then start it afresh, up to its restart cap
+  V_FAULT_PANIC,       // stop the system, as with recovery off
+} v_fault_policy_t;
 typedef struct {
   void (*entry)(void *);  // must point into flash: RAM is execute-never
   void *arg;              // OPAQUE to the child: a pointer into the parent's
@@ -224,6 +261,9 @@ typedef struct {
   uint32_t stack_size;    // bytes, <= VAIOS_TASK_SPAWN_STACK_MAX
   uint32_t priority;      // <= the spawning task's own priority
   const char *name;       // optional flash literal, or NULL
+  uint8_t fault_policy;   // v_fault_policy_t; 0 = the build's default. An
+                          // unprivileged parent may not choose V_FAULT_PANIC.
+  uint8_t fault_restart_max; // restarts for V_FAULT_RESTART; 0 = the build's
 } v_task_spawn_t;
 // Create a child task. Returns its id (> 0), or V_TASK_E* on refusal.
 int v_task_spawn(const v_task_spawn_t *cfg);
@@ -243,6 +283,42 @@ int v_task_info(v_task_info_t *out);
 // without holding a TCB pointer.
 const char *task_get_name_by_id(uint32_t task_id);
 void task_exit_request(uint32_t task_id);
+#if VAIOS_MPU_FAULT_RECOVERY
+// Set what an MPU fault in a task does (see v_fault_policy_t); restart_max 0
+// takes VAIOS_MPU_FAULT_RESTART_MAX. For tasks privileged code creates with
+// task_create*; a spawned task gets its policy from v_task_spawn_t. Not a
+// syscall. VA_PASS, or V_TASK_EINVAL for an unknown task or policy.
+int task_set_fault_policy(uint32_t task_id, v_fault_policy_t policy,
+                          uint8_t restart_max);
+// `t`'s policy with V_FAULT_DEFAULT resolved: KILL, RESTART or PANIC.
+v_fault_policy_t task_fault_policy(const TCB *t);
+// Recreate `dead`, just ended by a contained MPU fault, from its entry, arg,
+// stack size, base priority, name, parent, fault policy and checkpoint (which
+// moves to the new task). Its block must
+// still be allocated (it is until the idle task's GC). Returns the new id, or
+// 0 when the lineage has used its restarts or the heap is out -- never a
+// panic. Kernel-only: called from the MemManage handler.
+uint32_t task_fault_restart(TCB *dead);
+#endif
+// Give task `task_id` unprivileged read/write to the MMIO window
+// [base, base + size) (VAIOS_TASK_MMIO): size a power of two >= 32, base
+// aligned to it, the window inside the peripheral range 0x40000000..0x5FFFFFFF.
+// Device memory, execute-never, one window per task (a second call replaces
+// the first), kept across a fault restart. Privileged callers only. A
+// peripheral that can write memory itself (a DMA controller, or one that
+// masters the bus) or that clocks/resets others (RCC) hands the task the whole
+// system: that judgement is the caller's. Returns VA_PASS or V_TASK_EINVAL.
+int v_task_grant_mmio(uint32_t task_id, uintptr_t base, uint32_t size);
+
+#if VAIOS_TASK_CHECKPOINT
+// Save `len` bytes (1..VAIOS_TASK_CHECKPOINT_MAX) as the calling task's
+// checkpoint, replacing the last one. Kept across fault restarts. VA_PASS,
+// V_TASK_EINVAL for a bad length, V_TASK_ENOMEM if the buffer can't be had.
+int v_task_checkpoint(const void *buf, uint32_t len);
+// Copy the calling task's last checkpoint into `buf`, at most `len` bytes.
+// Returns the bytes copied: 0 if there is none (a first start).
+int v_task_restore(void *buf, uint32_t len);
+#endif
 //-----------------------------------------------------------------------------
 // Scheduler Core Functions
 //-----------------------------------------------------------------------------
@@ -372,5 +448,35 @@ typedef enum {
   TASK_ERROR_TASK_NOT_FOUND,
   TASK_ERROR_INVALID_STATE
 } task_error_t;
+
+#if VAIOS_MPU_FAULT_RECOVERY
+// MPU faults contained by ending an unprivileged task (port MemManage path).
+// Kernel memory: privileged readers only.
+typedef struct {
+  uint32_t faults;     // faults contained
+  uint32_t restarts;   // tasks recreated after a fault (VAIOS_MPU_FAULT_RESTART)
+  uint32_t last_task;  // id of the last task ended by a fault
+  uint32_t last_addr;  // its fault address (0 if MMFAR was not valid)
+  uint32_t last_mmfsr; // its MemManage status bits
+#if VAIOS_MPU_FAULT_ISR
+  uint32_t isr_faults; // faults contained by abandoning an ISR
+  uint32_t last_irq;   // the last IRQ disabled for one
+#endif
+} v_mpu_fault_stats_t;
+extern v_mpu_fault_stats_t v_mpu_fault_stats;
+#endif
+
+#if VAIOS_MPU_FAULT_ISR
+// Let an MPU fault in IRQ `irqn`'s handler be contained (VAIOS_MPU_FAULT_ISR):
+// the handler is abandoned, the IRQ disabled and marked failed, and the task it
+// interrupted carries on. Privileged code only. The IRQ must sit below
+// MemManage (priority > 0), or its fault escalates to HardFault. VA_PASS, or
+// V_TASK_EINVAL for a bad number.
+int v_irq_set_containable(int irqn);
+// The lowest IRQ disabled by a contained fault since the last call, cleared as
+// it is returned, or -1 if none. For a supervisor task to poll and reset that
+// driver. Privileged code only.
+int v_irq_failed_take(void);
+#endif
 
 #endif // TASK_H

@@ -143,6 +143,7 @@ set(TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/test_perf.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_uaccess.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_stage5_regress.c"  # expected-fail regressions
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_upipe.c"  # v_upipe ring (header-only)
 )
 
 # -------------------------------------------------------------------------
@@ -406,6 +407,10 @@ target_compile_definitions(vaios_syscall_tests PRIVATE
     VAIOS_HOST_TEST
     VAIOS_SYSCALL_SVC=1            # compile the dispatch + svc host hooks
     VAIOS_MPU_USER_SEPARATION=1    # compile the validation switch + priv gate
+    VAIOS_MPU_FAULT_RECOVERY=1     # ...and the checkpoint syscalls
+    VAIOS_MPU_FAULT_RESTART_MAX=3
+    VAIOS_TASK_CHECKPOINT=1
+    VAIOS_TASK_CHECKPOINT_MAX=32
     VAIOS_DEVFS=1                  # fd table
     VAIOS_IPC_FD=1                 # fd-typed IPC + SYS_wait validation
     VAIOS_MAX_FDS=8

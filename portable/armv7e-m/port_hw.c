@@ -610,6 +610,20 @@ int v_port_hw_sdio_card_init(void) {
  * static SRAM region 0 (so it grants the task its own block) and below the guard
  * region 7 (so the guard still wins at the base). Regions 5,6 stay free. */
 #define VAIOS_MPU_USER_REGION 4u
+/* A v_upipe block, mapped into its two tasks (VAIOS_UPIPE). Between the task's
+ * block region and the guard; it never overlaps either. */
+#define VAIOS_MPU_UPIPE_REGION 5u
+/* A task's MMIO window (VAIOS_TASK_MMIO). Above the static peripheral region
+ * 1, so it opens that window to the task. */
+#define VAIOS_MPU_MMIO_REGION 6u
+
+/* What an encoder leaves in `out` when it cannot encode: the region, disabled
+ * (RBAR VALID selects it, RASR 0 turns it off), so the context switch can write
+ * every task's pairs without checking which ones are real. */
+static inline void v_mpu_region_off(uint32_t region, uint32_t out[2]) {
+  out[0] = (1u << 4) | region; /* RBAR: VALID | REGION */
+  out[1] = 0u;                 /* RASR: ENABLE clear */
+}
 
 #if defined(NAVHAL) && VAIOS_MPU_ENABLE
 /* hal_mpu_size_t encodes SIZE as log2(bytes) - 1. */
@@ -623,11 +637,16 @@ static inline hal_mpu_size_t v_mpu_size_enum(uint32_t bytes) {
  * free for the Phase 3 per-task set. Safe core = SRAM W^X + peripherals priv+XN;
  * flash-RO and the NULL trap are separately gated (each has a hazard, below). */
 static void v_mpu_static_protect(void) {
-  /* 0: SRAM (128 KB covers the 96 KB part): RW, execute-never (W^X). vaios runs
-   *    wholly from flash (no ramfuncs), so XN on RAM catches execute-from-stack/
-   *    heap without breaking anything. */
-  static const hal_mpu_region_t sram = {
-      .base = 0x20000000u, .size = HAL_MPU_SIZE_128KB,
+  /* 0: SRAM, all of it: RW, execute-never (W^X). vaios runs wholly from flash
+   *    (no ramfuncs), so XN on RAM catches execute-from-stack/heap without
+   *    breaking anything. Sized from the linker's end of RAM, rounded up to a
+   *    power of two: 128 KB on the F401's 96, 512 KB on the F767's 496. A fixed
+   *    128 KB left the F767's MSP and upper heap executable. */
+  extern uint32_t _estack;
+  uint32_t ram = (uint32_t)&_estack - 0x20000000u;
+  uint32_t log2_size = 32u - (uint32_t)__builtin_clz(ram - 1u); // ceil(log2)
+  const hal_mpu_region_t sram = {
+      .base = 0x20000000u, .size = (hal_mpu_size_t)(log2_size - 1u),
 #if VAIOS_MPU_USER_SEPARATION
       /* Kernel-only: unprivileged tasks reach only their own block, granted by
        * the higher-numbered per-task region (VAIOS_MPU_USER_REGION) on switch-in.
@@ -703,6 +722,7 @@ void v_port_mpu_init(void) {
 }
 
 int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
+  v_mpu_region_off(VAIOS_MPU_GUARD_REGION, out);
   if (!hal_mpu_present())
     return -1;
   hal_mpu_region_t r = {
@@ -723,20 +743,32 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
 }
 
 #if VAIOS_MPU_USER_SEPARATION
-/* Encode the per-task RW-unprivileged region covering the whole block. base must
- * be size-aligned (task_create aligns to `size`). W^X: not executable, so code
- * can't run from stack/heap. */
+/* Encode the per-task RW-unprivileged region over the block [base, base+size).
+ * The region is the next power of two at or above `size`, on a boundary of its
+ * own size; task_create puts the block in the TOP of it, so any eighths below
+ * `base` are switched off with the subregion-disable bits (none when size is a
+ * power of two: then base is that boundary). W^X: not executable, so code can't
+ * run from stack/heap. */
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  v_mpu_region_off(VAIOS_MPU_USER_REGION, out);
   if (!hal_mpu_present())
     return -1;
+  uint32_t region =
+      (size & (size - 1u)) ? 1u << (32 - __builtin_clz(size - 1u)) : size;
+  uint32_t rbase = (uint32_t)base & ~(region - 1u);
+  uint32_t off = (uint32_t)base - rbase;
+  if (off && (region < 256u || off % (region / 8u) != 0u ||
+              rbase + region != (uint32_t)base + size))
+    return -1; /* not a layout task_create makes */
   hal_mpu_region_t r = {
-      .base = (uint32_t)base,
-      .size = v_mpu_size_enum(size),
+      .base = rbase,
+      .size = v_mpu_size_enum(region),
       .ap = HAL_MPU_AP_RW, /* unprivileged RW to the task's own block */
       .mem = HAL_MPU_MEM_NORMAL_WB,
       .executable = false,
       .shareable = false,
-      .srd_mask = 0,
+      /* bit i disables eighth i, lowest first: the ones below the block */
+      .srd_mask = off ? (uint8_t)((1u << (off / (region / 8u))) - 1u) : 0u,
   };
   hal_mpu_encoded_t enc;
   if (hal_mpu_encode(VAIOS_MPU_USER_REGION, &r, &enc) != HAL_OK)
@@ -744,6 +776,40 @@ int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   out[0] = enc.rbar;
   out[1] = enc.rasr;
   return 0;
+}
+
+/* A grant: [base, base+size), size a power of two and base aligned to it, RW
+ * to unprivileged code, execute-never, as `region`. */
+static int v_mpu_grant_encode(uint32_t region, void *base, uint32_t size,
+                              hal_mpu_mem_t mem, uint32_t out[2]) {
+  v_mpu_region_off(region, out);
+  if (!base || !hal_mpu_present())
+    return -1;
+  hal_mpu_region_t r = {
+      .base = (uint32_t)base,
+      .size = v_mpu_size_enum(size),
+      .ap = HAL_MPU_AP_RW,
+      .mem = mem,
+      .executable = false,
+      .shareable = false,
+      .srd_mask = 0,
+  };
+  hal_mpu_encoded_t enc;
+  if (hal_mpu_encode(region, &r, &enc) != HAL_OK)
+    return -1;
+  out[0] = enc.rbar;
+  out[1] = enc.rasr;
+  return 0;
+}
+
+int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  return v_mpu_grant_encode(VAIOS_MPU_UPIPE_REGION, base, size,
+                            HAL_MPU_MEM_NORMAL_WB, out);
+}
+
+int v_port_mmio_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  return v_mpu_grant_encode(VAIOS_MPU_MMIO_REGION, base, size,
+                            HAL_MPU_MEM_DEVICE, out);
 }
 #endif
 
@@ -757,14 +823,26 @@ void v_port_mpu_init(void) {}
 int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)base;
   (void)size;
-  (void)out;
+  v_mpu_region_off(VAIOS_MPU_GUARD_REGION, out);
   return -1;
 }
 #if VAIOS_MPU_USER_SEPARATION
+int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  (void)base;
+  (void)size;
+  v_mpu_region_off(VAIOS_MPU_UPIPE_REGION, out);
+  return -1;
+}
+int v_port_mmio_region_encode(void *base, uint32_t size, uint32_t out[2]) {
+  (void)base;
+  (void)size;
+  v_mpu_region_off(VAIOS_MPU_MMIO_REGION, out);
+  return -1;
+}
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]) {
   (void)base;
   (void)size;
-  (void)out;
+  v_mpu_region_off(VAIOS_MPU_USER_REGION, out);
   return -1;
 }
 #endif

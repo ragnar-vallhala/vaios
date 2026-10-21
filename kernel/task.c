@@ -12,9 +12,11 @@ void v_vfs_task_teardown(struct Task_Control_Block *t);
 #else
 #define v_vfs_task_teardown(t) ((void)(t))
 #endif
+#include "upipe.h"
 #include "utils.h"
 #include "vaios_config.h"
 #include <stddef.h>
+#include <string.h> // memcpy (checkpoints)
 #include <stdint.h>
 //-----------------------------------------------------------------------------
 // Global Variables
@@ -185,6 +187,20 @@ TCB *get_highest_priority_task(void) {
 //-----------------------------------------------------------------------------
 // Task Creation and Management
 //-----------------------------------------------------------------------------
+#if VAIOS_MPU_FAULT_RECOVERY
+// Set only around a fault restart (task_fault_restart): out-of-memory then
+// returns 0 instead of panicking.
+static uint8_t task_create_soft_oom;
+#endif
+
+#if VAIOS_MPU_USER_SEPARATION
+// The MPU region that holds a task block of `size` bytes: the next power of
+// two (v_port_task_region_encode derives the same from the block).
+static uint32_t task_block_region(uint32_t size) {
+  return (size & (size - 1u)) ? 1u << (32 - __builtin_clz(size - 1u)) : size;
+}
+#endif
+
 uint32_t task_create(void (*entry)(void *), void *arg, uint32_t size,
                      uint32_t priority) {
   return task_create_named(entry, arg, size, priority, "");
@@ -201,12 +217,22 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
            (unsigned)size, (unsigned)VAIOS_ARCH_MIN_STACK);
     return 0;
   }
-#if VAIOS_MPU_STACK_GUARD || VAIOS_MPU_USER_SEPARATION
-  // With per-task MPU regions on, each stack maps onto a single power-of-two MPU
-  // region, so the size must be an exact power of two. Reject anything else
-  // rather than silently rounding, which would desync the caller's view of the
-  // stack from the region geometry. This constraint follows the *feature*, not
-  // the chip: with MPU stack protection off, any size >= the minimum is fine.
+#if VAIOS_MPU_USER_SEPARATION && VAIOS_MPU_STACK_SUBREGIONS
+  // The block takes whole eighths of its power-of-two MPU region (the rest are
+  // disabled subregions), so round up to the next eighth. Regions under 256
+  // bytes have no subregions: those stay whole powers of two.
+  {
+    uint32_t region = task_block_region(size);
+    uint32_t step = region >= 256u ? region / 8u : region;
+    size = (size + step - 1u) & ~(step - 1u);
+  }
+#elif VAIOS_MPU_USER_SEPARATION
+  // With user separation each block maps onto a single power-of-two MPU
+  // region, so the size must be an exact power of two (or see
+  // VAIOS_MPU_STACK_SUBREGIONS). Reject anything else rather than silently
+  // rounding, which would desync the caller's view of the stack from the
+  // region geometry. A stack guard alone needs no such thing: its 32-byte
+  // region only needs the block's base aligned to 32.
   if ((size & (size - 1)) != 0) {
     V_KLOG(LOG_ERROR,
            "[TASK] size %u is not a power of two; task not created",
@@ -226,11 +252,15 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->name = name ? name : "";
   task->stack_size = size;
 #if VAIOS_MPU_USER_SEPARATION
-  // The per-task RW-unprivileged region covers the WHOLE block as one MPU region,
-  // which needs a size-aligned, power-of-two base. Align the block to its own
-  // size (size is already required power-of-two). The guard at the base stays
-  // size-aligned trivially. Encoded in init_task_stack.
-  task->mem_block = (uint32_t *)v_memalign(size, size);
+  // The per-task RW-unprivileged region is the power-of-two region holding the
+  // block, so it starts on a boundary of its own size; the block sits in the
+  // TOP of it, with any disabled subregions below (none for a power-of-two
+  // size, where region == size and this is plain v_memalign). The guard at the
+  // block's base is 32-aligned either way. Encoded in init_task_stack.
+  {
+    uint32_t region = task_block_region(size);
+    task->mem_block = (uint32_t *)v_memalign_off(region, region - size, size);
+  }
 #elif VAIOS_MPU_STACK_GUARD
   // The MPU stack-guard region sits at the stack base, so the base must land on
   // the guard's size boundary. v_memalign gives that; the no-access guard region
@@ -240,6 +270,14 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   task->mem_block = (uint32_t *)v_malloc(size);
 #endif
   if (!task->mem_block) {
+#if VAIOS_MPU_FAULT_RECOVERY
+    // A restart after a contained fault must not turn into a panic: give up
+    // the restart instead (the task simply stays ended).
+    if (task_create_soft_oom) {
+      v_free(task);
+      return 0;
+    }
+#endif
     v_panic(__FILE__, __LINE__, "failed to allocate stack for task %u",
             task->task_id);
   }
@@ -255,7 +293,21 @@ uint32_t task_create_named(void (*entry)(void *), void *arg,
   // create.
   task->privileged = 0;
 #endif
+#if VAIOS_MPU_FAULT_RECOVERY
+  task->fault_policy = V_FAULT_DEFAULT;
+  task->fault_restart_max = 0;
+  task->fault_restarts = 0;
+#endif
+#if VAIOS_TASK_CHECKPOINT
+  task->ckpt = NULL;
+  task->ckpt_len = 0;
+#endif
+#if VAIOS_UPIPE
+  task->upipe = NULL;
+  task->upipe_role = 0;
+#endif
   task->delay_ticks = 0;
+  task->parent_id = 0; // v_task_spawn sets it; v_malloc does not zero
   task->next = NULL;
   task->prev = NULL;
   task->wait_next = NULL;
@@ -444,7 +496,15 @@ int v_task_spawn(const v_task_spawn_t *cfg) {
     return V_TASK_EINVAL;
   if (cfg->stack_size > VAIOS_TASK_SPAWN_STACK_MAX || cfg->priority > MAX_PRIORITY)
     return V_TASK_EINVAL;
+  if (cfg->fault_policy > V_FAULT_PANIC)
+    return V_TASK_EINVAL;
   TCB *parent = current_task;
+#if VAIOS_MPU_USER_SEPARATION
+  // PANIC would let an unprivileged task take the whole system down by
+  // faulting on purpose -- the very thing recovery exists to prevent.
+  if (cfg->fault_policy == V_FAULT_PANIC && parent && !parent->privileged)
+    return V_TASK_EPERM;
+#endif
   if (parent) {
     // A child may not outrank its parent: spawning must not be a way to get
     // scheduling weight the caller does not already have.
@@ -462,6 +522,10 @@ int v_task_spawn(const v_task_spawn_t *cfg) {
     return V_TASK_ENOMEM; // created but unreachable: treat as failure
   ENTER_CRITICAL();
   child->parent_id = parent ? parent->task_id : 0u;
+#if VAIOS_MPU_FAULT_RECOVERY
+  child->fault_policy = cfg->fault_policy;
+  child->fault_restart_max = cfg->fault_restart_max;
+#endif
   EXIT_CRITICAL();
   return (int)id;
 }
@@ -662,6 +726,218 @@ void task_exit_request(uint32_t task_id) {
   reap_orphans(); // anything this task spawned goes with it (M3b)
   v_port_trigger_pendsv(); // kernel-internal: pend directly (never via SVC)
 }
+#if VAIOS_MPU_FAULT_RECOVERY
+int task_set_fault_policy(uint32_t task_id, v_fault_policy_t policy,
+                          uint8_t restart_max) {
+  if ((unsigned)policy > V_FAULT_PANIC)
+    return V_TASK_EINVAL;
+  TCB *t = get_task_by_id(task_id);
+  if (!t || t->status == TASK_TERMINATED)
+    return V_TASK_EINVAL;
+  ENTER_CRITICAL();
+  t->fault_policy = (uint8_t)policy;
+  t->fault_restart_max = restart_max;
+  EXIT_CRITICAL();
+  return VA_PASS;
+}
+
+v_fault_policy_t task_fault_policy(const TCB *t) {
+  if (t->fault_policy != V_FAULT_DEFAULT)
+    return (v_fault_policy_t)t->fault_policy;
+#if VAIOS_MPU_FAULT_RESTART
+  return V_FAULT_RESTART;
+#else
+  return V_FAULT_KILL;
+#endif
+}
+
+uint32_t task_fault_restart(TCB *dead) {
+  if (!dead)
+    return 0;
+  uint8_t max = dead->fault_restart_max ? dead->fault_restart_max
+                                        : (uint8_t)VAIOS_MPU_FAULT_RESTART_MAX;
+  if (dead->fault_restarts >= max)
+    return 0;
+  task_create_soft_oom = 1;
+  uint32_t id = task_create_named(dead->entry, dead->arg, dead->stack_size,
+                                  dead->base_priority, dead->name);
+  task_create_soft_oom = 0;
+  TCB *t = id ? get_task_by_id(id) : NULL;
+  if (!t)
+    return 0;
+  ENTER_CRITICAL();
+  t->fault_policy = dead->fault_policy;
+  t->fault_restart_max = dead->fault_restart_max;
+  t->fault_restarts = (uint8_t)(dead->fault_restarts + 1u);
+  t->parent_id = dead->parent_id;
+  t->privileged = dead->privileged; // a privileged task (FAULT_PRIV) stays one
+#if VAIOS_TASK_CHECKPOINT
+  t->ckpt = dead->ckpt; // moved, so the GC of `dead` does not free it
+  t->ckpt_len = dead->ckpt_len;
+  dead->ckpt = NULL;
+#endif
+#if VAIOS_UPIPE
+  // Same pipe, same end: the new task reattaches.
+  t->upipe = dead->upipe;
+  t->upipe_role = dead->upipe_role;
+#endif
+#if V_TASK_MPU_GRANTS
+  // ...and keeps its grants' regions (MMIO window, pipe): the tail of mpu_regs.
+  memcpy(&t->mpu_regs[2 * (VAIOS_TASK_MPU_REGIONS - V_TASK_MPU_GRANTS)],
+         &dead->mpu_regs[2 * (VAIOS_TASK_MPU_REGIONS - V_TASK_MPU_GRANTS)],
+         8u * V_TASK_MPU_GRANTS);
+#endif
+  EXIT_CRITICAL();
+  return id;
+}
+#endif
+
+#if VAIOS_TASK_CHECKPOINT
+int v_task_checkpoint(const void *buf, uint32_t len) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode()) // task-facing: trap into the kernel
+    return (int)v_svc2(SYS_task_checkpoint, (uintptr_t)buf, len);
+#endif
+  TCB *t = current_task;
+  if (!t || !buf || len == 0 || len > VAIOS_TASK_CHECKPOINT_MAX)
+    return V_TASK_EINVAL;
+  if (!t->ckpt && !(t->ckpt = v_malloc(VAIOS_TASK_CHECKPOINT_MAX)))
+    return V_TASK_ENOMEM;
+  memcpy(t->ckpt, buf, len);
+  t->ckpt_len = (uint16_t)len;
+  return VA_PASS;
+}
+
+int v_task_restore(void *buf, uint32_t len) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (int)v_svc2(SYS_task_restore, (uintptr_t)buf, len);
+#endif
+  TCB *t = current_task;
+  if (!t || !buf)
+    return V_TASK_EINVAL;
+  uint32_t n = t->ckpt_len < len ? t->ckpt_len : len;
+  if (n)
+    memcpy(buf, t->ckpt, n);
+  return (int)n;
+}
+#endif
+
+#if VAIOS_TASK_MMIO
+int v_task_grant_mmio(uint32_t task_id, uintptr_t base, uint32_t size) {
+  if (size < 32u || (size & (size - 1u)) || (base & (size - 1u)) ||
+      base < 0x40000000u || base + size - 1u > 0x5FFFFFFFu)
+    return V_TASK_EINVAL;
+  uint32_t enc[2];
+  if (v_port_mmio_region_encode((void *)base, size, enc) != 0)
+    return V_TASK_EINVAL;
+  ENTER_CRITICAL();
+  TCB *t = get_task_by_id(task_id);
+  if (t) {
+    t->mpu_regs[2 * V_MPU_PAIR_MMIO] = enc[0];
+    t->mpu_regs[2 * V_MPU_PAIR_MMIO + 1] = enc[1];
+    if (t == current_task)
+      v_port_apply_current_mpu(); // granting itself: map it now
+  }
+  EXIT_CRITICAL();
+  return t ? VA_PASS : V_TASK_EINVAL;
+}
+#endif
+
+#if VAIOS_UPIPE
+// Kernel half of a v_upipe: the shared block and one wake semaphore per end
+// (0 = the consumer's, data arrived; 1 = the producer's, room freed).
+// ponytail: never freed -- a pipe lives as long as the system, and a restarted
+// task reattaches to it. Add teardown when pipes are created at run time.
+struct v_upipe_k {
+  v_upipe_t *p;
+  SemaphoreHandle_t wake[2];
+};
+
+v_upipe_t *v_upipe_create(uint32_t slot, uint32_t n, uint32_t prod_id,
+                          uint32_t cons_id) {
+  slot = (slot + 3u) & ~3u;
+  if (slot == 0 || slot > 0xFFFFu || n < 2 || n > 0x8000u || (n & (n - 1u)) ||
+      prod_id == cons_id)
+    return NULL;
+  uint32_t bytes = sizeof(v_upipe_t) + slot * n;
+  uint32_t size = 32u; // the MPU's smallest region
+  while (size < bytes)
+    size <<= 1;
+  TCB *tp = get_task_by_id(prod_id), *tc = get_task_by_id(cons_id);
+  if (!tp || !tc || tp->upipe || tc->upipe)
+    return NULL;
+  uint32_t enc[2];
+  struct v_upipe_k *k = v_malloc(sizeof *k);
+  v_upipe_t *p = v_memalign(size, size);
+  if (!k || !p || v_port_upipe_region_encode(p, size, enc) != 0 ||
+      !(k->wake[0] = v_semaphore_create_binary()) ||
+      !(k->wake[1] = v_semaphore_create_binary())) {
+    // ponytail: a semaphore made before a later failure leaks; only on OOM
+    if (p)
+      v_free(p);
+    if (k)
+      v_free(k);
+    return NULL;
+  }
+  memset(p, 0, size);
+  p->slot = (uint16_t)slot;
+  p->n = (uint16_t)n;
+  k->p = p;
+  ENTER_CRITICAL();
+  TCB *ends[2] = {tp, tc};
+  for (int i = 0; i < 2; i++) {
+    TCB *t = ends[i];
+    t->upipe = k;
+    t->upipe_role = (uint8_t)(i + 1);
+    t->mpu_regs[2 * V_MPU_PAIR_UPIPE] = enc[0];
+    t->mpu_regs[2 * V_MPU_PAIR_UPIPE + 1] = enc[1];
+  }
+  if (current_task == tp || current_task == tc)
+    v_port_apply_current_mpu(); // the creator is an end: map it now
+  EXIT_CRITICAL();
+  return p;
+}
+
+v_upipe_t *v_upipe_self(void) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (v_upipe_t *)v_svc0(SYS_upipe_self);
+#endif
+  TCB *t = current_task;
+  return t && t->upipe ? t->upipe->p : NULL;
+}
+
+int v_upipe_sleep(uint32_t ticks) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (int)v_svc1(SYS_upipe_sleep, ticks);
+#endif
+  TCB *t = current_task;
+  if (!t || !t->upipe)
+    return V_TASK_EINVAL;
+  // The header is shared with user space: a peer can garble wr/rd, which only
+  // makes this sleep or not -- the kernel reads nothing else from it.
+  v_upipe_t *p = t->upipe->p;
+  int prod = t->upipe_role == 1;
+  if (prod ? p->wr - p->rd < p->n : p->wr != p->rd)
+    return VA_PASS; // ready already: don't sleep on a token that may be spent
+  return v_semaphore_take(t->upipe->wake[prod], ticks);
+}
+
+int v_upipe_kick(void) {
+#if VAIOS_SYSCALL_SVC
+  if (v_in_thread_mode())
+    return (int)v_svc0(SYS_upipe_kick);
+#endif
+  TCB *t = current_task;
+  if (!t || !t->upipe)
+    return V_TASK_EINVAL;
+  // the producer wakes the consumer's semaphore (0), the consumer the producer's
+  return v_semaphore_give(t->upipe->wake[t->upipe_role == 2]);
+}
+#endif
+
 //-----------------------------------------------------------------------------
 // Idle Task Function
 //-----------------------------------------------------------------------------
@@ -699,6 +975,10 @@ void idle_task_function(void *arg) {
         V_KLOG(LOG_DEBUG, "[TASK] Garbage Collector freeing task %u",
               to_free->task_id);
         v_port_free_task_stack(to_free); // release any separate port context
+#if VAIOS_TASK_CHECKPOINT
+        if (to_free->ckpt) // NULL if a restart took it
+          v_free(to_free->ckpt);
+#endif
         if (to_free->mem_block) {
           v_free(to_free->mem_block);
           to_free->mem_block = NULL;

@@ -216,6 +216,9 @@ config HEAP_SIZE
     # 8.3 KiB) left 0x16000 264 bytes past the end of an F401's RAM once the
     # console gained an output queue. Its three tasks run in far less.
     default 0x14000 if EXAMPLE_FLIGHT_USER
+    # The upipe example's bus pool (6 x 268 B) left 0x16000 ending 24 bytes
+    # under the top of an F401's RAM: the clear wiped main's stack.
+    default 0x14000 if EXAMPLE_UPIPE
     default 0x16000
 config HEAP_WATERMARK_ENABLE
     bool "Panic when heap usage crosses the watermark"
@@ -318,11 +321,152 @@ config VAIOS_MPU_USER_SEPARATION
       pointers at the syscall boundary, and gate the raw-handle (non-fd) IPC
       syscalls to privileged callers. See docs/plan/PHASE3_STAGE5_UNPRIV_PLAN.md.
 
-      WORK IN PROGRESS — being built up sub-stage by sub-stage. Currently
-      implemented behind this symbol: the per-task heap allocator
-      (malloc/free/calloc/realloc) routes through SVC so it keeps working once a
-      task can no longer reach current_task directly. The MPU region set and the
-      nPRIV flip itself land in follow-up commits. Off until complete.
+      Complete and in use: task_create* tasks run unprivileged, and the kernel's
+      own service tasks (task_create_privileged) privileged. On switch-in each
+      task gets one RW, execute-never region over its own block (stack + per-task
+      heap), with the stack guard at its base, and the privilege bit is set from
+      the TCB. malloc/free and every other kernel service go through SVC, with
+      user pointers checked at the syscall boundary. An access outside the
+      task's block is a MemManage fault: a panic, or the task's fault policy
+      under VAIOS_MPU_FAULT_RECOVERY. Each task's block is one power-of-two,
+      size-aligned region, so stack sizes must be powers of two.
+
+      Tested in CI under Renode (isolation, lifecycle, fd IPC, bus, the
+      unprivileged flight app, fault recovery) and on a Nucleo-F401RE and a
+      Nucleo-F767ZI.
+config VAIOS_TASK_MMIO
+    bool "Peripheral (MMIO) windows for unprivileged tasks"
+    depends on VAIOS_MPU_USER_SEPARATION && VAIOS_ARCH_CORTEX_M4
+    default n
+    help
+      Lets privileged code give an unprivileged task direct read/write to
+      one peripheral window (v_task_grant_mmio), mapped as one more MPU
+      region (region 6, Device memory, execute-never) on that task's switch-in.
+      The task drives the device's registers itself, with no syscall; every
+      other peripheral still faults for it. One window per task, a power of
+      two in size and aligned to it; kept across a fault restart.
+
+      A window over a peripheral that can write memory (a DMA controller) or
+      that controls others (RCC, the flash interface) hands the task the whole
+      system. Interrupts stay with privileged code.
+
+      Costs every task one more region on the switch: two more words in the
+      PendSV burst.
+config VAIOS_UPIPE
+    bool "Zero-copy pipe between two unprivileged tasks (v_upipe)"
+    depends on VAIOS_MPU_USER_SEPARATION && VAIOS_ARCH_CORTEX_M4
+    default n
+    help
+      A single-producer, single-consumer ring in its own block, mapped into
+      both tasks as one more MPU region (region 5). The data moves entirely in
+      user space -- reserve, write in place, commit; peek, read in place,
+      release -- with no syscall, copy or kernel lock. A syscall happens only
+      to sleep on an empty/full ring, and on commit/release only when the peer
+      is asleep. The two tasks can corrupt the ring's contents but nothing
+      else; any other task touching it faults. One pipe per task.
+
+      Costs every task one more region on the switch: two more words in the
+      PendSV burst (a task with no pipe writes the region disabled).
+config VAIOS_MPU_STACK_SUBREGIONS
+    bool "Stacks in eighths of a region, not whole powers of two"
+    depends on VAIOS_MPU_USER_SEPARATION
+    default n
+    help
+      With user separation each task's block (stack + per-task heap) is one MPU
+      region, so it has to be a power of two: a task needing 2.1 KiB got 4 KiB.
+      With this on, any stack size is accepted and rounded up to the next
+      eighth of the power-of-two region that holds it -- 2.1 KiB takes 2.5 KiB,
+      the top five eighths of a 4 KiB region -- and the MPU's subregion-disable
+      bits switch off the eighths below the block, which go back to the heap
+      for anything else. Regions under 256 bytes have no subregions, so blocks
+      that small stay powers of two. A power-of-two size gives the same layout
+      as with this off.
+
+      The region and its disable bits are encoded once, at task creation; the
+      context switch writes the same two registers either way.
+config VAIOS_MPU_FAULT_RECOVERY
+    bool "Contain MPU faults in unprivileged tasks (per-task policy)"
+    depends on VAIOS_MPU_USER_SEPARATION
+    default n
+    help
+      A MemManage fault raised by an UNPRIVILEGED task in thread mode follows
+      that task's fault policy instead of panicking: KILL ends the task (the
+      same teardown as v_task_kill: held mutexes, wait queues, pbus and vfs
+      state are released) and the scheduler carries on; RESTART ends it and
+      creates a fresh one with the same entry, argument, stack size, base
+      priority, name and parent, up to the task's restart cap; PANIC stops the
+      system. The policy is set per task with task_set_fault_policy() or
+      v_task_spawn_t; the options below are the defaults for tasks that do
+      not set one. A fault in handler mode or in a privileged task panics
+      (see VAIOS_MPU_FAULT_PRIV and VAIOS_MPU_FAULT_ISR), since kernel state
+      can no longer be trusted. Off
+      by default: with it off every MPU fault panics, as before.
+config VAIOS_MPU_FAULT_PRIV
+    bool "Also contain faults in privileged tasks"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      A MemManage fault in a PRIVILEGED task follows its policy too, when two
+      things hold. Its policy was set explicitly (task_set_fault_policy or
+      v_task_spawn_t): V_FAULT_DEFAULT still panics, so kernel tasks such as
+      the idle task never get ended. And it faulted outside every critical
+      section (nesting 0, BASEPRI and PRIMASK clear) -- exactly where
+      v_task_kill or a preemption could already end it, so no kernel list is
+      half-updated. A fault inside a critical section still panics.
+config VAIOS_MPU_FAULT_ISR
+    bool "Contain MPU faults in opted-in IRQ handlers"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      A MemManage fault in the handler of an IRQ registered with
+      v_irq_set_containable() abandons that handler instead of panicking:
+      the IRQ is disabled in the NVIC and marked failed for
+      v_irq_failed_take(), and the task it interrupted resumes. Only when
+      the handler's state can be undone exactly: it is the only active
+      exception (it interrupted a task, not another handler), it did not
+      use the FPU, and it was not inside a critical section. Anything else
+      in handler mode -- nested handlers, SysTick, PendSV, SVCall, a fault
+      inside the kernel's critical sections, BusFault, UsageFault -- still
+      panics, since there is no way to tell what it left half-done. The
+      driver is stopped, not repaired: its peripheral may need a reset
+      before the IRQ is enabled again.
+config VAIOS_TASK_CHECKPOINT
+    bool "Tasks can keep a checkpoint across a fault restart"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      v_task_checkpoint(buf, len) copies up to VAIOS_TASK_CHECKPOINT_MAX
+      bytes of a task's state into a kernel-held buffer; v_task_restore(buf,
+      len) copies it back. The buffer goes with the task through a fault
+      restart, so the new instance can carry on from the last checkpoint
+      instead of from scratch, and is freed when the task ends for good.
+      A copy, not shared memory: a task that faults halfway through
+      changing its state cannot have corrupted the checkpoint it resumes
+      from. Costs one copy per checkpoint and a buffer per task that
+      takes one.
+config VAIOS_TASK_CHECKPOINT_MAX
+    int "Largest checkpoint, bytes"
+    depends on VAIOS_TASK_CHECKPOINT
+    range 4 4096
+    default 128
+config VAIOS_MPU_FAULT_RESTART
+    bool "Default policy: restart (otherwise kill)"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    default n
+    help
+      What V_FAULT_DEFAULT means: RESTART when on, KILL when off. A restarted
+      task gets a new id and a new, zeroed block; its old block is freed by the
+      idle task's GC, so the heap must have room for both for a moment. A
+      restart the heap cannot fit is skipped, not a panic -- except that
+      HEAP_WATERMARK_ENABLE still panics when the heap is that close to full.
+config VAIOS_MPU_FAULT_RESTART_MAX
+    int "Default restarts per task lineage"
+    depends on VAIOS_MPU_FAULT_RECOVERY
+    range 1 255
+    default 3
+    help
+      The restart cap of a task whose own cap is 0 (the default). After that
+      many restarts the lineage stays ended.
 endmenu
 
 menu "Kernel/user separation (Phase 3)"

@@ -24,6 +24,7 @@
 #include "structure.h"
 #include "vfs.h"
 #include "periph_bus.h"
+#include "ipc.h" // VA_PASS
 #include "syscall.h"
 #include "memory.h"
 #include "task.h"
@@ -462,6 +463,53 @@ static void test_bug2_wait_nfds_multiply_overflow(void) {
   TEST_ASSERT_EQ(call(SYS_wait, base, 0x40000000u, 1), T_EFAULT);
 }
 
+#if VAIOS_TASK_CHECKPOINT
+extern TCB *current_task;
+/* A fresh caller: no checkpoint yet. */
+static uint32_t ckpt_caller(void) {
+  static int heap;
+  if (!heap++)
+    v_heap_memory_init(); /* checkpoints live on the kernel heap */
+  uint32_t base = syscall_set_caller(BLOCK_SZ, /*unpriv=*/1);
+  current_task->ckpt = NULL; /* the stub's TCB outlives each test */
+  current_task->ckpt_len = 0;
+  return base;
+}
+static void test_unpriv_checkpoint_bad_ptr_efault(void) {
+  (void)ckpt_caller();
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, BAD_PTR, 4, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_task_restore, BAD_PTR, 4, 0), T_EFAULT);
+}
+static void test_unpriv_checkpoint_bad_len_einval(void) {
+  uint32_t base = ckpt_caller();
+  TEST_ASSERT(base != 0);
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base, 0, 0), V_TASK_EINVAL);
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base, VAIOS_TASK_CHECKPOINT_MAX + 1u, 0),
+                 V_TASK_EINVAL);
+}
+static void test_unpriv_checkpoint_round_trip(void) {
+  uint32_t base = ckpt_caller();
+  TEST_ASSERT(base != 0);
+  uint8_t *blk = (uint8_t *)(uintptr_t)base;
+  TEST_ASSERT_EQ(call(SYS_task_restore, base, 16, 0), 0); /* none yet */
+  for (int i = 0; i < 8; i++)
+    blk[i] = (uint8_t)(0xA0 + i);
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base, 8, 0), VA_PASS);
+  for (int i = 0; i < 8; i++)
+    blk[64 + i] = 0;
+  /* More room than saved: only the 8 saved bytes come back. */
+  TEST_ASSERT_EQ(call(SYS_task_restore, base + 64, 16, 0), 8);
+  for (int i = 0; i < 8; i++)
+    TEST_ASSERT_EQ(blk[64 + i], 0xA0 + i);
+  /* Less room than saved: truncated to the room. */
+  TEST_ASSERT_EQ(call(SYS_task_restore, base + 128, 3, 0), 3);
+  /* A later checkpoint replaces it. */
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base + 4, 2, 0), VA_PASS);
+  TEST_ASSERT_EQ(call(SYS_task_restore, base + 64, 16, 0), 2);
+  TEST_ASSERT_EQ(blk[64], 0xA4);
+}
+#endif
+
 static const test_case_t syscall_cases[] = {
     TEST_CASE(test_new_task_on_dirty_block_has_no_syscall_result),
     TEST_CASE(test_unpriv_sem_give_denied),
@@ -509,6 +557,11 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_ro_string_accepted),
     TEST_CASE(test_unpriv_ro_delay_until_refused),
     TEST_CASE(test_unpriv_ro_pbus_tx_ok_rx_refused),
+#if VAIOS_TASK_CHECKPOINT
+    TEST_CASE(test_unpriv_checkpoint_bad_ptr_efault),
+    TEST_CASE(test_unpriv_checkpoint_bad_len_einval),
+    TEST_CASE(test_unpriv_checkpoint_round_trip),
+#endif
     TEST_CASE(test_priv_caller_skips_validation),
     TEST_CASE(test_priv_caller_ipc_not_denied),
     /* expected-fail regression test (see STAGE5_REVIEW_FINDINGS.md) */

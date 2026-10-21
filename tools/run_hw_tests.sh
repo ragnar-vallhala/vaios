@@ -31,6 +31,8 @@
 #   PORT=/dev/ttyACM1 tools/run_hw_tests.sh
 #   USB_LOC=3-2 tools/run_hw_tests.sh          # which probe, by USB port
 #   CAPTURE_SECS=20  tools/run_hw_tests.sh
+#   NAVHAL_CONFIG_FILE=f767.config EXPECT_CHIPID=0x451 USB_LOC=1-1.3 \
+#     tools/run_hw_tests.sh                  # another board than navhal.config's
 # =============================================================================
 set -uo pipefail
 
@@ -156,7 +158,7 @@ run_example() {
   local name="$1"; shift
   local patterns=("$@")
 
-  emit_suite_header "$name"
+  emit_suite_header "$name${EXTRA_CMAKE:+ $EXTRA_CMAKE}${LABEL:+ ($LABEL)}"
 
   rm -rf "$BUILD_DIR"
   mkdir "$BUILD_DIR"
@@ -165,8 +167,13 @@ run_example() {
   local build_log="/tmp/hw_${name}_build.log"
   local uart_log="/tmp/hw_${name}_uart.log"
 
+  # NAVHAL_CONFIG_FILE picks the board when it is not navhal.config's;
+  # EXTRA_CMAKE adds per-run options (an example's variant); LABEL only names
+  # the run in the report.
+  # shellcheck disable=SC2086
   if ! ( cd "$BUILD_DIR" && cmake -DNAVHAL=ON -DEXAMPLES=ON \
-             -DVAIOS_EXAMPLE="$name" .. > "$cmake_log" 2>&1 ); then
+             ${NAVHAL_CONFIG_FILE:+-DNAVHAL_CONFIG_FILE="$NAVHAL_CONFIG_FILE"} \
+             ${EXTRA_CMAKE:-} -DVAIOS_EXAMPLE="$name" .. > "$cmake_log" 2>&1 ); then
     emit_test_line "build (cmake configure)" FAIL 0 1
     echo "    cmake log: $cmake_log"
     emit_suite_footer "$name" 0 1
@@ -269,6 +276,95 @@ run_example UNIT_TESTS \
   "=== Suite: Structure" \
   "=== Suite: utils" \
   "ON-TARGET RESULT: ALL PASS"
+
+# MPU fault recovery: one task per fault policy (see examples/36_mpu_fault_recovery.c).
+run_example MPU_FAULT_RECOVERY \
+  "\[fr\] panic child refused" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] DONE" \
+  "\[fr\] survivor tick"
+
+# ...the same with VAIOS_MPU_STACK_SUBREGIONS (stacks that are not powers of
+# two, above disabled subregions), overflow included: only hardware enforces
+# subregion-disable, so this is where that case is checked.
+sub_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$sub_cfg"
+echo "CONFIG_VAIOS_MPU_STACK_SUBREGIONS=y" >> "$sub_cfg"
+NAVHAL_CONFIG_FILE="$sub_cfg" LABEL="subregions" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] panic child refused" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] DONE" \
+  "\[fr\] survivor tick"
+rm -f "$sub_cfg"
+
+# ...with VAIOS_MPU_FAULT_PRIV: a privileged task's fault is contained too.
+priv_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$priv_cfg"
+echo "CONFIG_VAIOS_MPU_FAULT_PRIV=y" >> "$priv_cfg"
+NAVHAL_CONFIG_FILE="$priv_cfg" LABEL="privileged" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] faults=9 restarts=5" \
+  "\[fr\] DONE" \
+  "\[fr\] survivor tick"
+# ...but not inside a critical section: that still stops the system (the
+# privileged task's fault is the one with IACCVIOL, MMFSR 0x1).
+NAVHAL_CONFIG_FILE="$priv_cfg" LABEL="privileged, critical section" \
+  EXTRA_CMAKE="-DFR_PRIV_CRIT=1" run_example MPU_FAULT_RECOVERY \
+  "KERNEL PANIC" \
+  "fault addr 0x0 MMFSR 0x1"
+rm -f "$priv_cfg"
+
+# ...with VAIOS_MPU_FAULT_ISR: faults in two opted-in IRQ handlers (one with
+# the interrupted task's FP state live) are contained and the IRQs disabled;
+# one not opted in still stops the system.
+isr_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$isr_cfg"
+echo "CONFIG_VAIOS_MPU_FAULT_ISR=y" >> "$isr_cfg"
+NAVHAL_CONFIG_FILE="$isr_cfg" LABEL="ISR" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] isr_faults=2 last_irq=71" \
+  "\[fr\] irq failed=37,71,-1" \
+  "\[fr\] irqtest resumed, s0 kept" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] survivor tick"
+NAVHAL_CONFIG_FILE="$isr_cfg" LABEL="ISR not opted in" \
+  EXTRA_CMAKE="-DFR_ISR_PANIC=1" run_example MPU_FAULT_RECOVERY \
+  "KERNEL PANIC" \
+  "fault addr 0x0 MMFSR 0x1"
+rm -f "$isr_cfg"
+
+# ...with VAIOS_TASK_CHECKPOINT: escaper's run count survives its restarts.
+ck_cfg="$(mktemp)"
+cat "${NAVHAL_CONFIG_FILE:-$REPO_ROOT/navhal.config}" > "$ck_cfg"
+echo "CONFIG_VAIOS_TASK_CHECKPOINT=y" >> "$ck_cfg"
+NAVHAL_CONFIG_FILE="$ck_cfg" LABEL="checkpoint" run_example MPU_FAULT_RECOVERY \
+  "\[fr\] escaper run 4" \
+  "\[fr\] faults=7 restarts=4" \
+  "\[fr\] survivor tick"
+rm -f "$ck_cfg"
+
+# ...and a task whose policy is PANIC: its first fault stops the system.
+EXTRA_CMAKE="-DFR_PANIC=1" run_example MPU_FAULT_RECOVERY \
+  "KERNEL PANIC" \
+  "MPU fault in task 2"
+
+# MMIO windows: an unprivileged task drives GPIOA (the LED) through its
+# window, faults on RCC and is restarted with the window kept; an ungranted
+# task faults on GPIOA (see examples/38_mmio_user.c).
+run_example MMIO_USER \
+  "\[mm\] gpio ok" \
+  "contained \| addr 0x40023830" \
+  "contained \| addr 0x40020014" \
+  "\[mm\] faults=3 restarts=1"
+
+# v_upipe: two unprivileged tasks through the zero-copy pipe and, for
+# comparison, a bus pipe topic; a third task touching the pipe is killed. Last,
+# because -DVAIOS_MODULE_BUS=ON stays in the build dir's cache. The ns/msg lines
+# are the measurement (see examples/37_upipe.c).
+EXTRA_CMAKE="-DVAIOS_MODULE_BUS=ON" run_example UPIPE \
+  "fault in task 4 contained" \
+  "\[up\] 8 B: upipe [0-9]+ ns/msg, bus [0-9]+ ns/msg" \
+  "\[up\] 256 B: upipe [0-9]+ ns/msg, bus [0-9]+ ns/msg" \
+  "\[up\] data ok" \
+  "\[up\] faults=1 last addr"
 
 # ----- summary ---------------------------------------------------------------
 # Cross-suite table. Renderer is shared with tools/run_tests.sh —

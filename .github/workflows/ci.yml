@@ -108,3 +108,12 @@ jobs:
 
       - name: Unprivileged flight app (release gate) in Renode
         run: bash tools/renode_flight_user.sh
+
+      - name: MPU fault containment + restart in Renode
+        run: bash tools/renode_fault_recovery.sh
+
+      - name: Zero-copy v_upipe between unprivileged tasks in Renode
+        run: bash tools/renode_upipe.sh
+
+      - name: MMIO windows for unprivileged tasks in Renode
+        run: bash tools/renode_mmio_user.sh
