@@ -450,6 +450,7 @@ add_executable(vaios_ipcfd_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/framework.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_ipcfd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_pbus_fd.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_stream.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_bus_fd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_queue_fd.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_vfs_fd.c"
@@ -464,6 +465,7 @@ add_executable(vaios_ipcfd_tests
     "${VAIOS_ROOT}/kernel/ipc.c"
     "${VAIOS_ROOT}/kernel/devfs.c"
     "${VAIOS_ROOT}/kernel/periph_bus.c"               # pbus fd syscalls (DEVFS)
+    "${VAIOS_ROOT}/kernel/stream.c"                   # /dev byte streams
     "${VAIOS_ROOT}/kernel/bus.c"                      # bus fd syscalls (DEVFS)
     "${VAIOS_ROOT}/kernel/memory/memory.c"
     "${VAIOS_ROOT}/kernel/memory/seglist.c"

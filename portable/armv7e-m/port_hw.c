@@ -16,6 +16,7 @@
 #include "port.h"
 #include "vaios_config.h"
 #include "utils.h" // v_log (report a console that refused to start)
+#include "periph_bus.h" // v_dma_claim (SDIO's streams)
 #include <stdint.h>
 
 #ifdef NAVHAL
@@ -557,6 +558,15 @@ int v_port_hw_sdio_init(void) {
                                  .bus_width = VAIOS_SDIO_4BIT
                                                   ? HAL_SDIO_BUS_WIDTH_4BIT
                                                   : HAL_SDIO_BUS_WIDTH_1BIT};
+#if NAVHAL_CONFIG_DRV_SDIO_DMA
+  /* NavHAL's SDIO driver programs DMA2 streams 3 (RX) and 6 (TX) itself. Claim
+   * them, so a bus manager bound to either is refused rather than sharing a
+   * stream with the card. A board that gave one away has no card. */
+  static const char sdio_owner = 0;
+  if (v_dma_claim(2, 3, &sdio_owner) != VA_PASS ||
+      v_dma_claim(2, 6, &sdio_owner) != VA_PASS)
+    return -1;
+#endif
   return (hal_sdio_init(&sd_config) == HAL_SDIO_OK) ? 0 : -1;
 #else
   return -1; /* No SDIO driver on this target. */

@@ -188,6 +188,83 @@ static void test_pbus_bad_args(void) {
   teardown();
 }
 
+/* A device (v_pdev_register): the transfer goes to the registered address
+ * whatever the task asked for, and the hook gets the registration's ctx. */
+static int dev_ctx_tag;
+static void *seen_ctx;
+static int dev_start(void *ctx, const v_pbus_xfer_t *x) {
+  seen_ctx = ctx;
+  return fake_start(x);
+}
+static void register_baro(void) {
+  static int done;
+  if (!done)
+    done = v_pdev_register("baro0", &bus, dev_start, &dev_ctx_tag, 0x77) == 0;
+}
+
+static void test_pdev_addr_pinned(void) {
+  setup();
+  register_baro();
+  sync_complete = 1;
+  v_test_in_handler = 0;
+  int fd = v_pbus_open("baro0");
+  TEST_ASSERT(fd >= 0);
+  uint8_t rx[2];
+  v_pbus_xfer_t x = {.addr = 0x68, .rx = rx, .rx_len = 2}; // asks for the IMU
+  TEST_ASSERT_EQ(v_pbus_xfer(fd, &x, 1, 10), 2);
+  TEST_ASSERT_EQ(seen->addr, 0x77);
+  TEST_ASSERT(seen_ctx == &dev_ctx_tag);
+  // Bounce buffers start on a cache line (the F7 RX invalidate).
+  TEST_ASSERT_EQ((uintptr_t)seen->rx & 31u, 0);
+  TEST_ASSERT_EQ((uintptr_t)seen->tx & 31u, 0);
+  teardown();
+}
+
+static void test_pdev_register_rejects_duplicate_name(void) {
+  setup();
+  register_baro();
+  v_test_in_handler = 1;
+  TEST_ASSERT_EQ(v_pdev_register("baro0", &bus, dev_start, NULL, 0x76),
+                 V_PBUS_EINVAL);
+  TEST_ASSERT_EQ(v_pbus_register("i2c1", &bus, fake_start), V_PBUS_EINVAL);
+  v_test_in_handler = 0;
+  teardown();
+}
+
+static void test_pdev_reg_helpers(void) {
+  setup();
+  register_baro();
+  sync_complete = 1;
+  int fd = v_pbus_open("baro0");
+  uint8_t v[2] = {0x11, 0x22};
+  TEST_ASSERT_EQ(v_pdev_write_reg(fd, 0x06, v, 2, 1, 10), 0); // fake rc: rx_len
+  TEST_ASSERT_EQ(seen->tx_len, 3);
+  TEST_ASSERT_EQ(((const uint8_t *)seen->tx)[0], 0x06);
+  TEST_ASSERT_EQ(((const uint8_t *)seen->tx)[2], 0x22);
+  TEST_ASSERT_EQ(seen->rx_len, 0);
+  uint8_t big[VAIOS_PBUS_XFER_MAX];
+  TEST_ASSERT_EQ(v_pdev_write_reg(fd, 0, big, sizeof big, 1, 10),
+                 V_PBUS_EINVAL); // reg byte + payload must fit
+  uint8_t rx[3] = {0};
+  TEST_ASSERT_EQ(v_pdev_read_reg(fd, 0x0D, rx, 3, 1, 10), 3);
+  TEST_ASSERT_EQ(seen->tx_len, 1);
+  TEST_ASSERT_EQ(((const uint8_t *)seen->tx)[0], 0x0D);
+  TEST_ASSERT_EQ(rx[2], 0xAB);
+  teardown();
+}
+
+static void test_dma_claim(void) {
+  static int a, b;
+  TEST_ASSERT_EQ(v_dma_claim(2, 7, &a), VA_PASS);
+  TEST_ASSERT_EQ(v_dma_claim(2, 7, &a), VA_PASS); // the owner again: fine
+  TEST_ASSERT_EQ(v_dma_claim(2, 7, &b), VA_FAIL); // someone else's
+  TEST_ASSERT_EQ(v_dma_claim(1, 7, &b), VA_PASS); // other controller
+  TEST_ASSERT_EQ(v_dma_claim(0, 0, &a), VA_FAIL);
+  TEST_ASSERT_EQ(v_dma_claim(3, 0, &a), VA_FAIL);
+  TEST_ASSERT_EQ(v_dma_claim(1, 8, &a), VA_FAIL);
+  TEST_ASSERT_EQ(v_dma_claim(1, 0, NULL), VA_FAIL);
+}
+
 static const test_case_t pbus_fd_cases[] = {
     TEST_CASE(test_pbus_open_unknown_fails),
     TEST_CASE(test_pbus_xfer_roundtrip),
@@ -196,6 +273,10 @@ static const test_case_t pbus_fd_cases[] = {
     TEST_CASE(test_pbus_xfer_timeout_active_then_fresh),
     TEST_CASE(test_pbus_close_mid_transfer_frees_later),
     TEST_CASE(test_pbus_bad_args),
+    TEST_CASE(test_pdev_addr_pinned),
+    TEST_CASE(test_pdev_register_rejects_duplicate_name),
+    TEST_CASE(test_pdev_reg_helpers),
+    TEST_CASE(test_dma_claim),
 };
 
 const test_suite_t pbus_fd_suite = {
