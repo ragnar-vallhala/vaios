@@ -5,7 +5,7 @@
 // node. Any number of tasks write; one task at a time reads.
 //
 //   board:  static v_stream_t link;
-//           v_stream_cdc_attach(&link, "/dev/cdc0");          // at boot
+//           v_stream_cdc_attach(&link, "/dev/cdc0");  // at boot; stream_hw.h
 //           task_create_privileged(link_writer, &link, 1024, 6, "cdcw");
 //           static void link_writer(void *s) { for (;;) v_stream_writer_step(s, 100); }
 //   task:   int fd = v_file_open("/dev/cdc0", VFS_O_RDWR);
@@ -76,20 +76,6 @@ void v_stream_rx_push_isr(v_stream_t *s, const uint8_t *p, uint32_t n);
 void v_stream_rx_signal_isr(v_stream_t *s);
 // Backend, ISR context: the tx() in flight has completed.
 void v_stream_tx_done_isr(v_stream_t *s);
-
-#if defined(NAVHAL)
-#include "navhal.h"
-#if NAVHAL_CONFIG_DRV_USB_CDC && !NAVHAL_CONFIG_CONSOLE_ROUTE_CDC
-// The board's USB device port, as a CDC ACM serial port. Not available when
-// the console is routed to CDC: that is the same port.
-int v_stream_cdc_attach(v_stream_t *s, const char *name);
-#endif
-#if NAVHAL_CONFIG_DRV_UART_DMA
-// A UART other than the console's: TX and circular RX both over DMA. The UART
-// must already be initialised (hal_uart_init) by the board.
-int v_stream_uart_attach(v_stream_t *s, const char *name, hal_uart_t uart);
-#endif
-#endif
 
 #endif // VAIOS_DEVFS
 #endif

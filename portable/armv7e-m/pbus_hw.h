@@ -1,7 +1,7 @@
 #ifndef VAIOS_PBUS_HW_H
 #define VAIOS_PBUS_HW_H
 
-// I2C and SPI bus managers over NavHAL: a v_pbus_t (periph_bus.h) bound to one
+// I2C and SPI bus managers over NavHAL (the port side of include/periph_bus.h): a v_pbus_t (periph_bus.h) bound to one
 // peripheral, plus the devices on it. Tasks reach a device by name through
 // v_pbus_open / v_pbus_xfer / v_pdev_read_reg; they never see the bus.
 //

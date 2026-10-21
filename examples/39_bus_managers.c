@@ -27,7 +27,7 @@
 #endif
 #include "navhal.h"
 #include "pbus_hw.h"
-#include "stream.h"
+#include "stream_hw.h"
 #include "task.h"
 #include "utils.h"
 #include "vaios.h"
