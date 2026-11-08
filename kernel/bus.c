@@ -138,14 +138,24 @@ static uint32_t blocks_for(const v_bus_t *bus, uint32_t len) {
                                       bus->block_size;
 }
 
+#ifdef VAIOS_HOST_TEST
+// Host-test seam: runs between two blocks of a read's copy, so a test can evict
+// the message under the chain walk.
+void (*v_bus_test_mid_walk)(void);
+#endif
+
 // Copy between a flat buffer and a message's payload, which starts after the
 // header in the first block and continues through the chain. to_msg selects
-// the direction.
+// the direction. A pop copies outside the critical section, so the message can
+// be evicted and its chain relinked (to V_BUS_NIL or into the free list) under
+// the walk: stop at any index outside the pool. The caller's epoch / seq check
+// then throws the torn copy away.
 static void copy_payload(v_bus_t *bus, uint16_t msg, void *flat, uint16_t len,
                          int to_msg) {
   uint8_t *p = (uint8_t *)flat;
   uint16_t off = V_BUS_HDR_SIZE;
-  for (uint16_t b = msg; len; b = bus->desc[b].next, off = 0) {
+  for (uint16_t b = msg; len && b < bus->block_count;
+       b = bus->desc[b].next, off = 0) {
     uint16_t n = (uint16_t)(bus->block_size - off);
     if (n > len)
       n = len;
@@ -156,6 +166,10 @@ static void copy_payload(v_bus_t *bus, uint16_t msg, void *flat, uint16_t len,
       v_memcpy(p, d, n);
     p += n;
     len = (uint16_t)(len - n);
+#ifdef VAIOS_HOST_TEST
+    if (!to_msg && len && v_bus_test_mid_walk)
+      v_bus_test_mid_walk();
+#endif
   }
 }
 
