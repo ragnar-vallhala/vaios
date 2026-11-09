@@ -266,6 +266,24 @@ static uint32_t mutex_top_waiter_prio(rmutex_t *rm) {
 // path. Returns VA_PASS / VA_FAIL, or V_SYSCALL_BLOCKED when it deferred.
 static int mutex_lock_common(rmutex_t *rm, uint32_t ticks_to_wait) {
   TCB *current = get_current_task();
+  if (current == NULL) {
+  // No scheduler yet. Every field this function would write lives on a task that
+  // does not exist -- wait_mutex, held_mutexes, the priority-inheritance walk --
+  // and before scheduler_start there is exactly ONE execution context, so mutual
+  // exclusion is already guaranteed by construction and there is nothing to
+  // inherit from, block on, or own. Report success and record nothing: the mutex
+  // is left in the state it was in, so the first real acquire after the scheduler
+  // starts behaves normally.
+  //
+  // vfs_init already states the rule ("Do not lock here!") and the kernel's own SD
+  // bring-up honours it, but a store through a NULL TCB is not a diagnosis a caller
+  // can act on -- it is a silent write to whatever address 0 + offset happens to
+  // be, which on an STM32F4 booting from flash is aliased flash and does nothing at
+  // all until an MPU NULL guard is armed. Refuse to make that write.
+    (void)rm;
+    (void)ticks_to_wait;
+    return VA_PASS;
+  }
 
   ENTER_CRITICAL();
   // Transitive priority inheritance: walk the ownership chain and boost
@@ -777,6 +795,13 @@ int v_semaphore_give_from_isr(SemaphoreHandle_t sem,
 // Core mutex release (no trap guard): shared by v_mutex_unlock and v_mtx_unlock.
 static int mutex_unlock_common(rmutex_t *rm) {
   TCB *current = get_current_task();
+  if (current == NULL) {
+    // Mirror of the lock guard: pre-scheduler there is nothing to unlock and no
+    // owner to verify. Without this the check below PASSES -- owner and current
+    // are both NULL -- and the unlink that follows dereferences current.
+    (void)rm;
+    return VA_PASS;
+  }
 
   ENTER_CRITICAL();
   if (rm->owner != current) {
@@ -905,6 +930,14 @@ int v_mutex_unlock(MutexHandle_t mtx) {
 int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait) {
   rmutex_t *rm = (rmutex_t *)mtx;
   TCB *current = get_current_task();
+  if (current == NULL) {
+    // Pre-scheduler, as in mutex_lock_common. Note this one would not merely
+    // fault: a FREE mutex has owner == NULL, and so does the caller, so the
+    // recursion test below would match and hand out a lock nobody holds while
+    // bumping recursion_count on an unowned mutex.
+    (void)ticks_to_wait;
+    return VA_PASS;
+  }
 
   ENTER_CRITICAL();
   if (rm->owner == current) {
@@ -923,6 +956,14 @@ int v_mutex_lock_recursive(MutexHandle_t mtx, uint32_t ticks_to_wait) {
 
 int v_mutex_unlock_recursive(MutexHandle_t mtx) {
   rmutex_t *rm = (rmutex_t *)mtx;
+  if (get_current_task() == NULL) {
+    // Pre-scheduler, as in the lock pair. This one does not fault, it corrupts:
+    // the ownership test below passes (owner and current are both NULL) and the
+    // decrement then takes recursion_count from 0 to 0xFFFFFFFF on a mutex nobody
+    // holds, which no later acquire can unwind.
+    (void)rm;
+    return VA_PASS;
+  }
 
   ENTER_CRITICAL();
   if (rm->owner != get_current_task()) {

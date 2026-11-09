@@ -52,3 +52,26 @@ int wake_up_delayed_tasks_isr(void) { return 0; }
 /* v_log's full-buffer wait sleeps via task_delay once the scheduler runs;
  * scheduler_running is 0 here, so it is never reached. */
 void task_delay(uint32_t ticks) { (void)ticks; }
+
+/* v_printf's fd 1. What it wrote is kept in g_out; g_take caps how much one
+   call accepts (0 = all) and g_refuse_once makes the next call take nothing,
+   as a full console queue does -- so the retry loop is exercised. */
+char g_out[2048];
+int g_out_len;
+int g_take;
+int g_refuse_once;
+int g_last_fd; /* which fd the last write went to: 1, or v_eprintf's 2 */
+int v_file_write(int fd, const void *buf, uint32_t len) {
+  if (fd != 1 && fd != 2)
+    return -1;
+  g_last_fd = fd;
+  if (g_refuse_once) {
+    g_refuse_once = 0;
+    return 0;
+  }
+  uint32_t n = (g_take && len > (uint32_t)g_take) ? (uint32_t)g_take : len;
+  for (uint32_t i = 0; i < n && g_out_len < (int)sizeof g_out - 1; i++)
+    g_out[g_out_len++] = ((const char *)buf)[i];
+  g_out[g_out_len] = '\0';
+  return (int)n;
+}

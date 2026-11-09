@@ -37,6 +37,13 @@ endif()
 
 add_library(portable STATIC ${PORTABLE_SOURCES})
 
+# port.h lives here, and the public headers' port surface is what consumers need
+# (docs/consumer-interface.md): export it so linking vaios (which links portable
+# PUBLIC) reaches it, instead of a path into the vaios tree.
+# SYSTEM for consumers, plain -I for portable's own sources.
+target_include_directories(portable PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT})
+target_include_directories(portable SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/${VAIOS_PORT})
+
 if(NAVHAL)
   # port.c pulls in NavHAL via navhal.h. NavHAL's M3 restructure moved the
   # vendor register headers (family/*_reg.h) out of the top-level include/

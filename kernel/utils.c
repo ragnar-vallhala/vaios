@@ -26,7 +26,6 @@ void v_log_flush(void);
 
 // Double buffering for log messages
 #if LOGGING_ENABLED == 1
-// #error "Logging is enabled"
 static uint8_t log_buffer_storage1[LOG_BUFFER_STORAGE_SIZE];
 static uint8_t log_buffer_storage2[LOG_BUFFER_STORAGE_SIZE];
 static uint8_t *log_buffer_storage_current_writing = log_buffer_storage1;
@@ -119,14 +118,124 @@ int v_kmsg_read(char *out, uint32_t len) {
 
 // Task-facing printf: format, then write to stdout (fd 1) via the file syscall.
 // Distinct from the kernel printk path (print/print_fmt), which writes directly.
+// All of b to fd 1. The console takes what fits in its queue and says how
+// much; the rest is retried here, in the caller's task, rather than waited for
+// in the syscall.
+// ponytail: a full queue is slept on a tick at a time; a "writable" wait on
+// the fd is the upgrade if a printer ever has to share the CPU that finely.
+static void printf_out(int fd, const char *b, int n) {
+  for (int done = 0; done < n;) {
+    int w = v_file_write(fd, b + done, (uint32_t)(n - done));
+    if (w < 0)
+      return;
+    if (w == 0)
+      task_delay(1);
+    done += w;
+  }
+}
+
+// Task-facing printf, streamed: no limit on what one call prints. It used to
+// format into a 128-byte buffer and silently drop the rest, which cut lines in
+// half in three places in the shell before anyone noticed. Literal text and a
+// plain %s go out as they are, in chunks; any other conversion is formatted on
+// its own by the kernel formatter (same specifiers, flags and widths), its
+// argument taken here by type -- the va_list by pointer, the one way to hand
+// it down portably (ARM passes it by value). Stack: about what the old buffer
+// took.
+static int printf_fd(int fd, const char *fmt, va_list *ap) {
+  char chunk[64];
+  int c = 0, total = 0;
+#define PF_PUT(ch)                                                             \
+  do {                                                                         \
+    chunk[c++] = (ch);                                                         \
+    total++;                                                                   \
+    if (c == (int)sizeof chunk) {                                              \
+      printf_out(fd, chunk, c);                                                \
+      c = 0;                                                                   \
+    }                                                                          \
+  } while (0)
+  for (const char *p = fmt; *p; p++) {
+    if (*p != '%') {
+      PF_PUT(*p);
+      continue;
+    }
+    char spec[16];
+    int k = 0, longs = 0;
+    const char *q = p + 1;
+    spec[k++] = '%';
+    while (k < 12 && ((*q >= '0' && *q <= '9') || *q == '.'))
+      spec[k++] = *q++;
+    while (*q == 'l' && longs < 2) {
+      spec[k++] = *q++;
+      longs++;
+    }
+    if (!*q)
+      break; // a lone '%' at the end: nothing to convert
+    char conv = *q;
+    spec[k++] = conv;
+    spec[k] = '\0';
+    p = q;
+    if (conv == 's' && k == 2) { // plain %s: stream it, whatever its length
+      const char *str = va_arg(*ap, const char *);
+      for (; str && *str; str++)
+        PF_PUT(*str);
+      continue;
+    }
+    char one[48];
+    int m;
+    switch (conv) {
+    case 'd':
+      m = longs == 2   ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, long long))
+          : longs == 1 ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, long))
+                       : print_fmt_buf(one, sizeof one, spec, va_arg(*ap, int));
+      break;
+    case 'u':
+    case 'x':
+    case 'X':
+      m = longs == 2
+              ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, unsigned long long))
+          : longs == 1
+              ? print_fmt_buf(one, sizeof one, spec, va_arg(*ap, unsigned long))
+              : print_fmt_buf(one, sizeof one, spec, va_arg(*ap, unsigned int));
+      break;
+    case 'c':
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, int));
+      break;
+    case 'f':
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, double));
+      break;
+    case 'p':
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, void *));
+      break;
+    case 's': // with a width or precision: one at a time, bounded by `one`
+      m = print_fmt_buf(one, sizeof one, spec, va_arg(*ap, const char *));
+      break;
+    default: // %% and anything the formatter prints as-is take no argument
+      m = print_fmt_buf(one, sizeof one, spec);
+      break;
+    }
+    for (int i = 0; i < m && one[i]; i++)
+      PF_PUT(one[i]);
+  }
+#undef PF_PUT
+  if (c)
+    printf_out(fd, chunk, c);
+  return total;
+}
+
 int v_printf(const char *fmt, ...) {
-  char buf[128];
-  va_list args;
-  va_start(args, fmt);
-  int n = vaprint_fmt_buf(buf, sizeof(buf), fmt, args);
-  va_end(args);
-  if (n > 0)
-    v_file_write(1, buf, (uint32_t)n);
+  va_list ap;
+  va_start(ap, fmt);
+  int n = printf_fd(1, fmt, &ap);
+  va_end(ap);
+  return n;
+}
+
+int v_eprintf(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int n = printf_fd(2, fmt, &ap);
+  va_end(ap);
   return n;
 }
 #endif // VAIOS_DEVFS
@@ -231,6 +340,15 @@ static void v_panic_vprintf(const char *fmt, va_list args) {
     }
 
     p++;
+    // A format string ending in a bare '%' has nothing after it. Without this,
+    // the specifier switch falls to its default arm, emits '%' and then *p --
+    // which is the NUL -- and the loop's own p++ steps PAST the terminator, so
+    // the next iteration reads whatever follows the string. Emit the '%' and
+    // stop, which is also what a hosted printf does with a trailing one.
+    if (*p == '\0') {
+      PANIC_PUT('%');
+      break;
+    }
     // Simple hex and unsigned handling for panic
     if (*p == 'u' || *p == 'x' || *p == 'd') {
       if (*p == 'u') {
@@ -320,6 +438,15 @@ void vaprint_fmt(const char *fmt, va_list args) {
     }
 
     p++; // skip '%'
+    // A format string ending in a bare '%' has nothing after it. Without this,
+    // the specifier switch falls to its default arm, emits '%' and then *p --
+    // which is the NUL -- and the loop's own p++ steps PAST the terminator, so
+    // the next iteration reads whatever follows the string. Emit the '%' and
+    // stop, which is also what a hosted printf does with a trailing one.
+    if (*p == '\0') {
+      PUT_CHAR_BUF('%');
+      break;
+    }
     int width = 0;
     int zero_pad = 0;
 
@@ -500,6 +627,16 @@ int vaprint_fmt_buf(char *out, size_t out_size, const char *fmt, va_list args) {
     }
 
     p++; // skip '%'
+    // A format string ending in a bare '%' has nothing after it. Without this,
+    // the specifier switch falls to its default arm, emits '%' and then *p --
+    // which is the NUL -- and the loop's own p++ steps PAST the terminator, so
+    // the next iteration reads whatever follows the string. Emit the '%' and
+    // stop, which is also what a hosted printf does with a trailing one.
+    if (*p == '\0') {
+      if (pos < out_size - 1)
+        out[pos++] = '%';
+      break;
+    }
     int width = 0;
     int zero_pad = 0;
 
@@ -746,6 +883,17 @@ static int module_allowed(const char *msg) {
 }
 
 extern uint8_t scheduler_running;
+// The level below which v_log drops a message. Starts at the compile-time
+// MIN_LOG_LEVEL and can be moved at runtime (the shell's `loglevel`); the
+// kernel-internal macros still compile out below VAIOS_KERNEL_LOG_LEVEL, so a
+// call site that was never built cannot be turned back on here.
+static volatile int _log_level = MIN_LOG_LEVEL;
+void v_log_set_level(int level) {
+  if (level >= (int)LOG_TRACE && level <= (int)LOG_FATAL)
+    _log_level = level;
+}
+int v_log_get_level(void) { return _log_level; }
+
 void v_log(Log_Type type, const char *msg, ...) {
   // Proactive stack overflow check using live PSP
   // Minimize overhead to avoid using stack before the check
@@ -761,7 +909,7 @@ void v_log(Log_Type type, const char *msg, ...) {
     }
   }
 
-  if (type < MIN_LOG_LEVEL || !module_allowed(msg))
+  if ((int)type < _log_level || !module_allowed(msg))
     return;
 
 #if LOGGING_ENABLED == 1
@@ -1029,6 +1177,22 @@ void v_log_flush(void) {
 #endif
 }
 
+// Flush until nothing is buffered or in flight. Boot calls it before the
+// scheduler starts, so the boot log is out before the first prompt: the logger
+// is asynchronous, and with the banner keeping the UART busy its last lines
+// otherwise arrived after the shell had already printed "vaios> ". Bounded, in
+// case a DMA completion never comes.
+void v_log_drain(void) {
+#if LOGGING_ENABLED == 1 && BUFFERED_LOGGING == 1
+  for (uint32_t guard = 4000000u; guard; guard--) {
+    if (!atomic_get(&log_buffer_storage_read_lock) &&
+        log_buffer_size_to_read == 0 && log_buffer_storage_writing_head == 0)
+      return;
+    v_log_flush();
+  }
+#endif
+}
+
 volatile uint32_t systick_count = 0;
 extern uint8_t scheduler_running;
 
@@ -1063,8 +1227,35 @@ uint32_t v_get_ticks(void) {
 void *v_memset(void *s, int c, unsigned int n) {
   return memset(s, c, n);
 }
+// Word copy when dest and src share their alignment mod 4 (every bus payload
+// and most kernel buffers), bytes otherwise. The libc-free memcpy the image
+// links is a byte loop, about 6 cycles a byte; this is about 1.5. The pragma
+// stops GCC turning the loops back into a call to that memcpy.
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
 void *v_memcpy(void *dest, const void *src, unsigned int n) {
-  return memcpy(dest, src, n);
+  uint8_t *d = (uint8_t *)dest;
+  const uint8_t *s = (const uint8_t *)src;
+  if ((((uintptr_t)d ^ (uintptr_t)s) & 3u) == 0) {
+    for (; n && ((uintptr_t)d & 3u); n--)
+      *d++ = *s++;
+    typedef uint32_t __attribute__((may_alias)) w32;
+    w32 *dw = (w32 *)(void *)d;
+    const w32 *sw = (const w32 *)(const void *)s;
+    for (; n >= 16u; n -= 16u, dw += 4, sw += 4) {
+      uint32_t a = sw[0], b = sw[1], c = sw[2], e = sw[3];
+      dw[0] = a;
+      dw[1] = b;
+      dw[2] = c;
+      dw[3] = e;
+    }
+    for (; n >= 4u; n -= 4u)
+      *dw++ = *sw++;
+    d = (uint8_t *)dw;
+    s = (const uint8_t *)sw;
+  }
+  while (n--)
+    *d++ = *s++;
+  return dest;
 }
 
 uint32_t v_strlen(const char *s) { return strlen(s); }

@@ -6,8 +6,8 @@ FILE(GLOB_RECURSE VAIOS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.
 
 # Drop optional module sources when their CMake option is OFF (see top-level
 # CMakeLists.txt). Excluding the .c keeps it out of flash entirely.
-if(NOT VAIOS_MODULE_TERMINAL)
-  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "terminal\\.c$")
+if(NOT VAIOS_MODULE_SHELL)
+  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "shell\\.c$")
 endif()
 if(NOT VAIOS_MODULE_VFS)
   # Anchor to the filename (leading /) so this does not also drop devfs.c.
@@ -31,16 +31,49 @@ endif()
 
 add_library(vaios STATIC ${VAIOS_SOURCES})
 
-# Export the public headers as a usage requirement so projects that link vaios
-# (e.g. a nav firmware consumer that pulls vaios in as a [dependencies] library)
-# get include/ on their include path. The top-level include_directories() only
-# covers vaios's own compilation, not consumers in another source tree.
-target_include_directories(vaios PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+# The boot banner's build identity (git revision, time, builder): regenerated on
+# every build by a target, so it describes the image actually being linked.
+# kernel/vaios.c falls back to "unknown" when built without it (host tests).
+set(VAIOS_BUILD_H "${CMAKE_BINARY_DIR}/vaios_build.h")
+add_custom_target(vaios_build_info
+  COMMAND ${CMAKE_COMMAND} -DOUT=${VAIOS_BUILD_H}
+          -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/..
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/../tools/build_info.cmake
+  BYPRODUCTS ${VAIOS_BUILD_H}
+  VERBATIM)
+add_dependencies(vaios vaios_build_info)
+
+# The consumer interface (docs/consumer-interface.md). Everything a project that
+# links vaios needs to compile against its public headers travels with the
+# target; the top-level include_directories()/add_compile_options() only cover
+# vaios's own translation units, not a consumer in another source tree.
+#
+#  - include/ (public headers) and the build dir (the generated
+#    vaios_version.h; vaios_autoconf.h sits beside it). portable/<port>/, which
+#    holds port.h, comes from `portable`, linked PUBLIC below.
+#  - The generated config, force-included. The public headers read macros from
+#    vaios_autoconf.h and the derived layer (vaios_config_derived.h) without
+#    including them, so a consumer without the same -include silently sees a
+#    different config. INTERFACE, not PUBLIC: vaios's own sources already get
+#    these from the top-level add_compile_options(), so naming them again here
+#    would only repeat them. Both headers are include-guarded regardless.
+#    SHELL: keeps each `-include <file>` pair together (see the top level).
+# Normalised so the path spells exactly as the top level's does (CMake only
+# de-duplicates identical option strings).
+cmake_path(SET _vaios_include NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+# Consumers see these as SYSTEM: a project built with -Wall -Wextra -Werror
+# should not fail on warnings in headers it does not own. vaios's own sources
+# keep plain -I (PRIVATE, and the top level's include_directories()).
+target_include_directories(vaios PRIVATE ${_vaios_include} ${CMAKE_BINARY_DIR})
+target_include_directories(vaios SYSTEM INTERFACE ${_vaios_include} ${CMAKE_BINARY_DIR})
+target_compile_options(vaios INTERFACE
+  "SHELL:-include ${VAIOS_AUTOCONF}"
+  "SHELL:-include ${_vaios_include}/vaios_config_derived.h")
 
 # Surface each module switch to C code as a 1/0 macro so init calls and APIs
 # can be #if'd out to match the gated source list.
 target_compile_definitions(vaios PUBLIC
-  VAIOS_MODULE_TERMINAL=$<BOOL:${VAIOS_MODULE_TERMINAL}>
+  VAIOS_MODULE_SHELL=$<BOOL:${VAIOS_MODULE_SHELL}>
   VAIOS_MODULE_VFS=$<BOOL:${VAIOS_MODULE_VFS}>
   VAIOS_MODULE_SEMIHOSTING=$<BOOL:${VAIOS_MODULE_SEMIHOSTING}>
   VAIOS_MODULE_FIFO=$<BOOL:${VAIOS_MODULE_FIFO}>
@@ -53,11 +86,10 @@ target_compile_definitions(vaios PUBLIC
 # but no NavHAL present) from erroring on undefined targets.
 if(NAVHAL AND TARGET hal)
 target_link_libraries(vaios PUBLIC -Wl,--start-group hal common -Wl,--end-group -lc -lgcc portable)
-# PRIVATE, not PUBLIC: only vaios's own TUs may resolve NavHAL headers, and even
-# they shouldn't — the kernel reaches the HAL through the portable/ facade. A
-# PUBLIC export put vendor headers on every consumer's include path, which is
-# what let a stray hal_* call in kernel/ compile silently instead of erroring.
-target_include_directories(vaios PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../extern/NavHAL/include)
+# NavHAL's headers come from linking hal above, not from a path: hal publishes
+# its include dirs, the generated board.h dir and driver definitions such as
+# _DMA_ENABLED as usage requirements, so vaios compiles against whichever NavHAL
+# is actually built, with the same definitions hal itself was built with.
 else()
 target_link_libraries(vaios PUBLIC -lgcc -lc portable)
 endif()

@@ -377,6 +377,31 @@ static void test_bus_evicted_mid_pop_rereads(void) {
   TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
 }
 
+/* The same, but the eviction lands between two blocks of a multi-block
+ * message: the freed chain is relinked under the walk, which must stay inside
+ * the pool (it used to follow a V_BUS_NIL link off its end). */
+extern void (*v_bus_test_mid_walk)(void);
+static void evict_during_walk(void) {
+  v_bus_test_mid_walk = NULL; /* once */
+  static uint8_t big[FIRST + MS * (MC - 2)];
+  v_bus_publish(&tw, big, sizeof big); /* needs every block: evicts the head */
+}
+static void test_bus_evicted_mid_walk_stays_in_pool(void) {
+  wreset();
+  v_bus_subscribe(&tw, &sa);
+  static uint8_t three[FIRST + 2 * MS], out[FIRST + MS * (MC - 2)];
+  memset(three, 0xA5, sizeof three);
+  TEST_ASSERT_EQ(v_bus_publish(&tw, three, sizeof three), VA_PASS);
+  v_bus_test_mid_walk = evict_during_walk;
+  uint16_t len = 0;
+  uint32_t missed = 0;
+  TEST_ASSERT_EQ(v_bus_pop(&sa, out, sizeof out, &len, &missed), VA_PASS);
+  TEST_ASSERT_NULL(v_bus_test_mid_walk); /* the eviction did run mid-walk */
+  TEST_ASSERT_EQ(len, (uint16_t)(FIRST + MS * (MC - 2))); /* the big one */
+  TEST_ASSERT_EQ(missed, 1u);
+  TEST_ASSERT_EQ(v_bus_check(&mb), VA_PASS);
+}
+
 /* ---- B7: the snapshotter -----------------------------------------------------
  * A best-effort recorder that reads like any other consumer. What matters: it
  * takes part in reclaim (so it can never pin messages forever), it keeps going
@@ -387,7 +412,7 @@ static void test_bus_snapshotter(void) {
   vfs_stub_reset();
   vfs_stub.open_ret = 4;
   v_bus_snap_t snap;
-  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "/rec.bin"), VA_PASS);
+  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "0:/rec.bin"), VA_PASS);
   TEST_ASSERT_EQ(vfs_stub.open_called, 1);
   TEST_ASSERT_EQ(tw.nsubs, 1); /* it subscribed like a reader */
 
@@ -429,7 +454,7 @@ static void test_bus_snapshotter(void) {
 
   /* A filesystem that refuses the open leaves nothing subscribed. */
   vfs_stub.open_ret = -7;
-  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "/nope.bin"), -7);
+  TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, "0:/nope.bin"), -7);
   TEST_ASSERT_EQ(tw.nsubs, 0);
   TEST_ASSERT_EQ(v_bus_snapshot_start(NULL, &tw, "/x"), V_BUS_EINVAL);
   TEST_ASSERT_EQ(v_bus_snapshot_start(&snap, &tw, NULL), V_BUS_EINVAL);
@@ -1397,6 +1422,7 @@ static const test_case_t bus_cases[] = {
     TEST_CASE(test_bus_overwrite_fast_reader_unaffected),
     TEST_CASE(test_bus_overwrite_no_futile_eviction),
     TEST_CASE(test_bus_evicted_mid_pop_rereads),
+    TEST_CASE(test_bus_evicted_mid_walk_stays_in_pool),
     TEST_CASE(test_bus_statistics),
     TEST_CASE(test_bus_snapshotter),
     TEST_CASE(test_bus_second_producer_mid_copy),

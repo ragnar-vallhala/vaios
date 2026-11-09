@@ -28,10 +28,15 @@ typedef struct v_file_ops {
   int (*close)(void *priv);
   // Optional. A plain device hands every opener the same `priv` it registered
   // with; a node that needs per-open state (a FILE, not a device) provides this
-  // instead and returns the state for this open. `tail` is the path after the
-  // node's name, which is how a MOUNT works: register "/mnt/" and every path
-  // under it reaches this hook with the rest of the path.
-  int (*open)(const char *tail, int flags, void **priv_out);
+  // instead and returns the state for this open. This is how a MOUNT works:
+  // register "/mnt/sd/" and every path under it reaches this hook -- whole,
+  // so the filesystem can tell which of its mounts it names.
+  int (*open)(const char *path, int flags, void **priv_out);
+  // Optional. Park the caller until a read would return data, or `ticks`
+  // pass. 0 when data is (or became) ready, < 0 on timeout. Reads stay
+  // non-blocking; this is the separate wait, split from the transfer for the
+  // same reason SYS_bus_wait is: a parked task holds no buffer in kernel state.
+  int (*wait)(void *priv, uint32_t ticks);
 } v_file_ops;
 
 // One fd-table slot. ops == NULL means the slot is free.
@@ -42,10 +47,15 @@ typedef struct {
 
 #if VAIOS_DEVFS
 
+
 struct Task_Control_Block;
 
 // Register a device node, e.g. "/dev/console". Returns 0 or a negative error.
 int v_devfs_register(const char *name, const v_file_ops *ops, void *priv);
+
+// The name of registered node `i` (0, 1, ...), for a listing: "/dev/kmsg", or a
+// mount's "/mnt/". Cut to fit `cap`, always terminated. 0, or -1 past the last.
+int v_devfs_node(int i, char *name, uint32_t cap);
 
 // Kernel-side file API (called from the syscall dispatch, privileged). Each
 // operates on the current task's fd table. Return an fd / byte count, or a
@@ -54,6 +64,16 @@ int v_file_open(const char *path, int flags);
 int v_file_read(int fd, void *buf, uint32_t len);
 int v_file_write(int fd, const void *buf, uint32_t len);
 int v_file_close(int fd);
+// Duplicate a descriptor, as dup/dup2: v_file_dup gives the lowest free fd,
+// v_file_dup2 puts the copy at `newfd` (replacing what was there). Plain
+// devices only -- an fd whose object counts its opens (a sem, a queue, a file)
+// is refused, as is replacing one, since the count would go wrong. The new fd,
+// or < 0.
+int v_file_dup(int oldfd);
+int v_file_dup2(int oldfd, int newfd);
+// Block until `fd` has data to read, or `ticks` pass (V_WAIT_FOREVER for no
+// deadline). 0 when ready, < 0 on timeout or when the fd cannot wait.
+int v_file_wait(int fd, uint32_t ticks);
 
 // Allocate an fd in the current task's table for (ops, priv). Returns the fd or
 // a negative error. Used by open() and by fd-typed IPC (v_sem_open).
@@ -71,6 +91,16 @@ void v_fd_table_init(struct Task_Control_Block *t);
 // a terminating task doesn't leak named-object slots. Operates on `t`, not the
 // current task.
 void v_fd_close_all(struct Task_Control_Block *t);
+
+// The console's output worker. Writes to /dev/console made from a syscall only
+// queue; this does the hardware write, in thread mode where the console's own
+// interrupt (USB CDC's, a DMA completion) can be taken. Run it forever from a
+// PRIVILEGED task (task_create_privileged under MPU separation) at a priority
+// above every task that prints:
+//     for (;;) v_console_writer_step(V_WAIT_FOREVER);
+// Until it has run once, console writes go straight to the hardware. Returns
+// the bytes written, 0 if `ticks` passed with nothing queued.
+int v_console_writer_step(uint32_t ticks);
 
 // Register the built-in devices (/dev/console). Called once at boot.
 void v_devfs_init(void);

@@ -24,8 +24,12 @@
 #include "structure.h"
 #include "vfs.h"
 #include "periph_bus.h"
+#include "ipc.h" // VA_PASS
 #include "syscall.h"
+#include "memory.h"
+#include "task.h"
 #include <stdint.h>
+#include <string.h>
 
 /* From tests/stubs/syscall_stubs.c. Sets current_task to a synthetic caller
  * with a `size`-byte block (in 32-bit-addressable memory so pointers survive
@@ -47,6 +51,30 @@ uint32_t syscall_set_caller(uint32_t size, int unprivileged);
 static intptr_t call(uint32_t num, uintptr_t a0, uintptr_t a1, uintptr_t a2) {
   uintptr_t args[4] = {a0, a1, a2, 0};
   return v_syscall_dispatch(num, args);
+}
+
+/* ---- Task creation on a recycled heap block --------------------------------
+ * A new TCB used to keep has_syscall_result / syscall_result from whatever
+ * last held its heap block, and the first switch-in then wrote that stale
+ * result over the task's stacked r0 -- its arg (todo 130). */
+extern void stub_reset_heap(void);
+static void idle_entry(void *arg) {
+  (void)arg;
+}
+static void test_new_task_on_dirty_block_has_no_syscall_result(void) {
+  stub_reset_heap();
+  void *dirty = v_malloc(sizeof(TCB));
+  TEST_ASSERT(dirty != NULL);
+  memset(dirty, 0xA5, sizeof(TCB));
+  v_free(dirty);
+  int arg;
+  uint32_t id = task_create(idle_entry, &arg, 256, 3);
+  TEST_ASSERT(id != 0);
+  TCB *t = (TCB *)dirty;
+  TEST_ASSERT(t->task_id == id); // the TCB really reused the dirtied block
+  TEST_ASSERT(t->has_syscall_result == 0);
+  TEST_ASSERT(t->syscall_result == 0);
+  TEST_ASSERT(t->arg == &arg);
 }
 
 /* ---- Privileged-only gate: raw-handle IPC is denied to unprivileged callers */
@@ -76,6 +104,10 @@ static void test_unpriv_write_bad_ptr_efault(void) {
 static void test_unpriv_read_bad_ptr_efault(void) {
   (void)syscall_set_caller(BLOCK_SZ, 1);
   TEST_ASSERT_EQ(call(SYS_read, 0, BAD_PTR, 16), T_EFAULT);
+}
+static void test_unpriv_devfs_node_bad_ptr_efault(void) {
+  (void)syscall_set_caller(BLOCK_SZ, 1);
+  TEST_ASSERT_EQ(call(SYS_devfs_node, 0, BAD_PTR, 16), T_EFAULT);
 }
 static void test_unpriv_open_bad_str_efault(void) {
   (void)syscall_set_caller(BLOCK_SZ, 1);
@@ -431,13 +463,62 @@ static void test_bug2_wait_nfds_multiply_overflow(void) {
   TEST_ASSERT_EQ(call(SYS_wait, base, 0x40000000u, 1), T_EFAULT);
 }
 
+#if VAIOS_TASK_CHECKPOINT
+extern TCB *current_task;
+/* A fresh caller: no checkpoint yet. */
+static uint32_t ckpt_caller(void) {
+  static int heap;
+  if (!heap++)
+    v_heap_memory_init(); /* checkpoints live on the kernel heap */
+  uint32_t base = syscall_set_caller(BLOCK_SZ, /*unpriv=*/1);
+  current_task->ckpt = NULL; /* the stub's TCB outlives each test */
+  current_task->ckpt_len = 0;
+  return base;
+}
+static void test_unpriv_checkpoint_bad_ptr_efault(void) {
+  (void)ckpt_caller();
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, BAD_PTR, 4, 0), T_EFAULT);
+  TEST_ASSERT_EQ(call(SYS_task_restore, BAD_PTR, 4, 0), T_EFAULT);
+}
+static void test_unpriv_checkpoint_bad_len_einval(void) {
+  uint32_t base = ckpt_caller();
+  TEST_ASSERT(base != 0);
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base, 0, 0), V_TASK_EINVAL);
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base, VAIOS_TASK_CHECKPOINT_MAX + 1u, 0),
+                 V_TASK_EINVAL);
+}
+static void test_unpriv_checkpoint_round_trip(void) {
+  uint32_t base = ckpt_caller();
+  TEST_ASSERT(base != 0);
+  uint8_t *blk = (uint8_t *)(uintptr_t)base;
+  TEST_ASSERT_EQ(call(SYS_task_restore, base, 16, 0), 0); /* none yet */
+  for (int i = 0; i < 8; i++)
+    blk[i] = (uint8_t)(0xA0 + i);
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base, 8, 0), VA_PASS);
+  for (int i = 0; i < 8; i++)
+    blk[64 + i] = 0;
+  /* More room than saved: only the 8 saved bytes come back. */
+  TEST_ASSERT_EQ(call(SYS_task_restore, base + 64, 16, 0), 8);
+  for (int i = 0; i < 8; i++)
+    TEST_ASSERT_EQ(blk[64 + i], 0xA0 + i);
+  /* Less room than saved: truncated to the room. */
+  TEST_ASSERT_EQ(call(SYS_task_restore, base + 128, 3, 0), 3);
+  /* A later checkpoint replaces it. */
+  TEST_ASSERT_EQ(call(SYS_task_checkpoint, base + 4, 2, 0), VA_PASS);
+  TEST_ASSERT_EQ(call(SYS_task_restore, base + 64, 16, 0), 2);
+  TEST_ASSERT_EQ(blk[64], 0xA4);
+}
+#endif
+
 static const test_case_t syscall_cases[] = {
+    TEST_CASE(test_new_task_on_dirty_block_has_no_syscall_result),
     TEST_CASE(test_unpriv_sem_give_denied),
     TEST_CASE(test_unpriv_sem_take_denied),
     TEST_CASE(test_unpriv_mutex_lock_denied),
     TEST_CASE(test_unpriv_mutex_unlock_denied),
     TEST_CASE(test_unpriv_write_bad_ptr_efault),
     TEST_CASE(test_unpriv_read_bad_ptr_efault),
+    TEST_CASE(test_unpriv_devfs_node_bad_ptr_efault),
     TEST_CASE(test_unpriv_open_bad_str_efault),
     TEST_CASE(test_unpriv_wait_bad_ptr_efault),
     TEST_CASE(test_unpriv_write_valid_ptr_passes),
@@ -476,6 +557,11 @@ static const test_case_t syscall_cases[] = {
     TEST_CASE(test_unpriv_ro_string_accepted),
     TEST_CASE(test_unpriv_ro_delay_until_refused),
     TEST_CASE(test_unpriv_ro_pbus_tx_ok_rx_refused),
+#if VAIOS_TASK_CHECKPOINT
+    TEST_CASE(test_unpriv_checkpoint_bad_ptr_efault),
+    TEST_CASE(test_unpriv_checkpoint_bad_len_einval),
+    TEST_CASE(test_unpriv_checkpoint_round_trip),
+#endif
     TEST_CASE(test_priv_caller_skips_validation),
     TEST_CASE(test_priv_caller_ipc_not_denied),
     /* expected-fail regression test (see STAGE5_REVIEW_FINDINGS.md) */

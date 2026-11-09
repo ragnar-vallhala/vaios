@@ -513,6 +513,47 @@ static void test_isr_prio_urgent_irq_is_unsafe(void) {
 /* -------------------------------------------------------------------------
  * Suite entry point
  * ---------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------
+ * Pre-scheduler: there is no current task yet
+ *
+ * vfs_init states the rule ("Do not lock here!") and the kernel honours it, but
+ * every one of these paths misbehaved rather than refusing, and each differently:
+ * the plain lock stored through a NULL TCB; the plain unlock passed its ownership
+ * check (owner and current both NULL) and then dereferenced current; the recursive
+ * lock matched its recursion test against a FREE mutex and handed out a lock nobody
+ * held; the recursive unlock underflowed recursion_count from 0 to 0xFFFFFFFF.
+ *
+ * On an STM32F4 booting from flash the first of those is a write to aliased flash
+ * and does nothing visible, so it stayed hidden until an MPU NULL guard was armed.
+ * ---------------------------------------------------------------------- */
+static void test_mutex_prescheduler_is_safe(void) {
+  full_reset();
+  MutexHandle_t mtx = v_mutex_create();
+  TEST_ASSERT_NOT_NULL(mtx);
+  rmutex_t *rm = (rmutex_t *)mtx;
+
+  TCB *saved = current_task;
+  current_task = NULL; /* as it is before scheduler_start */
+
+  TEST_ASSERT_EQ(v_mutex_lock(mtx, 0), VA_PASS);
+  TEST_ASSERT_EQ(v_mutex_unlock(mtx), VA_PASS);
+  TEST_ASSERT_EQ(v_mutex_lock_recursive(mtx, 0), VA_PASS);
+  TEST_ASSERT_EQ(v_mutex_unlock_recursive(mtx), VA_PASS);
+
+  /* Nothing was recorded, which is the point: the mutex is still free and its
+   * recursion count is still zero, so it is usable once the scheduler exists. */
+  TEST_ASSERT_EQ(rm->owner, NULL);
+  TEST_ASSERT_EQ(rm->recursion_count, 0u);
+
+  /* The real proof: a normal acquire/release cycle still works afterwards. If any
+   * of the four had left state behind, this is where it would show. */
+  current_task = saved;
+  TEST_ASSERT_EQ(v_mutex_lock(mtx, 0), VA_PASS);
+  TEST_ASSERT_EQ(rm->owner, current_task);
+  TEST_ASSERT_EQ(v_mutex_unlock(mtx), VA_PASS);
+  TEST_ASSERT_EQ(rm->owner, NULL);
+}
+
 static const test_case_t ipc_cases[] = {
     /* FromISR priority assert predicate */
     TEST_CASE(test_isr_prio_thread_mode_is_safe),
@@ -548,6 +589,7 @@ static const test_case_t ipc_cases[] = {
     TEST_CASE(test_wait_queue_priority_order),
     TEST_CASE(test_pi_transitive_chain),
     TEST_CASE(test_pi_unlock_keeps_priority_floor),
+    TEST_CASE(test_mutex_prescheduler_is_safe),
 };
 const test_suite_t ipc_suite = {
     .name = "IPC (Semaphores & Mutexes)",

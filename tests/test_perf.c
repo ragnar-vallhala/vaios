@@ -326,7 +326,7 @@ static void test_dump_to_file_open_failure_returns_minus_one(void) {
   reset_with_current_task();
   vfs_stub_reset();
   vfs_stub.open_ret = -1;
-  int rc = v_perf_dump_to_file("/sd/perf.csv");
+  int rc = v_perf_dump_to_file("0:/perf.csv");
   TEST_ASSERT_EQ(rc, -1);
   TEST_ASSERT_EQ(vfs_stub.write_called, 0);
   TEST_ASSERT_EQ(vfs_stub.close_called, 0);
@@ -346,7 +346,7 @@ static void test_dump_to_file_success_writes_csv(void) {
   vfs_stub.open_ret = 3;
   vfs_stub.write_ret = 1;
   vfs_stub.close_ret = 0;
-  int rc = v_perf_dump_to_file("/sd/perf.csv");
+  int rc = v_perf_dump_to_file("0:/perf.csv");
   TEST_ASSERT_EQ(rc, 0);
   TEST_ASSERT_EQ(vfs_stub.open_called, 1);
   TEST_ASSERT_EQ(vfs_stub.close_called, 1);
@@ -361,7 +361,7 @@ static void test_dump_to_file_opens_truncating_write_only(void) {
   vfs_stub_reset();
   vfs_stub.open_ret = 3;
   vfs_stub.write_ret = 1;
-  v_perf_dump_to_file("/sd/x.csv");
+  v_perf_dump_to_file("0:/x.csv");
   int flags = vfs_stub.open_flags;
   TEST_ASSERT((flags & VFS_O_WRONLY) != 0);
   TEST_ASSERT((flags & VFS_O_CREAT) != 0);

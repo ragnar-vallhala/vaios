@@ -90,6 +90,23 @@ typedef enum {
   SYS_bus_stats = 47,   // this handle's topic counters (B7). Read-only and
                         //   bounded, so no submit/wait/finish split: it copies
                         //   a small struct under one critical section.
+  SYS_file_wait = 48,   // park until an fd has data to read (v_file_wait).
+                        //   Reads stay non-blocking; the console's RX
+                        //   interrupt is what wakes this.
+  SYS_dup = 49,         // a second fd for the same open device (plain
+  SYS_dup2 = 50,        //   devices only); dup2 puts it at a chosen fd. The
+                        //   shell's > redirection points fd 1 at /dev/capture.
+  SYS_devfs_node = 51,  // the i-th devfs node's name (ls /dev): the registry is
+                        //   kernel memory. args[1]/args[2] are the caller's
+                        //   buffer, written.
+  SYS_task_checkpoint = 52, // save / load the caller's checkpoint
+  SYS_task_restore = 53,    //   (VAIOS_TASK_CHECKPOINT). args[0]/args[1]
+                            //   are the caller's buffer.
+  SYS_upipe_self = 54,  // the caller's v_upipe (VAIOS_UPIPE), 0 if none.
+  SYS_upipe_sleep = 55, // park until the peer kicks, or args[0] ticks.
+                        //   Blocking, deferred-result, like SYS_q_wait.
+  SYS_upipe_kick = 56,  // wake the peer. No pointers: the kernel finds the
+                        //   pipe and the end from the caller's TCB.
   SYS_MAX
 } v_syscall_t;
 

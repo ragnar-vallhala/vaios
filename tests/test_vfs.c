@@ -59,10 +59,10 @@ static void test_vfs_open_passes_args_and_returns(void) {
   full_reset();
   vfs_init();
   vfs_stub.open_ret = 42;
-  vfs_fd_t fd = vfs_open("/path/foo.txt", VFS_O_RDONLY);
+  vfs_fd_t fd = vfs_open("0:/path/foo.txt", VFS_O_RDONLY);
   TEST_ASSERT_EQ(fd, 42);
   TEST_ASSERT_EQ(vfs_stub.open_called, 1);
-  TEST_ASSERT(strcmp(vfs_stub.open_path, "/path/foo.txt") == 0);
+  TEST_ASSERT(strcmp(vfs_stub.open_path, "0:/path/foo.txt") == 0);
   TEST_ASSERT_EQ(vfs_stub.open_flags, VFS_O_RDONLY);
 }
 
@@ -126,18 +126,18 @@ static void test_vfs_mkdir_passes_path_and_returns(void) {
   full_reset();
   vfs_init();
   vfs_stub.mkdir_ret = 0;
-  TEST_ASSERT_EQ(vfs_mkdir("/logs"), 0);
+  TEST_ASSERT_EQ(vfs_mkdir("0:/logs"), 0);
   TEST_ASSERT_EQ(vfs_stub.mkdir_called, 1);
-  TEST_ASSERT(strcmp(vfs_stub.mkdir_path, "/logs") == 0);
+  TEST_ASSERT(strcmp(vfs_stub.mkdir_path, "0:/logs") == 0);
 }
 
 static void test_vfs_unlink_passes_path_and_returns(void) {
   full_reset();
   vfs_init();
   vfs_stub.unlink_ret = 0;
-  TEST_ASSERT_EQ(vfs_unlink("/stale.tmp"), 0);
+  TEST_ASSERT_EQ(vfs_unlink("0:/stale.tmp"), 0);
   TEST_ASSERT_EQ(vfs_stub.unlink_called, 1);
-  TEST_ASSERT(strcmp(vfs_stub.unlink_path, "/stale.tmp") == 0);
+  TEST_ASSERT(strcmp(vfs_stub.unlink_path, "0:/stale.tmp") == 0);
 }
 
 static void test_vfs_sync_passes_fd_and_returns(void) {
@@ -153,9 +153,9 @@ static void test_vfs_preallocate_passes_args_and_returns(void) {
   full_reset();
   vfs_init();
   vfs_stub.preallocate_ret = 0;
-  TEST_ASSERT_EQ(vfs_preallocate("/data.bin", 8192u), 0);
+  TEST_ASSERT_EQ(vfs_preallocate("0:/data.bin", 8192u), 0);
   TEST_ASSERT_EQ(vfs_stub.preallocate_called, 1);
-  TEST_ASSERT(strcmp(vfs_stub.preallocate_path, "/data.bin") == 0);
+  TEST_ASSERT(strcmp(vfs_stub.preallocate_path, "0:/data.bin") == 0);
   TEST_ASSERT_EQ(vfs_stub.preallocate_size, 8192u);
 }
 
@@ -171,9 +171,9 @@ static void test_vfs_stat_passes_and_translates(void) {
   vfs_stub.stat_out.exists = 1;
   vfs_stat_t st;
   memset(&st, 0, sizeof st);
-  TEST_ASSERT_EQ(vfs_stat("/logs", &st), 0);
+  TEST_ASSERT_EQ(vfs_stat("0:/logs", &st), 0);
   TEST_ASSERT_EQ(vfs_stub.stat_called, 1);
-  TEST_ASSERT(strcmp(vfs_stub.stat_path, "/logs") == 0);
+  TEST_ASSERT(strcmp(vfs_stub.stat_path, "0:/logs") == 0);
   TEST_ASSERT_EQ(st.size, 1234u);
   TEST_ASSERT_EQ(st.mtime, 0xABCD1234u);
   TEST_ASSERT_EQ(st.is_dir, 1);
@@ -182,7 +182,7 @@ static void test_vfs_stat_passes_and_translates(void) {
   /* Missing path: ret<0 and exists=0 reach the caller. */
   vfs_stub.stat_ret = -4; /* FR_NO_FILE */
   vfs_stub.stat_out.exists = 0;
-  TEST_ASSERT(vfs_stat("/nope", &st) < 0);
+  TEST_ASSERT(vfs_stat("0:/nope", &st) < 0);
   TEST_ASSERT_EQ(st.exists, 0);
 }
 

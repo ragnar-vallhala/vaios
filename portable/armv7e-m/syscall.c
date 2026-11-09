@@ -22,6 +22,7 @@
 #include "vfs.h"        // the VFS mount + its syscalls (M5)
 #include "port.h"
 #include "task.h"
+#include "upipe.h"
 #include "vfile.h"
 #include "utils.h"  // v_get_ticks (SYS_ticks)
 #include <stdint.h>
@@ -86,6 +87,7 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
         return V_EFAULT;
       break;
     case SYS_read:
+    case SYS_devfs_node:
       if (!v_access_ok((void *)(uintptr_t)args[1], args[2], 1))
         return V_EFAULT;
       break;
@@ -182,6 +184,14 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
       if (!v_access_ok((void *)(uintptr_t)args[0], sizeof(v_task_info_t), 1))
         return V_EFAULT;
       break;
+#if VAIOS_TASK_CHECKPOINT
+    case SYS_task_checkpoint:
+    case SYS_task_restore:
+      if (!v_access_ok((void *)(uintptr_t)args[0], args[1],
+                       num == SYS_task_restore))
+        return V_EFAULT;
+      break;
+#endif
 #if VAIOS_MODULE_PERF
     case SYS_perf_snapshot:
       // Either pointer may be NULL (the caller picks which reading it wants);
@@ -301,6 +311,22 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
     /* The caller's own id / priority / name / stack size, copied out of the
        TCB. args[0] = v_task_info_t to fill. */
     return v_task_info((v_task_info_t *)(uintptr_t)args[0]);
+#if VAIOS_TASK_CHECKPOINT
+  case SYS_task_checkpoint:
+    /* args[0] = buffer, args[1] = bytes: the caller's state, copied in. */
+    return v_task_checkpoint((const void *)(uintptr_t)args[0], args[1]);
+  case SYS_task_restore:
+    /* args[0] = buffer, args[1] = room: the last checkpoint, copied out. */
+    return v_task_restore((void *)(uintptr_t)args[0], args[1]);
+#endif
+#if VAIOS_UPIPE
+  case SYS_upipe_self:
+    return (int)(uintptr_t)v_upipe_self();
+  case SYS_upipe_sleep:
+    return v_upipe_sleep(args[0]);
+  case SYS_upipe_kick:
+    return v_upipe_kick();
+#endif
 #if VAIOS_MODULE_PERF
   case SYS_perf_snapshot:
     /* Read-only counters. args[0] = system snapshot (or NULL), args[1] = this
@@ -351,6 +377,17 @@ intptr_t v_syscall_dispatch(uint32_t num, uintptr_t *args) {
     return v_file_read((int)args[0], (void *)(uintptr_t)args[1], args[2]);
   case SYS_close:
     return v_file_close((int)args[0]);
+  case SYS_dup:
+    return v_file_dup((int)args[0]);
+  case SYS_dup2:
+    return v_file_dup2((int)args[0], (int)args[1]);
+  case SYS_file_wait:
+    /* Park until fd args[0] has data, or args[1] ticks. Blocking,
+       deferred-result; nothing of the caller's is held while it sleeps. */
+    return v_file_wait((int)args[0], args[1]);
+  case SYS_devfs_node:
+    /* Node args[0]'s name into args[1], args[2] bytes at most. */
+    return v_devfs_node((int)args[0], (char *)(uintptr_t)args[1], args[2]);
 #endif
 #if VAIOS_DEVFS
   case SYS_pbus_open:

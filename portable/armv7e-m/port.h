@@ -3,6 +3,7 @@
 
 #include "vaios_config.h" // VAIOS_USE_BASEPRI, VAIOS_MAX_SYSCALL_PRIO_LEVEL
 #include <stdint.h>
+#include "v_time.h" // v_datetime_t, for the RTC calls
 
 // NVIC priority model. ARMv7-M's priority register is 8-bit and high-bit
 // justified, with a numerically LOWER value meaning MORE urgent. __NVIC_PRIO_BITS
@@ -148,6 +149,15 @@ int v_port_stack_guard_encode(void *base, uint32_t size, uint32_t out[2]);
 // Pre-encode the per-task RW-unprivileged region over the whole `size`-byte
 // block at `base` (Stage 5). Returns 0 on success, non-zero if unavailable.
 int v_port_task_region_encode(void *base, uint32_t size, uint32_t out[2]);
+// Encode a v_upipe block [base, base+size) (size a power of two, base aligned
+// to it) as region 5: RW to unprivileged code, execute-never. base NULL (or an
+// encode failure) leaves the region disabled. Returns 0 when encoded.
+int v_port_upipe_region_encode(void *base, uint32_t size, uint32_t out[2]);
+// As v_port_upipe_region_encode, for a task's MMIO window (region 6): Device
+// memory instead of Normal.
+int v_port_mmio_region_encode(void *base, uint32_t size, uint32_t out[2]);
+// Program the running task's MPU regions now (the switch does it otherwise).
+void v_port_apply_current_mpu(void);
 #endif
 // Apply a pre-encoded region pair to the hardware (context-switch fast path).
 void v_port_mpu_apply(const uint32_t enc[2], uint32_t count);
@@ -237,8 +247,43 @@ void v_port_hw_console_init(uint32_t baudrate, void (*dma_tx_done_cb)(void));
 
 void v_port_hw_console_write_dma(const uint8_t *bytes, uint32_t len);
 void v_port_hw_console_write_string(const char *str);
-char v_port_hw_console_read_char(void);
-void v_port_hw_console_rx_irq_init(void (*rx_cb)(void));
+/* Deliver received console bytes to `sink` from the RX interrupt. 1 if an
+ * interrupt was armed, 0 if this port/route has none (the caller then polls
+ * v_port_hw_console_try_read). `data` is valid only for the call. On a route
+ * that can tell (USB CDC: the host raising DTR), a host ATTACHING arrives as
+ * one ENQ (0x05, "who are you"), which the shell answers with its banner. */
+int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
+                                                uint16_t len));
+/* Non-blocking console read: 1 if a byte was placed in *c, 0 if none waiting.
+ * The CDC route has no RX interrupt, so its readers poll this. */
+int v_port_hw_console_try_read(char *c);
+
+/* What this image runs on, for the boot banner: compile-time strings, so an
+ * unprivileged task can print them too. NavHAL names the board, family, core. */
+#ifdef NAVHAL
+#define VAIOS_PORT_BOARD NAVHAL_TARGET_BOARD
+#define VAIOS_PORT_SOC NAVHAL_TARGET_FAMILY " / " NAVHAL_TARGET_ARCH
+#else
+#define VAIOS_PORT_BOARD "qemu"
+#define VAIOS_PORT_SOC "armv7e-m (semihosting)"
+#endif
+/* Reset the whole chip (SYSRESETREQ). Does not return. Privileged. */
+void v_port_hw_system_reset(void);
+
+/* The RTC. start brings it up, waiting for its 32.768 kHz crystal on a cold
+ * start -- seconds -- so call it from a task that may wait, never at boot;
+ * later boots adopt the running calendar at once. 0, or -1 when there is no
+ * RTC or the crystal did not start. get: 0 and the time; 1 when the clock runs
+ * but nothing has set it since power-up (*out is its power-on default); -1 when
+ * no clock is running. set: 0, or -1 (no clock, or a date out of range).
+ * Privileged: the RTC registers are the port's. */
+int v_port_hw_rtc_start(void);
+int v_port_hw_rtc_get(v_datetime_t *out);
+int v_port_hw_rtc_set(const v_datetime_t *in);
+
+/* The core clock in Hz, or 0 where the port cannot tell. Privileged. */
+uint32_t v_port_hw_cpu_hz(void);
+
 
 // SD/MMC over SDIO (VFS backend). Return 0 on success, non-zero on failure.
 int v_port_hw_sdio_init(void);

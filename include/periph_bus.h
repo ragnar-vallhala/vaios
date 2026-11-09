@@ -120,14 +120,23 @@ typedef struct {
 // Board hook: start `x` (kernel buffers) on its bus. Same contract as
 // v_pbus_job.start: never block; >= 0 once in flight, then v_pbus_done_isr().
 typedef int (*v_pbus_xfer_fn)(const v_pbus_xfer_t *x);
+// The same, for a device registered with v_pdev_register: `ctx` is what the
+// registration passed (a bus manager, an SPI device's settings).
+typedef int (*v_pdev_xfer_fn)(void *ctx, const v_pbus_xfer_t *x);
 
 #define V_PBUS_EINVAL (-22)
 #define V_PBUS_EBUSY (-16)     // handle already has a transfer in flight
 #define V_PBUS_ETIMEDOUT (-110) // timed out while still queued (never started)
 
 #if VAIOS_DEVFS
-// Privileged, at boot. `name` must outlive the registration.
+// Privileged, at boot. `name` must outlive the registration. A raw bus: the
+// task picks x->addr, so it can reach any device on that bus.
 int v_pbus_register(const char *name, v_pbus_t *bus, v_pbus_xfer_fn start);
+// Privileged, at boot. One device on `bus`: every transfer through this name
+// goes to `addr` whatever the task put in x->addr, so a task given "baro0"
+// reaches the barometer and nothing else on the bus. `ctx` is handed to start.
+int v_pdev_register(const char *name, v_pbus_t *bus, v_pdev_xfer_fn start,
+                    void *ctx, uint16_t addr);
 // Open a registered bus -> fd, or a negative error.
 int v_pbus_open(const char *name);
 // Run one transfer: the hook's rc (>= 0 ok), a hook error, or V_PBUS_E*. If
@@ -138,7 +147,23 @@ int v_pbus_xfer(int fd, const v_pbus_xfer_t *x, uint8_t prio, uint32_t ticks);
 int v_pbus_xfer_submit(int fd, const v_pbus_xfer_t *x, uint8_t prio);
 int v_pbus_xfer_wait(int fd, uint32_t ticks);
 int v_pbus_xfer_finish(int fd, void *rx, uint32_t rx_len);
+
+// Register helpers for the usual sensor transfer shapes.
+static inline int v_pdev_read_reg(int fd, uint8_t reg, void *buf, uint32_t n,
+                                  uint8_t prio, uint32_t ticks) {
+  v_pbus_xfer_t x = {.tx = &reg, .tx_len = 1, .rx = buf, .rx_len = n};
+  return v_pbus_xfer(fd, &x, prio, ticks);
+}
+// Sends reg then n bytes as one write; n is at most VAIOS_PBUS_XFER_MAX - 1.
+int v_pdev_write_reg(int fd, uint8_t reg, const void *buf, uint32_t n,
+                     uint8_t prio, uint32_t ticks);
 #endif
+
+// DMA stream ownership. A stream (controller 1..2, stream 0..7) belongs to one
+// bus, or to SDIO, for the life of the system: a second owner would have two
+// drivers programming one stream. Privileged, at boot. VA_PASS if free or
+// already `owner`'s, VA_FAIL if someone else holds it or the stream is bad.
+int v_dma_claim(uint8_t controller, uint8_t stream, const void *owner);
 
 #ifdef __cplusplus
 }

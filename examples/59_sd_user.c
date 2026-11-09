@@ -30,8 +30,8 @@
  * was waiting for, and the tick with it. Hence the worker: with the transfers in
  * thread mode, the controller should keep its cadence.
  *
- * Paths: the mount prefix is a devfs namespace and the rest is handed to the
- * filesystem verbatim, so FatFs drive syntax applies — "/mnt/0:name".
+ * Paths: the card is mounted at /mnt/sd by v_system_init, and a task names a
+ * file by its place in that tree -- "/mnt/sd/name" -- never by drive letter.
  */
 #ifndef NAVHAL
 #error "NAVHAL is required for this example"
@@ -47,9 +47,9 @@
 
 #define IO_TICKS 500 // how long a file call waits for the worker
 
-#define DATA_FILE "/mnt/0:sduser.dat"
-#define DATA_DIR "/mnt/0:vlogs"
-#define LIST_DIR "/mnt/0:"
+#define DATA_FILE "/mnt/sd/sduser.dat"
+#define DATA_DIR "/mnt/sd/vlogs"
+#define LIST_DIR "/mnt/sd"
 #define RECORDS 48
 #define RECORD_SZ 64
 #define CTL_PERIOD_TICKS 5
@@ -240,11 +240,6 @@ int main(void) {
                              .internal_sd_card_setup = 1};
   v_system_init(&cfg);
 
-  if (v_vfs_mount("/mnt/") != VA_PASS) {
-    v_log(LOG_ERROR, "sd_user: mount failed");
-    while (1)
-      ;
-  }
   v_log(LOG_INFO, "sd_user: start (privileged init only)");
 
   task_create_privileged(vfsio_task, NULL, 2048, 1, "vfsio");

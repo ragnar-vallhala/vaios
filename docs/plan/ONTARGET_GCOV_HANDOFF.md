@@ -67,7 +67,7 @@ Normal builds unaffected: verified 0 gcov symbols in a MULTI_TASK build, host su
 - **Environment flakiness this session:** files written by bash heredoc to `/tmp` or `/home/ragnar` did NOT persist across tool calls; only the repo working dir persisted. Renode runs >120 s exceed the bash tool cap; background renode output wasn't reliably captured. Use committed `tools/renode.resc` (takes `$bin`, `$run`) and keep runs short, or drive from a real terminal.
 - Kill stray renode: `pkill -9 -f Renode.dll` (verify with `ps aux | grep -i '/Renode.dll' | grep -v grep`; `pgrep -f Renode.dll` matches its own cmdline — false positive).
 - `-DVAIOS_GCOV` uses `-O0` (faithful attribution). An instrumented `-O1` image is faster under Renode but I reverted to `-O0` since that's the validated setting for the UNIT_TESTS path.
-- Constraint reminders: NavHAL builds need `export srctree=$PWD/extern/NavHAL`. Trunk is `dev`; PRs target `dev`. **Never add Claude trailers to commits/PRs.** Don't push without explicit confirmation.
+- Constraint reminders: NavHAL builds need `export srctree=$PWD/extern/NavHAL`. Trunk is `dev`; PRs target `dev`. **No AI attribution trailers on commits or PRs.** Don't push without explicit confirmation.
 
 ## 8. Build dirs
 All `build_*` are gitignored and were cleaned. `build_cov_target` is what `coverage_target.sh` (re)creates.

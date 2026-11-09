@@ -30,7 +30,7 @@ pick one with `-DNAVHAL_CONFIG_FILE=extern/NavHAL/cmake/defconfigs/<board>.defco
   and dynamic allocation, SPSC and MPMC lock-free FIFO queues.
 - **Buffered, DMA-backed logging** with compile-time level gating
   (`VAIOS_KERNEL_LOG_LEVEL`).
-- **Optional modules** — `terminal`, `vfs` (FatFs over SDIO), `semihosting`,
+- **Optional modules** — `shell`, `vfs` (FatFs over SDIO), `semihosting`,
   and the FIFO structures are opt-out CMake options; a flight build with
   them off lands well under 40 KB.
 - **Verified on STM32F401RE.** Examples cover IPC, priority inheritance, the
@@ -68,7 +68,7 @@ cat /dev/ttyACM0
 ```
 
 Other examples: `PRIORITY_INVERSION`, `IPC_TEST`, `HEAP_ALLOCATOR`,
-`MULTI_TASK`, `TERMINAL`, `UART`, … (see `examples/CMakeLists.txt`).
+`MULTI_TASK`, `SHELL`, `UART`, … (see `examples/CMakeLists.txt`).
 
 ## Build options
 
@@ -78,7 +78,7 @@ Other examples: `PRIORITY_INVERSION`, `IPC_TEST`, `HEAP_ALLOCATOR`,
 | `EXAMPLES` | OFF | Build the example application selected by `VAIOS_EXAMPLE` |
 | `VAIOS_EXAMPLE` | `""` | Selects the example (e.g. `FIFO_TEST`, `IPC_TEST`) |
 | `VAIOS_FPU` | ON | Use the hardware FPU |
-| `VAIOS_MODULE_TERMINAL` | ON | Include the interactive terminal |
+| `VAIOS_MODULE_SHELL` | ON | Include the interactive shell |
 | `VAIOS_MODULE_VFS` | ON | Include the VFS / FatFs layer |
 | `VAIOS_MODULE_SEMIHOSTING` | ON | Include semihosting I/O |
 | `VAIOS_MODULE_FIFO` | ON | Include SPSC/MPMC FIFO data structures |
@@ -104,7 +104,7 @@ Three layers of tests, each runnable from one script.
 
 | Layer | Command | What it does |
 | ----- | ------- | ------------ |
-| Host unit tests | `bash tools/run_tests.sh` | Builds and runs the host-native suites under `tests/` with `gcc` (no toolchain, no board). Two binaries: `vaios_tests` (memory, task, scheduler, IPC, structure, VFS, vaios, terminal) and `vaios_utils_tests` (the formatter, isolated to avoid symbol collisions). |
+| Host unit tests | `bash tools/run_tests.sh` | Builds and runs the host-native suites under `tests/` with `gcc` (no toolchain, no board). Two binaries: `vaios_tests` (memory, task, scheduler, IPC, structure, VFS, vaios, shell) and `vaios_utils_tests` (the formatter, isolated to avoid symbol collisions). |
 | Hardware regression | `bash tools/run_hw_tests.sh` | Builds and flashes a curated set of examples (`FIFO_TEST`, `PRIORITY_INVERSION`, `IPC_TEST`) to a connected Nucleo, captures UART, and greps for required PASS / completion lines. Requires the ARM toolchain, `openocd`, and `/dev/ttyACM0` (override with `PORT=...`). Picks the probe by USB port, `USB_LOC=3-2` by default — the ST-Links here share a serial. |
 | CI | `.github/workflows/ci.yml` | Runs the host suite on every push and PR (Ubuntu runner). NavHAL is not required — the host build stubs the relevant headers. |
 
@@ -147,7 +147,7 @@ docker run --rm -it -v "$PWD:/project" vaios:dev
 
 ```
 include/             Public API headers
-kernel/              Scheduler, IPC, memory, logging, terminal, VFS
+kernel/              Scheduler, IPC, memory, logging, shell, VFS
 portable/armv7e-m/  ARM Cortex-M4 port (port.c/h, PendSV, SVCall, BASEPRI)
 extern/NavHAL/       HAL submodule (clocks, GPIO, UART, DMA, SDIO, DWT)
 examples/            Standalone example applications

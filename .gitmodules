@@ -8,7 +8,3 @@
 	# without anything saying so. That is exactly how vayu's pin of THIS
 	# repository came to sit 228 commits behind its own stable branch.
 	branch = stable
-[submodule "extern/vtest"]
-	path = extern/vtest
-	url = https://github.com/ragnar-vallhala/vtest.git
-	branch = main

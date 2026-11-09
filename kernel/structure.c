@@ -730,7 +730,7 @@ static int q_transfer(int fd, void *item, uint32_t ticks, int write) {
     uint32_t spent = v_get_ticks() - start;
     if (spent >= ticks)
       return VA_FAIL; // full/empty (ticks == 0 lands here: a plain try)
-    if (v_queue_wait(fd, ticks - spent, write) != VA_PASS)
+    if (v_queue_wait(fd, v_wait_left(ticks, spent), write) != VA_PASS)
       return VA_FAIL; // timed out, or nothing to wait on (SPSC)
   }
 }

@@ -252,6 +252,21 @@ void v_pbus_tick_isr(v_pbus_t *bus) {
   }
 }
 
+// --- DMA stream ownership ---------------------------------------------------
+static const void *dma_owner[2][8];
+
+int v_dma_claim(uint8_t controller, uint8_t stream, const void *owner) {
+  if (controller < 1 || controller > 2 || stream > 7 || !owner)
+    return VA_FAIL;
+  const void **slot = &dma_owner[controller - 1][stream];
+  uint32_t s = ENTER_CRITICAL_FROM_ISR();
+  int ok = !*slot || *slot == owner;
+  if (ok)
+    *slot = owner;
+  EXIT_CRITICAL_FROM_ISR(s);
+  return ok ? VA_PASS : VA_FAIL;
+}
+
 // --- User access (VAIOS_DEVFS) ----------------------------------------------
 // Each open handle owns a kernel job + bounce buffers, so nothing on the queue
 // or under DMA lives in task memory. Bodies run privileged: reached from the
@@ -261,20 +276,28 @@ void v_pbus_tick_isr(v_pbus_t *bus) {
 #include "utils.h" // v_memcpy
 #include "vfile.h"
 
-#define PBUS_MAX_DEVS 4
+#define PBUS_MAX_DEVS 8
 
 typedef struct {
   const char *name;
   v_pbus_t *bus;
-  v_pbus_xfer_fn start;
+  v_pbus_xfer_fn start;     // raw bus (v_pbus_register)
+  v_pdev_xfer_fn dev_start; // device (v_pdev_register)
+  void *ctx;
+  uint16_t addr; // a device's, forced onto every transfer
 } pbus_dev_t;
+
+// Bounce buffers in whole 32 B cache lines, 32 B aligned: on the F7 the DMA
+// driver invalidates the RX buffer after the transfer, and a line shared with
+// other data would throw that data's newer writes away.
+#define PBUS_BUF ((VAIOS_PBUS_XFER_MAX + 31) & ~31)
 
 typedef struct {
   pbus_dev_t *dev;
   v_pbus_job_t job;
   v_pbus_xfer_t x; // kernel copy; tx/rx point at the buffers below
-  uint8_t tx[VAIOS_PBUS_XFER_MAX];
-  uint8_t rx[VAIOS_PBUS_XFER_MAX];
+  uint8_t tx[PBUS_BUF] __attribute__((aligned(32)));
+  uint8_t rx[PBUS_BUF] __attribute__((aligned(32)));
   StaticSemaphore_t done_buf;
   SemaphoreHandle_t done;
   volatile int rc;
@@ -296,6 +319,8 @@ static int name_eq(const char *a, const char *b) {
 
 static int handle_start(v_pbus_job_t *job) {
   pbus_handle_t *h = (pbus_handle_t *)job->arg;
+  if (h->dev->dev_start)
+    return h->dev->dev_start(h->dev->ctx, &h->x);
   return h->dev->start(&h->x);
 }
 
@@ -333,16 +358,30 @@ static int handle_close(void *priv) {
 static const v_file_ops pbus_ops = {
     .read = NULL, .write = NULL, .close = handle_close};
 
-int v_pbus_register(const char *name, v_pbus_t *bus, v_pbus_xfer_fn start) {
-  if (!name || !bus || !start)
-    return V_PBUS_EINVAL;
+static int dev_add(const pbus_dev_t *d) {
   for (int i = 0; i < PBUS_MAX_DEVS; i++) {
+    if (pbus_devs[i].name && name_eq(pbus_devs[i].name, d->name))
+      return V_PBUS_EINVAL; // a second "imu0" would never be reached
     if (!pbus_devs[i].name) {
-      pbus_devs[i] = (pbus_dev_t){.name = name, .bus = bus, .start = start};
+      pbus_devs[i] = *d;
       return 0;
     }
   }
   return V_PBUS_EBUSY; // table full
+}
+
+int v_pbus_register(const char *name, v_pbus_t *bus, v_pbus_xfer_fn start) {
+  if (!name || !bus || !start)
+    return V_PBUS_EINVAL;
+  return dev_add(&(pbus_dev_t){.name = name, .bus = bus, .start = start});
+}
+
+int v_pdev_register(const char *name, v_pbus_t *bus, v_pdev_xfer_fn start,
+                    void *ctx, uint16_t addr) {
+  if (!name || !bus || !start)
+    return V_PBUS_EINVAL;
+  return dev_add(&(pbus_dev_t){.name = name, .bus = bus, .dev_start = start,
+                               .ctx = ctx, .addr = addr});
 }
 
 int v_pbus_open(const char *name) {
@@ -393,7 +432,8 @@ int v_pbus_xfer_submit(int fd, const v_pbus_xfer_t *x, uint8_t prio) {
 
   if (x->tx_len)
     v_memcpy(h->tx, x->tx, x->tx_len);
-  h->x = (v_pbus_xfer_t){.addr = x->addr, .flags = x->flags, .tx = h->tx,
+  h->x = (v_pbus_xfer_t){.addr = h->dev->dev_start ? h->dev->addr : x->addr,
+                         .flags = x->flags, .tx = h->tx,
                          .tx_len = x->tx_len, .rx = h->rx,
                          .rx_len = x->rx_len};
   // Fresh semaphore: drops a stale give from a transfer that finished after
@@ -452,5 +492,17 @@ int v_pbus_xfer(int fd, const v_pbus_xfer_t *x, uint8_t prio, uint32_t ticks) {
     return rc;
   v_pbus_xfer_wait(fd, ticks);
   return v_pbus_xfer_finish(fd, x->rx, x->rx_len);
+}
+
+int v_pdev_write_reg(int fd, uint8_t reg, const void *buf, uint32_t n,
+                     uint8_t prio, uint32_t ticks) {
+  uint8_t tx[VAIOS_PBUS_XFER_MAX];
+  if (n >= sizeof tx || (n && !buf))
+    return V_PBUS_EINVAL;
+  tx[0] = reg;
+  for (uint32_t i = 0; i < n; i++)
+    tx[1 + i] = ((const uint8_t *)buf)[i];
+  v_pbus_xfer_t x = {.tx = tx, .tx_len = n + 1};
+  return v_pbus_xfer(fd, &x, prio, ticks);
 }
 #endif // VAIOS_DEVFS

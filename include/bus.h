@@ -422,6 +422,11 @@ int v_bus_stats(const v_bus_t *bus, v_bus_stats_t *out);
 // see. A task gets what it holds a handle to.
 int v_bus_fd_stats(int fd, v_bus_topic_stats_t *out);
 
+// Privileged: the n-th declared topic across every initialised bus, or NULL past
+// the last -- for a diagnostic that lists them (the shell's `bus`). Its name is
+// topic->name; its counters, v_bus_topic_stats.
+const v_bus_topic_t *v_bus_topic_nth(int n);
+
 // --- Pool state ---------------------------------------------------------------
 // Blocks in the shared pool (not counting topics' reserved stashes).
 uint16_t v_bus_free_blocks(const v_bus_t *bus);
