@@ -510,7 +510,8 @@ if(NAVHAL)
   # them in port.c / utils.c). Without it NavHAL's timebase.c emits a strong
   # SysTick_Handler that collides with vaios's at link time.
   add_compile_definitions(SUBMODULE)
-  include_directories(${NAVHAL_DIR}/include)
+  # NavHAL's headers reach vaios's targets through the hal target they link
+  # (portable, vaios, and through them the examples), never through a path.
 
   # Who provides NavHAL? When a superproject has already added it (e.g. a nav
   # firmware project that does add_subdirectory(extern/NavHAL) before pulling
