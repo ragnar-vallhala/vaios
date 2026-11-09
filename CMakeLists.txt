@@ -597,7 +597,11 @@ if(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
   # framework's stdio to the console and backs it with a private arena). Its
   # definitions used to win by being first on the link line; vaios's retargeting
   # now is linked as objects, so it would be a duplicate. See kernel/CMakeLists.
-  set(VAIOS_NEWLIB_RETARGET OFF CACHE BOOL "UNIT_TESTS supplies its own" FORCE)
+  # A normal variable, not a FORCEd cache entry: option() honours it (CMP0077)
+  # for this configure only. A cache entry would stick, and reconfiguring the
+  # same build dir for another example would keep the retargeting off, with the
+  # guard compiled out, so nosys's _sbrk could win again silently.
+  set(VAIOS_NEWLIB_RETARGET OFF)
 endif()
 
 # Force-include the generated vaios config into vaios's OWN sources only
