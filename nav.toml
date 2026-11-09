@@ -1,7 +1,7 @@
 # Nav Configuration File
 [project]
 name = "vaios"
-version = "0.2.0"
+version = "0.2.2"
 # vaios builds a static archive (libvaios) that nav firmware projects depend on.
 # Its CMake target is named `vaios`, matching this name so nav links it directly.
 type = "library"
@@ -22,8 +22,33 @@ board = "navixsmf401re"
 [build]
 backend = "cmake"
 
+# The NavHAL HAL_API_VERSION this vaios is written against; `nav build` refuses
+# a NavHAL that disagrees. (NavHAL v0.3.16, the pin in extern/NavHAL, is 1.)
+[abi]
+hal_api_version = 1
+
 # vaios owns the Cortex-M CPU vectors (SysTick/PendSV/SVCall/HardFault). A
 # firmware project depending on vaios must build NavHAL with -DSUBMODULE so
 # NavHAL cedes those handlers instead of emitting its own (link collision).
 [library]
 navhal_submodule = true
+
+# What nav reads from the rest of this repo, by convention rather than by key:
+#
+#  * Board config: navhal.config at the repo root is this library's capability
+#    set. nav unions it into the app's .config and fails the build early if the
+#    app's .config does not satisfy it. It is also what a standalone build reads.
+#  * NavHAL: no [dependencies] entry. NavHAL is not a library in nav's graph; the
+#    app provides the one copy (NAVHAL_DIR). This repo's extern/NavHAL submodule
+#    pins v0.3.16 for standalone builds; nav has no key to pin the app's copy.
+#  * Build options: a consumer passes `options = ["NAVHAL=ON", ...]` on its
+#    [dependencies] entry for vaios (NAVHAL=ON is required; VAIOS_MODULE_VFS,
+#    VAIOS_MODULE_BUS and the other VAIOS_MODULE_* are optional).
+#  * Flashing and on-target tests belong to the app that links vaios: a library
+#    produces an archive and `nav upload` refuses it. The embedded examples
+#    (-DEXAMPLES=ON -DVAIOS_EXAMPLE=...) are plain CMake.
+#  * The host port, host unit tests and coverage are not nav's business and stay
+#    plain CMake and tools/*.sh.
+#
+# The consumer interface (headers, force-included config, version macros) is in
+# docs/consumer-interface.md. The version above is the single source for it.

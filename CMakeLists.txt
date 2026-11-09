@@ -184,6 +184,9 @@ endif()
 # ---------------------------------------------------------------------------
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(VAIOS_AUTOCONF "${CMAKE_BINARY_DIR}/vaios_autoconf.h")
+# vaios_version.h, from nav.toml: the one place the version is written down.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/VaiosVersion.cmake")
+vaios_version_generate("${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
 # Which Kconfig .config the build reads. Default is a build-local artifact
 # (gitignored), seeded once from defconfig; -DVAIOS_CONFIG=<path> overrides it to
 # a shared/checked-in config. The config is NOT bound to the build dir.

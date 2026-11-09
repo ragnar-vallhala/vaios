@@ -1,6 +1,9 @@
 #ifndef VAIOS_H
 #define VAIOS_H
 #include <stdint.h>
+
+#include "vaios_version.h"
+
 typedef struct {
   uint8_t internal_clock_setup;   // 1: vaios runs its internal clock (PLL) setup;
                                   // 0: skip it (caller already configured the clock)
