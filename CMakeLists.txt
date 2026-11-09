@@ -208,14 +208,24 @@ endif()
 set(VAIOS_DEFCONFIG "${_vaios_default_defconfig}" CACHE FILEPATH
     "Kconfig defconfig used to seed VAIOS_CONFIG on first configure")
 set(_vaios_dotconfig "${VAIOS_CONFIG}")
+# The NavHAL source tree vaios builds against. Standalone, that is the submodule.
+# A superproject that provides its own NavHAL (a nav firmware project, which adds
+# NavHAL before vaios) passes its tree here, so vaios compiles against the same
+# headers it links against: reading the submodule's headers while linking the
+# superproject's hal let any struct, enum or signature drift between the two
+# become memory corruption at runtime. When TARGET hal already exists, vaios
+# writes nothing into this tree: its .config belongs to the superproject.
+set(NAVHAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL" CACHE PATH
+    "NavHAL source tree vaios builds against")
+
 # Env the generator needs to pull NavHAL's tree in: NAVHAL_KCONFIG names the file
 # to osource (unset -> standalone, sources nothing); srctree roots NavHAL's own
 # `source "src/..."` lines. Standalone builds set neither.
 set(_vaios_gen_env "")
 if(NAVHAL)
   set(_vaios_gen_env ${CMAKE_COMMAND} -E env
-      "NAVHAL_KCONFIG=${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/Kconfig"
-      "srctree=${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL")
+      "NAVHAL_KCONFIG=${NAVHAL_DIR}/Kconfig"
+      "srctree=${NAVHAL_DIR}")
 endif()
 # The NavHAL config this build uses: -DNAVHAL_CONFIG_FILE (e.g. the soft-float
 # config tools/test_qemu_smoke.sh passes), else the repo's navhal.config. Resolved
@@ -364,7 +374,7 @@ if(NAVHAL AND NOT TARGET hal)
     file(READ "${_nav_cfg}" _nc)
     string(APPEND _nav_staged "${_nc}\n")
   endif()
-  file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config" "${_nav_staged}")
+  file(WRITE "${NAVHAL_DIR}/.config" "${_nav_staged}")
 
   # Through `cmake -E env`, not bare: NavHAL's Kconfig globs its arch tree with
   # `source "src/arch/*/Kconfig.choice"`, which kconfiglib resolves against
@@ -374,18 +384,18 @@ if(NAVHAL AND NOT TARGET hal)
   # configure step should not need the shell to have been prepared for it.
   execute_process(
     COMMAND ${CMAKE_COMMAND} -E env
-            "srctree=${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL"
+            "srctree=${NAVHAL_DIR}"
             ${Python3_EXECUTABLE}
-            "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/tools/kconfig.py"
-            --kconfig "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/Kconfig"
-            --config "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/.config"
+            "${NAVHAL_DIR}/tools/kconfig.py"
+            --kconfig "${NAVHAL_DIR}/Kconfig"
+            --config "${NAVHAL_DIR}/.config"
             --cmake-out "${CMAKE_BINARY_DIR}/config.cmake"
     RESULT_VARIABLE _nav_target_rc
     OUTPUT_QUIET)
   if(NOT _nav_target_rc EQUAL 0)
     message(FATAL_ERROR
       "NavHAL target resolution failed (rc=${_nav_target_rc}). "
-      "The staged extern/NavHAL/.config does not describe a buildable target.")
+      "The staged ${NAVHAL_DIR}/.config does not describe a buildable target.")
   endif()
   include("${CMAKE_BINARY_DIR}/config.cmake")
   message(STATUS "VAIOS: target from NavHAL -> board ${BOARD}, "
@@ -414,7 +424,7 @@ endif()
 # out, and only FPU_FLAGS comes back.
 function(_vaios_fpu_flags_from_navhal out)
     set(USE_FPU ${VAIOS_FPU})
-    include("${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/cmake/arch/${ARCH_ISA}.cmake")
+    include("${NAVHAL_DIR}/cmake/arch/${ARCH_ISA}.cmake")
     set(${out} "${FPU_FLAGS}" PARENT_SCOPE)
 endfunction()
 
@@ -482,7 +492,7 @@ else()
   # target to inherit from, so it needs it stated here. That path went unnoticed
   # through the 0.3.2 -> 0.3.9 bump because it only bites when an EXECUTABLE is
   # linked, and the NAVHAL=OFF checks build the `vaios` library target.
-  set(CMAKE_EXE_LINKER_FLAGS "-T ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld -L ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/arch/${VAIOS_PORT}/link -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs")
+  set(CMAKE_EXE_LINKER_FLAGS "-T ${NAVHAL_DIR}/src/board/${BOARD}/linker.ld -L ${NAVHAL_DIR}/src/arch/${VAIOS_PORT}/link -nostdlib ${FPU_FLAGS} --specs=nosys.specs --specs=nano.specs")
 endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include  ${CMAKE_CURRENT_SOURCE_DIR}/portable/${VAIOS_PORT})
@@ -500,7 +510,8 @@ if(NAVHAL)
   # them in port.c / utils.c). Without it NavHAL's timebase.c emits a strong
   # SysTick_Handler that collides with vaios's at link time.
   add_compile_definitions(SUBMODULE)
-  include_directories(extern/NavHAL/include)
+  # NavHAL's headers reach vaios's targets through the hal target they link
+  # (portable, vaios, and through them the examples), never through a path.
 
   # Who provides NavHAL? When a superproject has already added it (e.g. a nav
   # firmware project that does add_subdirectory(extern/NavHAL) before pulling
@@ -523,14 +534,15 @@ if(NAVHAL)
     # so NavHAL stays an unmodified submodule; rewriting it re-triggers configure.
     # extern/NavHAL/.config was staged above, before the toolchain flags were
     # built, because the processor and board it resolves to decide them.
-    add_subdirectory(extern/NavHAL)
+    # An explicit binary dir: NAVHAL_DIR may lie outside this source tree.
+    add_subdirectory("${NAVHAL_DIR}" "${CMAKE_BINARY_DIR}/navhal")
     # NavHAL hardcodes -O0 in its own CMAKE_C_FLAGS. Rather than editing the
     # submodule, override per target from here — gcc honours the last -O flag,
     # so a trailing -O2 wins. Keeps NavHAL (incl. the DWT cycle counter)
     # optimized without dirtying the submodule.
     target_compile_options(hal    PRIVATE -O2)
     target_compile_options(common PRIVATE -O2)
-    set(LINKER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL/src/board/${BOARD}/linker.ld)
+    set(LINKER_FILE ${NAVHAL_DIR}/src/board/${BOARD}/linker.ld)
   endif()
 
   # Force-include the Kconfig-generated navhal_target.h into vaios's OWN
