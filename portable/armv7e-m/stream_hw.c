@@ -38,7 +38,7 @@ int v_stream_cdc_attach(v_stream_t *s, const char *name) {
   cdc_stream = s;
   if (hal_usb_cdc_init() != HAL_OK)
     return V_STREAM_EINVAL;
-  hal_usb_cdc_set_rx_callback(cdc_rx_isr);
+  hal_usb_cdc_attach_rx_callback(cdc_rx_isr);
   return 0;
 }
 #endif
