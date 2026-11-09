@@ -107,6 +107,14 @@ config EXAMPLE_SD_USER
 	select VAIOS_MPU_USER_SEPARATION
 	select VAIOS_MODULE_VFS
 
+config EXAMPLE_BENCHMARK
+	bool "benchmark"
+	# bench_bus.c measures the Bus IPC (v_bus_publish / v_bus_pop / pipe topics /
+	# v_bus_topic_stats), so kernel/bus.c has to be compiled in. It is off by
+	# default, and BENCHMARK is its own CMake target with no other way to turn it
+	# on: without this the link fails on v_bus_unsubscribe and v_bus_topic_stats.
+	select VAIOS_MODULE_BUS
+
 config EXAMPLE_FLIGHT_USER
 	bool "flight_user"
 	# The release gate for unprivileged operation (roadmap M7): a flight-shaped
