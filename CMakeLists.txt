@@ -602,7 +602,22 @@ if(NAVHAL)
     # extern/NavHAL/.config was staged above, before the toolchain flags were
     # built, because the processor and board it resolves to decide them.
     # An explicit binary dir: NAVHAL_DIR may lie outside this source tree.
+    #
+    # NAVHAL_CONFIG_FILE means two things: here, the config to stage from
+    # (above); to NavHAL >= 0.4.2, where the .config lives, read, seeded and
+    # written back. Left visible, NavHAL would skip the .config staged above and
+    # rewrite the file given here (tests/configs/navhal_softfp.config, the
+    # temporary configs of the renode scripts) with its resolved selections.
+    # Shadow it with an empty normal variable for this one call so NavHAL keeps
+    # reading ${NAVHAL_DIR}/.config.
+    set(_vaios_saved_nav_cfg_file "${NAVHAL_CONFIG_FILE}")
+    set(NAVHAL_CONFIG_FILE "")
     add_subdirectory("${NAVHAL_DIR}" "${CMAKE_BINARY_DIR}/navhal")
+    if(DEFINED CACHE{NAVHAL_CONFIG_FILE})
+      unset(NAVHAL_CONFIG_FILE)
+    else()
+      set(NAVHAL_CONFIG_FILE "${_vaios_saved_nav_cfg_file}")
+    endif()
     # NavHAL hardcodes -O0 in its own CMAKE_C_FLAGS. Rather than editing the
     # submodule, override per target from here — gcc honours the last -O flag,
     # so a trailing -O2 wins. Keeps NavHAL (incl. the DWT cycle counter)
