@@ -1,7 +1,7 @@
 # Nav Configuration File
 [project]
 name = "vaios"
-version = "0.2.2"
+version = "0.2.3"
 # vaios builds a static archive (libvaios) that nav firmware projects depend on.
 # Its CMake target is named `vaios`, matching this name so nav links it directly.
 type = "library"
@@ -9,9 +9,10 @@ type = "library"
 # Board used when building vaios standalone. When a firmware project depends on
 # vaios, it is rebuilt for that project's board (must be NavHAL-supported).
 #
-# This must agree with navhal.config, which is what the CMake build actually
-# reads: NavHAL's Kconfig resolves the board there, and vaios takes the linker
-# script, the core and the console from that answer. `arch` is the ISA, which is
+# This must agree with defconfig, which is what the standalone CMake build
+# actually reads: NavHAL's Kconfig resolves the board there, and vaios takes the
+# linker script, the core and the console from that answer. navhal.config does
+# not name a board: it is imposed on consumers, who bring their own. `arch` is the ISA, which is
 # also the port directory name (portable/armv7e-m) — the core within it,
 # cortex-m4 or cortex-m7, comes from the board.
 [target]
@@ -35,9 +36,11 @@ navhal_submodule = true
 
 # What nav reads from the rest of this repo, by convention rather than by key:
 #
-#  * Board config: navhal.config at the repo root is this library's capability
-#    set. nav unions it into the app's .config and fails the build early if the
-#    app's .config does not satisfy it. It is also what a standalone build reads.
+#  * Capabilities: navhal.config at the repo root is the minimum vaios needs of
+#    the app's NavHAL (core drivers and the FPU flags; no board, no RTC, no FatFs
+#    options). nav unions it into the app's .config and fails the build early if
+#    the app's .config does not satisfy it. The VFS and MPU modules need DRV_SDIO
+#    and DRV_MPU on top, which the app states itself.
 #  * NavHAL: no [dependencies] entry. NavHAL is not a library in nav's graph; the
 #    app provides the one copy (NAVHAL_DIR). This repo's extern/NavHAL submodule
 #    pins v0.3.16 for standalone builds; nav has no key to pin the app's copy.

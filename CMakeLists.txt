@@ -332,15 +332,67 @@ message(STATUS "VAIOS: Kconfig config generated -> ${VAIOS_AUTOCONF}")
 # canonical NavHAL flag (CONFIG_USE_FPU in the .config NavHAL is configured from)
 # as the single source of truth and force VAIOS_FPU to match it. Non-NAVHAL builds
 # keep VAIOS_FPU as an independent knob.
+#
+# Which file holds that decision depends on who configures NavHAL:
+#  * a superproject added NavHAL itself (TARGET hal: a nav app). NavHAL was
+#    configured from the app's .config, which nav hands vaios as VAIOS_CONFIG, so
+#    that file speaks first. It is the app's choice -- vaios's navhal.config does
+#    not make it (it used to, and a soft-float app could not use vaios).
+#  * vaios embeds NavHAL (standalone). It stages the build .config and THEN
+#    _nav_cfg on top (below), so _nav_cfg's statement wins, and the build .config
+#    (seeded from defconfig) is what applies when _nav_cfg says nothing. Same
+#    outcome as before the FPU lines moved from navhal.config to defconfig.
+# A file "states" a choice with CONFIG_USE_FPU=y|n or `# CONFIG_USE_FPU is not
+# set`; the last such line counts. When neither file states one the symbol is
+# unset, and NavHAL's Kconfig default for an unset USE_FPU is n: soft-float.
+function(_vaios_cfg_fpu file out)
+  set(${out} "" PARENT_SCOPE)
+  if(EXISTS "${file}")
+    file(STRINGS "${file}" _m REGEX "^(CONFIG_USE_FPU=[yn]|# CONFIG_USE_FPU is not set)$")
+    if(_m)
+      list(GET _m -1 _last)
+      if(_last STREQUAL "CONFIG_USE_FPU=y")
+        set(${out} ON PARENT_SCOPE)
+      else()
+        set(${out} OFF PARENT_SCOPE)
+      endif()
+    endif()
+  endif()
+endfunction()
+
 if(NAVHAL)
-    if(EXISTS "${_nav_cfg}")
-        file(STRINGS "${_nav_cfg}" _nav_fpu REGEX "^CONFIG_USE_FPU=y$")
-        if(_nav_fpu)
-            set(VAIOS_FPU ON CACHE BOOL "Enable FPU support" FORCE)
-        else()
-            set(VAIOS_FPU OFF CACHE BOOL "Enable FPU support" FORCE)
+    if(TARGET hal)
+        set(_fpu_files "${_vaios_dotconfig}" "${_nav_cfg}")
+    else()
+        set(_fpu_files "${_nav_cfg}" "${_vaios_dotconfig}")
+    endif()
+    set(_fpu_from "")
+    foreach(_f IN LISTS _fpu_files)
+        _vaios_cfg_fpu("${_f}" _fpu_v)
+        if(NOT _fpu_v STREQUAL "")
+            set(_fpu_from "${_f}")
+            break()
         endif()
-        message(STATUS "VAIOS: FPU mirrored from NavHAL (${_nav_cfg}) -> VAIOS_FPU=${VAIOS_FPU}")
+    endforeach()
+    if(_fpu_from OR EXISTS "${_nav_cfg}")
+        if(_fpu_v STREQUAL "")
+            set(_fpu_v OFF)
+            set(_fpu_from "${_nav_cfg} (no CONFIG_USE_FPU in it or in ${_vaios_dotconfig})")
+        endif()
+        set(VAIOS_FPU ${_fpu_v} CACHE BOOL "Enable FPU support" FORCE)
+        message(STATUS "VAIOS: FPU mirrored from NavHAL (${_fpu_from}) -> VAIOS_FPU=${VAIOS_FPU}")
+    endif()
+    # A superproject's NavHAL has already resolved its own USE_FPU (config.cmake,
+    # from the app's .config) and chosen -mfloat-abi with it. If vaios read a
+    # different answer out of VAIOS_CONFIG the two halves would not link; say so
+    # here instead.
+    if(TARGET hal AND DEFINED USE_FPU AND DEFINED VAIOS_FPU)
+        if((USE_FPU AND NOT VAIOS_FPU) OR (NOT USE_FPU AND VAIOS_FPU))
+            message(FATAL_ERROR "vaios and NavHAL disagree on the float ABI: "
+                    "NavHAL has USE_FPU=${USE_FPU}, but VAIOS_CONFIG "
+                    "(${_vaios_dotconfig}) gives CONFIG_USE_FPU=${VAIOS_FPU}. "
+                    "Pass the same merged .config to both.")
+        endif()
     endif()
 endif()
 
@@ -376,6 +428,16 @@ if(NAVHAL AND NOT TARGET hal)
   if(EXISTS "${_nav_cfg}")
     file(READ "${_nav_cfg}" _nc)
     string(APPEND _nav_staged "${_nc}\n")
+  endif()
+  # What the modules this build compiled need from NavHAL, which navhal.config
+  # (the part every consumer must provide) leaves out. A consumer states the same
+  # two lines in its own .config; port_hw.c and vfs.h say so if it does not.
+  if(VAIOS_MODULE_VFS)
+    # v_open/v_read/... come from NavHAL's FatFs layer, built only with SDIO.
+    string(APPEND _nav_staged "CONFIG_DRV_SDIO=y\n")
+  endif()
+  if(CONFIG_VAIOS_MPU_ENABLE)
+    string(APPEND _nav_staged "CONFIG_DRV_MPU=y\n")
   endif()
   file(WRITE "${NAVHAL_DIR}/.config" "${_nav_staged}")
 
@@ -532,8 +594,10 @@ if(NAVHAL)
     # which NavHAL's kconfig.py turns into USE_FPU, overriding the cache var). This is the robustness
     # fix: a build .config first seeded WITHOUT -DNAVHAL=ON has no CONFIG_DRV_*,
     # and copying it verbatim silently compiled every NavHAL driver out (SDIO,
-    # MPU, ...). navhal.config remains the source of truth for the HAL driver
-    # set; the unified menuconfig still shows both trees. The file is gitignored,
+    # MPU, ...). navhal.config is only what vaios asks of ANY consumer; this build's
+    # board and extras are in defconfig (already in the .config above), and the
+    # module-conditional drivers are appended below. The unified menuconfig still
+    # shows both trees. The file is gitignored,
     # so NavHAL stays an unmodified submodule; rewriting it re-triggers configure.
     # extern/NavHAL/.config was staged above, before the toolchain flags were
     # built, because the processor and board it resolves to decide them.
@@ -581,6 +645,15 @@ message("STARTUP_FILE for VAIOS: ${STARTUP_FILE}")
 # build only, exactly as tests/CMakeLists.txt does for the host suite.
 if(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
   add_compile_definitions(HEAP_WATERMARK_ENABLE=0 TASK_STACK_WATERMARK_ENABLE=0)
+  # The runner defines its own _write/_sbrk (examples/99_unit_tests.c routes the
+  # framework's stdio to the console and backs it with a private arena). Its
+  # definitions used to win by being first on the link line; vaios's retargeting
+  # now is linked as objects, so it would be a duplicate. See kernel/CMakeLists.
+  # A normal variable, not a FORCEd cache entry: option() honours it (CMP0077)
+  # for this configure only. A cache entry would stick, and reconfiguring the
+  # same build dir for another example would keep the retargeting off, with the
+  # guard compiled out, so nosys's _sbrk could win again silently.
+  set(VAIOS_NEWLIB_RETARGET OFF)
 endif()
 
 # Force-include the generated vaios config into vaios's OWN sources only

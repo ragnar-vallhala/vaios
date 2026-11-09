@@ -24,12 +24,44 @@ if(NOT VAIOS_MODULE_BUS)
   list(FILTER VAIOS_SOURCES EXCLUDE REGEX "/bus\\.c$")
 endif()
 # syscalls.c is bare-metal newlib retargeting (_sbrk/_write/_read/_exit ...). On
-# the host those clash with glibc's own, and the host port needs none of them.
-if(PORT_IS_HOSTED)
-  list(FILTER VAIOS_SOURCES EXCLUDE REGEX "syscalls\\.c$")
+# the host those clash with glibc's own, and the host port needs none of them, so
+# it is dropped from the archive there and no retargeting objects are built.
+#
+# It is built as an OBJECT library, not left to be an archive member, because
+# archive members lose to anything already defined. nav's libc = "newlib" links
+# `-lc -lm -lnosys` AHEAD of the dependency archives, so the linker took _sbrk and
+# _write from libnosys.a(sbrk.o/write.o) before it ever opened libvaios.a. nosys's
+# _sbrk grows from the linker symbol `end` -- where vaios's own heap starts -- so
+# newlib's malloc would have handed out vaios heap memory with nothing to say so.
+# Objects named on the link line are always linked and always define their
+# symbols first, so vaios's retargeting wins whatever the library order is. The
+# objects reach a consumer through the `vaios` target's INTERFACE sources below;
+# they are also kept in libvaios.a so a consumer linking the archive by path
+# still gets them (and, for that one, the v_newlib_retarget guard in vaios.c turns
+# a lost race against libnosys into a "multiple definition" link error).
+#
+# -DVAIOS_NEWLIB_RETARGET=OFF drops the retargeting altogether, for a firmware
+# that supplies its own _sbrk/_write (vaios's heap allocator never calls them).
+option(VAIOS_NEWLIB_RETARGET
+  "Provide vaios's newlib stubs (_sbrk/_write/...) so they beat libnosys" ON)
+set(_vaios_retarget OFF)
+if(NOT PORT_IS_HOSTED AND VAIOS_NEWLIB_RETARGET)
+  set(_vaios_retarget ON)
+endif()
+list(FILTER VAIOS_SOURCES EXCLUDE REGEX "syscalls\\.c$")
+if(_vaios_retarget)
+  add_library(vaios_syscalls OBJECT ${CMAKE_CURRENT_SOURCE_DIR}/syscalls.c)
 endif()
 
 add_library(vaios STATIC ${VAIOS_SOURCES})
+if(_vaios_retarget)
+  target_sources(vaios PRIVATE $<TARGET_OBJECTS:vaios_syscalls>)
+  # PUBLIC would also name them again in vaios's own link; INTERFACE is what a
+  # consumer (and the examples) need. Linked as objects, ahead of any -l.
+  target_sources(vaios INTERFACE $<TARGET_OBJECTS:vaios_syscalls>)
+  # vaios.c references v_newlib_retarget so the retargeting cannot go missing.
+  target_compile_definitions(vaios PRIVATE VAIOS_NEWLIB_RETARGET=1)
+endif()
 
 # The boot banner's build identity (git revision, time, builder): regenerated on
 # every build by a target, so it describes the image actually being linked.

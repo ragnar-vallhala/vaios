@@ -25,6 +25,17 @@
 // console is a board property, so it is read from here rather than named in
 // this file — see v_port_hw_console_init.
 #include "board.h"
+
+/* What a compiled module needs from the NavHAL it is built against. A consumer
+ * states these in its own NavHAL config (navhal.config asks only for the core,
+ * docs/consumer-interface.md); without them the build used to fail later, at
+ * link, on a bare hal_mpu_* or v_open. */
+#if VAIOS_MPU_ENABLE && !NAVHAL_CONFIG_DRV_MPU
+#error "VAIOS_MPU_ENABLE needs CONFIG_DRV_MPU=y in the NavHAL config"
+#endif
+#if VAIOS_MODULE_VFS && !NAVHAL_CONFIG_DRV_SDIO
+#error "VAIOS_MODULE_VFS needs CONFIG_DRV_SDIO=y in the NavHAL config"
+#endif
 #else
 #include "semihosting.h"
 
@@ -410,7 +421,7 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
      for hal_usb_cdc_read. Its callback type is exactly this signature. Kept
      here as well, for the attach ^L (console_attach_poll). */
   _console_rx_sink = sink;
-  return hal_usb_cdc_set_rx_callback(sink) == HAL_OK;
+  return hal_usb_cdc_attach_rx_callback(sink) == HAL_OK;
 #elif defined(CONSOLE_UART_RX_IRQ)
   _console_rx_sink = sink;
 #if defined(CONSOLE_RX_DMA)

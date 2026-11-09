@@ -14,6 +14,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(VAIOS_NEWLIB_RETARGET) && VAIOS_NEWLIB_RETARGET
+/* Link-time guard (kernel/syscalls.c): a build whose _sbrk/_write came from
+   libnosys rather than vaios would let newlib's malloc grow from the symbol
+   where vaios's heap starts. Naming the marker makes that a link error. */
+extern const char v_newlib_retarget;
+__attribute__((used)) static const char *const v_newlib_retarget_ref =
+    &v_newlib_retarget;
+#endif
+
 extern uint32_t systick_count;
 
 /* --- the boot banner ---------------------------------------------------------
