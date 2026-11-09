@@ -18,6 +18,7 @@ set(VAIOS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 set(TEST_INCLUDE_DIRS
     "${VAIOS_ROOT}/include"
+    "${CMAKE_BINARY_DIR}"                # generated vaios_version.h
     "${CMAKE_CURRENT_SOURCE_DIR}/stubs"  # port_stub.h → included as "port.h"
 )
 
@@ -91,6 +92,8 @@ if(NOT _vaios_kconfig_rc EQUAL 0)
   message(FATAL_ERROR "vaios Kconfig generation failed (rc=${_vaios_kconfig_rc})")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VAIOS_CONFIG}")
+include("${VAIOS_ROOT}/cmake/VaiosVersion.cmake")
+vaios_version_generate("${VAIOS_ROOT}" "${CMAKE_BINARY_DIR}")
 add_compile_options("SHELL:-include ${_vaios_autoconf}")
 add_compile_options("SHELL:-include ${VAIOS_ROOT}/include/vaios_config_derived.h")
 

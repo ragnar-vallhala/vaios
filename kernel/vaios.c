@@ -28,9 +28,7 @@ extern uint32_t systick_count;
 #define VAIOS_BUILD_TIME "unknown"
 #define VAIOS_BUILD_BY "unknown"
 #endif
-#ifndef VAIOS_VERSION /* from Kconfig; absent only to a bare analyser run */
-#define VAIOS_VERSION "unknown"
-#endif
+#include "vaios_version.h" /* VAIOS_VERSION, from nav.toml */
 #ifndef VAIOS_VERSION_NAME /* the release series' name (Kconfig) */
 #define VAIOS_VERSION_NAME "unnamed"
 #endif

@@ -12,18 +12,8 @@
 mainmenu "vaios Configuration"
 
 menu "Version"
-config VAIOS_VERSION_MAJOR
-    int "Major version"
-    default 0
-config VAIOS_VERSION_MINOR
-    int "Minor version"
-    default 2
-config VAIOS_VERSION_PATCH
-    int "Patch version"
-    default 0
-config VAIOS_VERSION
-    string "Version string"
-    default "0.2.0"
+# The number itself is not configuration: it comes from nav.toml
+# ([project].version) via cmake/VaiosVersion.cmake -> vaios_version.h.
 config VAIOS_VERSION_NAME
     string "Release name"
     default "Brahmaputra"
