@@ -225,10 +225,27 @@ set(NAVHAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/NavHAL" CACHE PATH
 # to osource (unset -> standalone, sources nothing); srctree roots NavHAL's own
 # `source "src/..."` lines. Standalone builds set neither.
 set(_vaios_gen_env "")
+# The consumer app's Kconfig (a nav firmware project sets this), merged into the
+# same .config after NavHAL's; independent of NAVHAL. Its symbols are not emitted
+# into vaios's outputs. The file must rsource its own includes.
+set(VAIOS_APP_KCONFIG "" CACHE FILEPATH
+    "Consumer app Kconfig to merge into the single .config (empty: none)")
+set(_vaios_gen_vars "")
 if(NAVHAL)
-  set(_vaios_gen_env ${CMAKE_COMMAND} -E env
+  list(APPEND _vaios_gen_vars
       "NAVHAL_KCONFIG=${NAVHAL_DIR}/Kconfig"
       "srctree=${NAVHAL_DIR}")
+endif()
+if(VAIOS_APP_KCONFIG)
+  if(NOT EXISTS "${VAIOS_APP_KCONFIG}")
+    message(FATAL_ERROR "VAIOS_APP_KCONFIG '${VAIOS_APP_KCONFIG}' does not exist")
+  endif()
+  get_filename_component(_vaios_app_kconfig "${VAIOS_APP_KCONFIG}" ABSOLUTE)
+  list(APPEND _vaios_gen_vars "APP_KCONFIG=${_vaios_app_kconfig}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_vaios_app_kconfig}")
+endif()
+if(_vaios_gen_vars)
+  set(_vaios_gen_env ${CMAKE_COMMAND} -E env ${_vaios_gen_vars})
 endif()
 # The NavHAL config this build uses: -DNAVHAL_CONFIG_FILE (e.g. the soft-float
 # config tools/test_qemu_smoke.sh passes), else the repo's navhal.config. Resolved

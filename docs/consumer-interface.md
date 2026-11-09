@@ -121,6 +121,28 @@ Consequences for a consumer:
   (it only reports success). Use `v_printf`/`v_log` for console output.
 * The host port (`portable/host`, which uses the real libc) builds none of this.
 
+## App Kconfig (one .config)
+
+A consumer may merge its own Kconfig into vaios's single `.config`, so app
+feature switches, NavHAL drivers and vaios values (heap, stacks) are edited in
+one place (`menuconfig` shows all three trees):
+
+```cmake
+set(VAIOS_APP_KCONFIG "${CMAKE_SOURCE_DIR}/Kconfig" CACHE FILEPATH "")
+```
+
+Set it before `add_subdirectory(vaios)`. Empty (the default) means no app tree;
+it works with `NAVHAL` on or off. The app Kconfig is sourced after NavHAL's, so
+its symbols may depend on vaios and NavHAL symbols.
+
+* The app Kconfig must use `rsource` for its own includes. A plain `source`
+  resolves against `$srctree`, which points at NavHAL when `NAVHAL=ON`.
+* vaios emits only its own symbols (`vaios_autoconf.h`, `vaios_config.cmake`).
+  App symbols are not emitted; the consumer generates its own header from the
+  same `.config`. A vaios symbol the app merely extends stays vaios's.
+* The app directory may contain vaios or NavHAL (e.g. under `.nav/deps/`);
+  each symbol is attributed to the innermost tree that defines it.
+
 ## Version
 
 `nav.toml` `[project].version` is the only place the version is written; nav
