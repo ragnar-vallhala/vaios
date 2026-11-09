@@ -581,6 +581,11 @@ message("STARTUP_FILE for VAIOS: ${STARTUP_FILE}")
 # build only, exactly as tests/CMakeLists.txt does for the host suite.
 if(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
   add_compile_definitions(HEAP_WATERMARK_ENABLE=0 TASK_STACK_WATERMARK_ENABLE=0)
+  # The runner defines its own _write/_sbrk (examples/99_unit_tests.c routes the
+  # framework's stdio to the console and backs it with a private arena). Its
+  # definitions used to win by being first on the link line; vaios's retargeting
+  # now is linked as objects, so it would be a duplicate. See kernel/CMakeLists.
+  set(VAIOS_NEWLIB_RETARGET OFF CACHE BOOL "UNIT_TESTS supplies its own" FORCE)
 endif()
 
 # Force-include the generated vaios config into vaios's OWN sources only
