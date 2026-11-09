@@ -421,7 +421,7 @@ int v_port_hw_console_rx_irq_init(void (*sink)(const uint8_t *data,
      for hal_usb_cdc_read. Its callback type is exactly this signature. Kept
      here as well, for the attach ^L (console_attach_poll). */
   _console_rx_sink = sink;
-  return hal_usb_cdc_set_rx_callback(sink) == HAL_OK;
+  return hal_usb_cdc_attach_rx_callback(sink) == HAL_OK;
 #elif defined(CONSOLE_UART_RX_IRQ)
   _console_rx_sink = sink;
 #if defined(CONSOLE_RX_DMA)
