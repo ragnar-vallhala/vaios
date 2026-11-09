@@ -1,7 +1,7 @@
 # Building, Flashing, and Running VaiOS
 
 VaiOS targets ARMv7E-M — Cortex-M4 and Cortex-M7 share one port. The bench board
-is the NAVIXSM-F401RE, named in `navhal.config`; any NavHAL-supported board can
+is the NAVIXSM-F401RE, named in `defconfig`; any NavHAL-supported board can
 be selected instead with
 `-DNAVHAL_CONFIG_FILE=extern/NavHAL/cmake/defconfigs/<board>.defconfig`, and the
 core, linker script, startup and console all follow from it. Most of the kernel
@@ -354,10 +354,15 @@ top-level `CMakeLists.txt`.
 
 ### NavHAL configuration
 
-The NavHAL Kconfig is owned here as `navhal.config` and copied into
-`extern/NavHAL/.config` at configure time, so the submodule stays pristine.
-Edit `navhal.config` directly, or use NavHAL's menuconfig and save the result
-back:
+The NavHAL Kconfig a standalone build uses is two files, seeded into the build's
+`.config` and copied into `extern/NavHAL/.config` at configure time, so the
+submodule stays pristine: `defconfig` (the bench board and what the examples
+like -- long file names, the RTC, UART DMA, DWT) and `navhal.config`, which is
+only what vaios asks of any consumer's NavHAL (see
+[docs/consumer-interface.md](docs/consumer-interface.md)). The SD and MPU
+drivers follow the VFS and MPU modules. Edit `defconfig` for the board and the
+bench extras, `navhal.config` only for a real new requirement, or use NavHAL's
+menuconfig and save the result back into the right one:
 
 ```bash
 cd extern/NavHAL && python3 tools/kconfig.py --menuconfig

@@ -377,6 +377,16 @@ if(NAVHAL AND NOT TARGET hal)
     file(READ "${_nav_cfg}" _nc)
     string(APPEND _nav_staged "${_nc}\n")
   endif()
+  # What the modules this build compiled need from NavHAL, which navhal.config
+  # (the part every consumer must provide) leaves out. A consumer states the same
+  # two lines in its own .config; port_hw.c and vfs.h say so if it does not.
+  if(VAIOS_MODULE_VFS)
+    # v_open/v_read/... come from NavHAL's FatFs layer, built only with SDIO.
+    string(APPEND _nav_staged "CONFIG_DRV_SDIO=y\n")
+  endif()
+  if(CONFIG_VAIOS_MPU_ENABLE)
+    string(APPEND _nav_staged "CONFIG_DRV_MPU=y\n")
+  endif()
   file(WRITE "${NAVHAL_DIR}/.config" "${_nav_staged}")
 
   # Through `cmake -E env`, not bare: NavHAL's Kconfig globs its arch tree with
@@ -532,8 +542,10 @@ if(NAVHAL)
     # which NavHAL's kconfig.py turns into USE_FPU, overriding the cache var). This is the robustness
     # fix: a build .config first seeded WITHOUT -DNAVHAL=ON has no CONFIG_DRV_*,
     # and copying it verbatim silently compiled every NavHAL driver out (SDIO,
-    # MPU, ...). navhal.config remains the source of truth for the HAL driver
-    # set; the unified menuconfig still shows both trees. The file is gitignored,
+    # MPU, ...). navhal.config is only what vaios asks of ANY consumer; this build's
+    # board and extras are in defconfig (already in the .config above), and the
+    # module-conditional drivers are appended below. The unified menuconfig still
+    # shows both trees. The file is gitignored,
     # so NavHAL stays an unmodified submodule; rewriting it re-triggers configure.
     # extern/NavHAL/.config was staged above, before the toolchain flags were
     # built, because the processor and board it resolves to decide them.
@@ -581,6 +593,15 @@ message("STARTUP_FILE for VAIOS: ${STARTUP_FILE}")
 # build only, exactly as tests/CMakeLists.txt does for the host suite.
 if(VAIOS_EXAMPLE STREQUAL "UNIT_TESTS")
   add_compile_definitions(HEAP_WATERMARK_ENABLE=0 TASK_STACK_WATERMARK_ENABLE=0)
+  # The runner defines its own _write/_sbrk (examples/99_unit_tests.c routes the
+  # framework's stdio to the console and backs it with a private arena). Its
+  # definitions used to win by being first on the link line; vaios's retargeting
+  # now is linked as objects, so it would be a duplicate. See kernel/CMakeLists.
+  # A normal variable, not a FORCEd cache entry: option() honours it (CMP0077)
+  # for this configure only. A cache entry would stick, and reconfiguring the
+  # same build dir for another example would keep the retargeting off, with the
+  # guard compiled out, so nosys's _sbrk could win again silently.
+  set(VAIOS_NEWLIB_RETARGET OFF)
 endif()
 
 # Force-include the generated vaios config into vaios's OWN sources only
