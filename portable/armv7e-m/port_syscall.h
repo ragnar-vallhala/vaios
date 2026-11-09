@@ -23,6 +23,16 @@ __attribute__((always_inline)) static inline int v_in_thread_mode(void) {
   return ipsr == 0u;
 }
 
+#ifdef __CPPCHECK__
+// cppcheck's parser rejects `register T x __asm__("rN")`, and a syntax error in
+// this header stops the analysis of every file that includes it. Give it plain
+// declarations with the same signatures; the real trampolines below are what
+// the compiler sees.
+intptr_t v_svc0(uint32_t n);
+intptr_t v_svc1(uint32_t n, uintptr_t a0);
+intptr_t v_svc2(uint32_t n, uintptr_t a0, uintptr_t a1);
+intptr_t v_svc3(uint32_t n, uintptr_t a0, uintptr_t a1, uintptr_t a2);
+#else
 // Thin `svc 1` trampolines: number in r12, args in r0-r3, result in r0. Args and
 // result are pointer-width; on ARMv7-M uintptr_t/intptr_t are 32-bit, so the
 // registers and the ABI are byte-identical to a uint32_t ABI.
@@ -56,5 +66,6 @@ v_svc3(uint32_t n, uintptr_t a0, uintptr_t a1, uintptr_t a2) {
   __asm__ volatile("svc 1" : "+r"(r0) : "r"(r12), "r"(r1), "r"(r2) : "memory");
   return (intptr_t)r0;
 }
+#endif /* __CPPCHECK__ */
 
 #endif /* VAIOS_CORTEX_M4_PORT_SYSCALL_H */

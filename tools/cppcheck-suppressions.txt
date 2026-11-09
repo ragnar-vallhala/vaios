@@ -24,3 +24,10 @@ nullPointerRedundantCheck:kernel/task.c
 # value
 # for the LOGGING_ENABLED / BUFFERED_LOGGING bools where neither branch compiles.
 va_end_missing:kernel/utils.c
+
+# port_syscall.h: cppcheck 2.17+ cannot parse GCC's register-variable binding
+# `register T x __asm__("rN")`, which the svc trampolines need for the syscall
+# ABI. cppcheck sweeps both sides of the header's __CPPCHECK__ guard; the
+# __CPPCHECK__ side has plain declarations and is analysed normally, so this
+# only silences the parse failure on the compiler-only side.
+syntaxError:portable/armv7e-m/port_syscall.h

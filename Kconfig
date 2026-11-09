@@ -179,7 +179,14 @@ config IDLE_TASK_PRIORITY
     default 0
 config IDLE_TASK_STACK_SIZE
     int "Idle task stack size (bytes)"
-    default 512
+    default 1024
+    help
+      The idle task flushes the log and frees terminated tasks, and the GC can
+      log (v_free reports a corrupted block). v_log panics when it is entered
+      with less than 320 bytes of stack left, and the GC reaches it about 200
+      bytes deep, so 512 left too little: with arm-none-eabi-gcc 14 the GC's
+      error log is a kernel panic. The whole path peaks at about 400 bytes.
+      Keep it a power of two for the MPU stack region.
 config TIME_SLICE
     int "Round-robin time slice (ticks)"
     default 2
