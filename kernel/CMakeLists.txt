@@ -70,7 +70,7 @@ target_link_libraries(vaios PUBLIC -Wl,--start-group hal common -Wl,--end-group 
 # they shouldn't — the kernel reaches the HAL through the portable/ facade. A
 # PUBLIC export put vendor headers on every consumer's include path, which is
 # what let a stray hal_* call in kernel/ compile silently instead of erroring.
-target_include_directories(vaios PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../extern/NavHAL/include)
+target_include_directories(vaios PRIVATE ${NAVHAL_DIR}/include)
 else()
 target_link_libraries(vaios PUBLIC -lgcc -lc portable)
 endif()
