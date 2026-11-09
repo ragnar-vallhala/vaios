@@ -1,11 +1,60 @@
 # vaios default configuration (defconfig).
 #
-# Seeded into <build>/.config on first configure. An empty body means "all
-# Kconfig defaults", which reproduces the historical include/vaios_config_
-# default.h values exactly. Customise interactively with:
+# Seeded into <build>/.config on first configure. The vaios symbols are all
+# Kconfig defaults, which reproduces the historical include/vaios_config_
+# default.h values exactly; the body below is NavHAL symbols for the standalone
+# build only. Customise interactively with:
 #
 #     python3 tools/kconfig.py --menuconfig --config <build>/.config
 #
 # then re-run cmake to regenerate <build>/vaios_autoconf.h. Non-default choices
 # persist in the build-dir .config; commit a curated defconfig to change the
 # shipped baseline.
+
+# ---------------------------------------------------------------------------
+# vaios STANDALONE build only (NavHAL Kconfig symbols).
+#
+# Seeded into <build>/.config together with navhal.config. A consuming app never
+# reads this file: navhal.config is what vaios asks of the app's NavHAL, and it
+# is kept to what vaios cannot work without. What this bench build wants on top
+# of that is here, so it does not become every consumer's requirement.
+# ---------------------------------------------------------------------------
+
+# The board on the bench: NAVIXSM-F401RE, a custom F401 flight controller. Same
+# MCU as a Nucleo-F401RE, which is why building for the Nucleo appeared to work
+# -- but the LED is active low on PC0, the console UART is on the iBus header,
+# and it has a real 8 MHz crystal (so HSE, and therefore USB CDC, are available).
+# A consumer picks its own board; nav.toml's [target] is only this default.
+CONFIG_ARCH_CORTEX_M4=y
+CONFIG_CMAKE_SYSTEM_PROCESSOR="cortex-m4"
+CONFIG_ARCH_ISA="armv7e-m"
+CONFIG_VENDOR_STM32=y
+CONFIG_VENDOR="stm32"
+CONFIG_FAMILY_STM32F4=y
+CONFIG_FAMILY="stm32f4"
+CONFIG_BOARD_NAVIXSM_F401RE=y
+CONFIG_BOARD="navixsmf401re"
+CONFIG_TOOLCHAIN_PREFIX="arm-none-eabi-"
+CONFIG_FLASHER="st-flash"
+CONFIG_FLASH_ADDRESS="0x8000000"
+
+# Console and system drivers the examples and on-target tests rely on: UART DMA
+# (the buffered console) and the DWT cycle counter (v_perf). DRV_SDIO and DRV_MPU
+# are not here: the top-level CMakeLists.txt adds them when VAIOS_MODULE_VFS /
+# VAIOS_MPU_ENABLE is on, which is also what a consumer has to do itself.
+CONFIG_DRV_DMA=y
+CONFIG_DRV_UART_DMA=y
+CONFIG_DRV_DWT=y
+
+# FatFs long file names: without them FAT has only 8.3 names, stored uppercase
+# (mkdir shtest made SHTEST). +3.1 KB flash, +144 B RAM at 64 (NavHAL 0.3.12). A
+# static, non-thread-safe LFN buffer and 65 B per FILINFO on the stack, so not
+# something to impose on a consumer. Takes effect with the VFS module (SDIO).
+CONFIG_FS_LFN=y
+CONFIG_FS_LFN_MAX=64
+
+# The RTC (F4 only in NavHAL), and FatFs stamping files with it rather than one
+# fixed date. The shell example starts the RTC in a background task; `date` sets
+# it.
+CONFIG_DRV_RTC=y
+CONFIG_FS_RTC=y

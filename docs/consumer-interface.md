@@ -43,6 +43,42 @@ force-included config headers are macros only and are clean under
 
 NavHAL is not touched: its sources do not get vaios's `-include`s.
 
+## What vaios asks of NavHAL
+
+nav reads `navhal.config` from the vaios repo and unions every `CONFIG_X=y` line
+into the app's `.config` (an app that sets one to something else fails the
+build), so the file is the price of using vaios. It carries only what vaios
+cannot boot without:
+
+| Symbol | Why |
+|---|---|
+| `DRV_CLOCK`, `DRV_TIMER` | `hal_clock_init`, `hal_timebase_init`: the boot clock and the kernel tick |
+| `DRV_INTERRUPT` | SysTick/PendSV/SVC priorities, IRQ attach for the console and bus managers |
+| `DRV_UART`, `DRV_GPIO` | the console (`hal_uart_*`); the UART driver takes its pins through GPIO |
+| `USE_FPU`, `DRV_FPU` | vaios saves s16-s31 across a context switch when the FPU is on and derives that from this flag, so vaios and NavHAL agree on the float ABI. A soft-float app needs a config without them (see `tests/configs/navhal_softfp.config`) |
+
+It does not name a board, an architecture or a flasher: the app picks its own.
+
+What a module needs on top is stated by the app, and vaios stops the build with
+a message rather than failing later at link:
+
+| vaios | needs | why |
+|---|---|---|
+| `VAIOS_MODULE_VFS=ON` | `CONFIG_DRV_SDIO=y` | `v_open`/`v_read`/... and the card driver come from NavHAL's FatFs/SDIO layer (`#error` in `port_hw.c`) |
+| `VAIOS_MPU_ENABLE` | `CONFIG_DRV_MPU=y` | `hal_mpu_*` (`#error` in `port_hw.c`) |
+
+Used when present, never required: `DRV_RTC` (the `date` command, `v_port_hw_rtc_*`),
+`DRV_DWT` (cycle counts in `v_perf`; zero without), `DRV_UART_DMA`/`DRV_DMA` (the
+buffered console; blocking writes without), `DRV_USB_CDC`, `DRV_I2C`, `DRV_SPI`
+(the bus managers), `FS_LFN` (long names; `VFS_NAME_MAX` follows
+`NAVHAL_CONFIG_FS_LFN_MAX`). In particular vaios no longer forces FatFs long file
+names (a static, non-thread-safe buffer and 65 bytes of stack per `FILINFO`) or
+`FS_RTC` on a consumer: enable them in the app's `.config` if the app wants them.
+
+vaios's own standalone build adds its board, those extras and the module drivers
+itself (`defconfig`, and `CMakeLists.txt` for `DRV_SDIO`/`DRV_MPU`); a consumer
+never reads `defconfig`.
+
 ## newlib retargeting (`_sbrk`, `_write`, ...)
 
 On a bare-metal build vaios defines the newlib system calls `_sbrk`, `_write`,

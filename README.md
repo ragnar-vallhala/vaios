@@ -88,15 +88,19 @@ Other examples: `PRIORITY_INVERSION`, `IPC_TEST`, `HEAP_ALLOCATOR`,
 
 ### NavHAL configuration
 
-The NavHAL Kconfig (`.config`) is owned in this repo as `navhal.config` and
-copied into `extern/NavHAL/.config` at configure time, so the submodule stays
-pristine. Edit `navhal.config` directly or run NavHAL's interactive menuconfig:
+The NavHAL Kconfig (`.config`) is owned in this repo and copied into
+`extern/NavHAL/.config` at configure time, so the submodule stays pristine. It
+is two files: `navhal.config`, what vaios asks of any consumer's NavHAL (kept to
+the minimum; see docs/consumer-interface.md), and `defconfig`, the standalone
+build's board and extras. Edit them directly or run NavHAL's interactive
+menuconfig:
 
 ```bash
 cd extern/NavHAL && python3 tools/kconfig.py --menuconfig
 ```
 
-then save the result back into the repo's `navhal.config`.
+then save the result back into `defconfig` (board, extras) or `navhal.config`
+(a real requirement of vaios).
 
 ## Testing
 
@@ -155,7 +159,8 @@ tests/               Host-native unit tests (gcc, x86)
 docs/changelog/      One file per discrete bug fix / improvement
 docs/benchmark/      Cross-RTOS benchmark plan, results, and improvement plan
 tools/               Flash, run, and Renode helper scripts
-navhal.config        Authoritative NavHAL Kconfig (copied into the submodule)
+navhal.config        What vaios requires of a consumer's NavHAL (the minimum)
+defconfig            Standalone build: board and NavHAL extras (+ vaios defaults)
 ```
 
 ## Documentation

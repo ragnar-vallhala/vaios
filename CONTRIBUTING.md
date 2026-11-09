@@ -60,10 +60,13 @@ for the full flash + UART-capture flow and the build-option table.
 
 ### NavHAL configuration
 
-NavHAL's Kconfig (`.config`) is owned in this repo as `navhal.config` and copied
-into `extern/NavHAL/.config` at configure time, so the submodule stays pristine.
-Edit `navhal.config` directly, or run NavHAL's interactive menuconfig and save
-the result back:
+NavHAL's Kconfig (`.config`) is owned in this repo and copied into
+`extern/NavHAL/.config` at configure time, so the submodule stays pristine.
+`navhal.config` is what vaios requires of every consumer's NavHAL: nav unions it
+into an app's `.config`, so add to it only what vaios cannot link or boot
+without. The board and anything the standalone build merely likes (long file
+names, the RTC) go in `defconfig`. Edit them directly, or run NavHAL's
+interactive menuconfig and save the result back:
 
 ```bash
 cd extern/NavHAL && python3 tools/kconfig.py --menuconfig
