@@ -32,7 +32,10 @@ extern void stub_reset_heap(void);
 extern TCB *ready_lists[];
 static void guard_only_dummy(void *arg) {
   (void)arg;
-  for (;;)
+  // Never scheduled on the host. The volatile flag keeps -fanalyzer from
+  // reporting a provably infinite loop in a stub that only has to exist.
+  static volatile int stop = 0;
+  while (!stop)
     ;
 }
 static void test_guard_only_any_stack_size(void) {

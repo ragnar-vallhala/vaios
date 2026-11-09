@@ -43,7 +43,10 @@ static int fake_up(v_stream_t *st) {
 
 static void dummy_task(void *arg) {
   (void)arg;
-  while (1)
+  // Never scheduled on the host. The volatile flag keeps -fanalyzer from
+  // reporting a provably infinite loop in a stub that only has to exist.
+  static volatile int stop = 0;
+  while (!stop)
     ;
 }
 
