@@ -55,9 +55,14 @@ cannot boot without:
 | `DRV_CLOCK`, `DRV_TIMER` | `hal_clock_init`, `hal_timebase_init`: the boot clock and the kernel tick |
 | `DRV_INTERRUPT` | SysTick/PendSV/SVC priorities, IRQ attach for the console and bus managers |
 | `DRV_UART`, `DRV_GPIO` | the console (`hal_uart_*`); the UART driver takes its pins through GPIO |
-| `USE_FPU`, `DRV_FPU` | vaios saves s16-s31 across a context switch when the FPU is on and derives that from this flag, so vaios and NavHAL agree on the float ABI. A soft-float app needs a config without them (see `tests/configs/navhal_softfp.config`) |
 
-It does not name a board, an architecture or a flasher: the app picks its own.
+It does not name a board, an architecture, a flasher or a float ABI: the app picks
+its own. For the float ABI, state `CONFIG_USE_FPU=y` and `CONFIG_DRV_FPU=y` for
+hard-float, or neither for soft-float (see `tests/configs/navhal_softfp.config`).
+vaios saves s16-s31 across a context switch when the FPU is on, and reads the
+choice from the `.config` it is given (`VAIOS_CONFIG`), so it follows the app; the
+build stops with a message if that disagrees with the `USE_FPU` NavHAL was
+configured with.
 
 What a module needs on top is stated by the app, and vaios stops the build with
 a message rather than failing later at link:

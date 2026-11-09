@@ -58,3 +58,11 @@ CONFIG_FS_LFN_MAX=64
 # it.
 CONFIG_DRV_RTC=y
 CONFIG_FS_RTC=y
+
+# Hard-float on the bench board. vaios saves s16-s31 across a context switch when
+# the FPU is on and mirrors this flag for it (top-level CMakeLists.txt), so vaios
+# and NavHAL agree on the float ABI. A consumer chooses its own in its .config; it
+# is not in navhal.config. (-DNAVHAL_CONFIG_FILE=tests/configs/navhal_softfp.config
+# switches a standalone build to soft-float: it is staged after this file.)
+CONFIG_USE_FPU=y
+CONFIG_DRV_FPU=y
