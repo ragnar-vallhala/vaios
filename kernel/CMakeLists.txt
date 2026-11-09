@@ -42,13 +42,33 @@ add_custom_target(vaios_build_info
   BYPRODUCTS ${VAIOS_BUILD_H}
   VERBATIM)
 add_dependencies(vaios vaios_build_info)
-target_include_directories(vaios PRIVATE ${CMAKE_BINARY_DIR})
 
-# Export the public headers as a usage requirement so projects that link vaios
-# (e.g. a nav firmware consumer that pulls vaios in as a [dependencies] library)
-# get include/ on their include path. The top-level include_directories() only
-# covers vaios's own compilation, not consumers in another source tree.
-target_include_directories(vaios PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+# The consumer interface (docs/consumer-interface.md). Everything a project that
+# links vaios needs to compile against its public headers travels with the
+# target; the top-level include_directories()/add_compile_options() only cover
+# vaios's own translation units, not a consumer in another source tree.
+#
+#  - include/ (public headers) and the build dir (the generated
+#    vaios_version.h; vaios_autoconf.h sits beside it). portable/<port>/, which
+#    holds port.h, comes from `portable`, linked PUBLIC below.
+#  - The generated config, force-included. The public headers read macros from
+#    vaios_autoconf.h and the derived layer (vaios_config_derived.h) without
+#    including them, so a consumer without the same -include silently sees a
+#    different config. INTERFACE, not PUBLIC: vaios's own sources already get
+#    these from the top-level add_compile_options(), so naming them again here
+#    would only repeat them. Both headers are include-guarded regardless.
+#    SHELL: keeps each `-include <file>` pair together (see the top level).
+# Normalised so the path spells exactly as the top level's does (CMake only
+# de-duplicates identical option strings).
+cmake_path(SET _vaios_include NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+# Consumers see these as SYSTEM: a project built with -Wall -Wextra -Werror
+# should not fail on warnings in headers it does not own. vaios's own sources
+# keep plain -I (PRIVATE, and the top level's include_directories()).
+target_include_directories(vaios PRIVATE ${_vaios_include} ${CMAKE_BINARY_DIR})
+target_include_directories(vaios SYSTEM INTERFACE ${_vaios_include} ${CMAKE_BINARY_DIR})
+target_compile_options(vaios INTERFACE
+  "SHELL:-include ${VAIOS_AUTOCONF}"
+  "SHELL:-include ${_vaios_include}/vaios_config_derived.h")
 
 # Surface each module switch to C code as a 1/0 macro so init calls and APIs
 # can be #if'd out to match the gated source list.
