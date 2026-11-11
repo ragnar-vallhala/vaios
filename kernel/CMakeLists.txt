@@ -117,7 +117,17 @@ target_compile_definitions(vaios PUBLIC
 # them either way. The TARGET guard keeps a misconfigured NAVHAL build (flag on
 # but no NavHAL present) from erroring on undefined targets.
 if(NAVHAL AND TARGET hal)
-target_link_libraries(vaios PUBLIC -Wl,--start-group hal common -Wl,--end-group -lc -lgcc portable)
+# hal's archive goes in a link group (common is an OBJECT library: its objects
+# are on the link line directly). The group is
+# ONE -Wl, token on purpose: a consumer that wraps vaios in its own
+# --start-group/--end-group (nav does) has CMake merge identical linker flags on
+# the final line, and separate `-Wl,--start-group`/`-Wl,--end-group` entries
+# collapse into one start with no end ("ld: missing --end-group"). A single
+# comma-joined token has nothing to merge with. hal/common/portable stay listed
+# as targets so usage requirements and build order are unchanged.
+target_link_libraries(vaios PUBLIC hal common portable
+  "-Wl,--start-group,$<TARGET_FILE:hal>,--end-group"
+  -lc -lgcc)
 # NavHAL's headers come from linking hal above, not from a path: hal publishes
 # its include dirs, the generated board.h dir and driver definitions such as
 # _DMA_ENABLED as usage requirements, so vaios compiles against whichever NavHAL
