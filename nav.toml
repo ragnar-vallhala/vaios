@@ -24,7 +24,7 @@ board = "navixsmf401re"
 backend = "cmake"
 
 # The NavHAL HAL_API_VERSION this vaios is written against; `nav build` refuses
-# a NavHAL that disagrees. (NavHAL v0.3.16, the pin in extern/NavHAL, is 1.)
+# a NavHAL that disagrees. (NavHAL v0.4.2, the pin in extern/NavHAL, is 1.)
 [abi]
 hal_api_version = 1
 
@@ -43,7 +43,7 @@ navhal_submodule = true
 #    and DRV_MPU on top, which the app states itself.
 #  * NavHAL: no [dependencies] entry. NavHAL is not a library in nav's graph; the
 #    app provides the one copy (NAVHAL_DIR). This repo's extern/NavHAL submodule
-#    pins v0.3.16 for standalone builds; nav has no key to pin the app's copy.
+#    pins v0.4.2 for standalone builds; nav has no key to pin the app's copy.
 #  * Build options: a consumer passes `options = ["NAVHAL=ON", ...]` on its
 #    [dependencies] entry for vaios (NAVHAL=ON is required; VAIOS_MODULE_VFS,
 #    VAIOS_MODULE_BUS and the other VAIOS_MODULE_* are optional).

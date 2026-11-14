@@ -116,11 +116,16 @@ Exit codes are non-zero on any failure, so all three are CI-friendly.
 
 ## QEMU
 
-Renode emulates the STM32F4 model well enough to boot vaios — but its DMA
-stream-enable bit doesn't self-clear on transfer-complete, so the DMA-backed
-logging busy-waits forever there. On real hardware the bit clears and logging
-works. The QEMU `netduinoplus2` machine does not emulate the F4 RCC at all and
-the firmware hangs in clock init. Use real hardware for end-to-end testing.
+Renode boots vaios, and CI runs the on-target suite in it: the PIL unit suite
+plus eleven regression scripts (`tools/renode_*.sh`, driven by
+`tools/renode.resc`, see the `sitl` job in `.github/workflows/ci.yml`). Its
+generic STM32F4 model differs from the real part in a few ways, so every Renode
+build passes `-DVAIOS_CONSOLE_DMA=OFF`: the model wires no DMA request line for
+the USARTs, so a console that writes through DMA transmits nothing there. With
+the flag the logger uses the blocking write. The DMA-backed console path is
+therefore not exercised under Renode; test it on real hardware. The QEMU
+`netduinoplus2` machine does not emulate the F4 RCC at all and the firmware
+hangs in clock init, so QEMU is only used for the no-HAL smoke test below.
 
 The `Dockerfile` is multi-stage with two targets. The `qemu` target (default)
 bakes the source in, builds a no-HAL example and boots it under QEMU for
