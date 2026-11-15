@@ -117,3 +117,18 @@ jobs:
 
       - name: MMIO windows for unprivileged tasks in Renode
         run: bash tools/renode_mmio_user.sh
+
+      # The Renode runs configure NavHAL's Kconfig, which reads and rewrites
+      # config files. A tracked config (tests/configs/*.config, defconfig,
+      # navhal.config) or the submodule changing under us, or a stray
+      # .config.old, means a build wrote into the source tree. Fail so it is
+      # noticed in review instead of landing as a surprise diff.
+      - name: Tree is unchanged after the Renode runs
+        if: success()
+        run: |
+          git status --porcelain --untracked-files=all
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::a Renode step modified tracked files or left untracked ones (listed above)"
+            git diff --stat
+            exit 1
+          fi
