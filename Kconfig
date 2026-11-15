@@ -850,8 +850,10 @@ rsource "examples/Kconfig"
 # menu/.config so there is a single source of truth. Driven by the NAVHAL_KCONFIG
 # env var, NOT an `if` block: kconfiglib processes `source` at parse time
 # regardless of `if` conditions, so a guard would still try (and fail) to read
-# NavHAL standalone. The build sets NAVHAL_KCONFIG + $srctree when NAVHAL=ON;
-# unset otherwise, and osource of the empty stub is a silent no-op.
+# NavHAL standalone. The build sets NAVHAL_KCONFIG + $srctree when NAVHAL=ON.
+# Otherwise the generator (tools/kconfig.py) defaults it to os.devnull, an
+# absolute path, so the osource reads an empty file whatever $srctree is. It must
+# be that, not an empty string: "" is resolved against $srctree and fails to open.
 osource "$(NAVHAL_KCONFIG)"
 
 # The consumer app's own Kconfig (nav firmware), merged into the same menu/.config
