@@ -76,6 +76,11 @@ echo "=== Running gcov UART decoder integrity test (python) ==="
 python3 "$ROOT_DIR/tools/test_gcov_uart_decode.py"
 GCOVDEC_EXIT=$?
 
+echo ""
+echo "=== Running Kconfig attribution test (python) ==="
+python3 "$ROOT_DIR/tools/test_kconfig_attribution.py"
+KCFGATTR_EXIT=$?
+
 # Static analysis (cppcheck + gcc -fanalyzer). Complements the ASan/UBSan run
 # above — it reasons about paths the tests never execute. Set VAIOS_STATIC=0 for
 # a fast inner loop; CI leaves it on. Skips cleanly if the tools are absent.
@@ -102,7 +107,7 @@ cat "$LOG_DIR/main.log" "$LOG_DIR/utils.log" "$LOG_DIR/devfs.log" \
   | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' \
   | awk -v title="HOST TEST SUMMARY" -f "$SCRIPT_DIR/lib/test_summary.awk"
 
-EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT | TASKHEAP_EXIT | SYSCALL_EXIT | IPCFD_EXIT | UAGUARD_EXIT | GCOVDEC_EXIT | STATIC_EXIT ))
+EXIT_CODE=$(( MAIN_EXIT | UTILS_EXIT | DEVFS_EXIT | TASKHEAP_EXIT | SYSCALL_EXIT | IPCFD_EXIT | UAGUARD_EXIT | GCOVDEC_EXIT | KCFGATTR_EXIT | STATIC_EXIT ))
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     echo -e "\033[1;32m=== ALL TESTS PASSED ===\033[0m"

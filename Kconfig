@@ -857,7 +857,9 @@ osource "$(NAVHAL_KCONFIG)"
 # The consumer app's own Kconfig (nav firmware), merged into the same menu/.config
 # so app feature switches, NavHAL drivers and vaios values live in one file. After
 # NavHAL's so app symbols can depend on both. Same env-var mechanism as above:
-# the build sets APP_KCONFIG from -DVAIOS_APP_KCONFIG; unset it is a no-op. App
+# the build sets APP_KCONFIG from -DVAIOS_APP_KCONFIG. Otherwise tools/kconfig.py
+# defaults it to os.devnull, an absolute path, so the osource reads an empty file
+# (an empty string would be resolved against $srctree and fail to open). App
 # symbols are not emitted into vaios_autoconf.h (tools/kconfig.py); the consumer
 # generates its own header. The app Kconfig must rsource its own includes.
 osource "$(APP_KCONFIG)"

@@ -142,6 +142,9 @@ its symbols may depend on vaios and NavHAL symbols.
   same `.config`. A vaios symbol the app merely extends stays vaios's.
 * The app directory may contain vaios or NavHAL (e.g. under `.nav/deps/`);
   each symbol is attributed to the innermost tree that defines it.
+* Only the top app Kconfig is a configure dependency. Editing a file it
+  `rsource`s does not re-run CMake by itself: touch the top Kconfig, or re-run
+  `cmake`, after changing one.
 
 ## Version
 
