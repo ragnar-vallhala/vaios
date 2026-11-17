@@ -13,8 +13,11 @@ head=${2:-HEAD}
 pat='(todo|room|stack|ashu) [#][0-9]+'
 rc=0
 
+# Skip the per-file header block (diff --git up to the first @@) so a file name
+# is not scanned, but keep every added line, even one that itself starts '++'.
 added=$(git diff --unified=0 --no-color "$base...$head" -- . ':!extern' \
-        | grep -E '^\+[^+]|^\+$' | grep -iE "$pat")
+        | awk '/^diff --git /{hdr=1;next} /^@@/{hdr=0;next} hdr{next} /^\+/{print}' \
+        | grep -iE "$pat")
 if [ -n "$added" ]; then
     echo "FAIL: added lines contain a todo/room number:"
     echo "$added"
