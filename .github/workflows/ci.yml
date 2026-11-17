@@ -49,6 +49,22 @@ jobs:
       - name: Host coverage
         run: bash tools/coverage.sh --min-lines 70
 
+  no-room-refs:
+    name: No todo/room numbers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Todo and room message numbers mean nothing outside the room. Fails if
+      # the PR's added lines or commit messages carry one.
+      - name: Check added lines and commit messages
+        run: |
+          bash tools/check_no_room_refs.sh \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}"
+
   sitl:
     name: On-target (Renode) tests
     runs-on: ubuntu-latest
